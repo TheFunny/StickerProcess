@@ -373,8 +373,8 @@ impl Transcoder {
         .into()
     }
 
-    const IMAGE_MAX_SIZE: u64 = 512_000;
-    const VIDEO_MAX_SIZE: u64 = 256_000;
+    const IMAGE_MAX_SIZE: u64 = 512 * 1024;
+    const VIDEO_MAX_SIZE: u64 = 256 * 1024;
 
     fn size_excess_factor(&self) -> Option<f64> {
         self.output_size.clone().map(|file_size| {

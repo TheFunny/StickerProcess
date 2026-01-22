@@ -192,7 +192,7 @@ impl Transcoder {
             if duration <= 0f64 {
                 return Err("Invalid media duration");
             }
-            let target_bitrate = 2_048_000f64 / duration; // 2048 k bit / duration
+            let target_bitrate = (256 * 1024 * 8) as f64 / duration;
             let mut factor = match self.size_factor.as_ref() {
                 Some(factor) => factor.get(),
                 None => {
