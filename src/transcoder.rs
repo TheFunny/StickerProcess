@@ -69,17 +69,15 @@ impl MediaFile {
 
 #[derive(Debug, Clone)]
 pub struct Factor {
-    default: f64,
+    // default: f64,
     value: f64,
-    pub temp: Option<String>,
 }
 
 impl Factor {
     pub fn new(value: f64) -> Self {
         Self {
-            default: value,
+            // default: value,
             value,
-            temp: None,
         }
     }
 

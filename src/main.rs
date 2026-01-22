@@ -23,6 +23,7 @@ use iced::{
     },
     window,
 };
+use iced_aw::{ICED_AW_FONT_BYTES, NumberInput};
 use log::error;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -32,6 +33,7 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .subscription(App::subscription)
         .title(App::title)
+        .font(ICED_AW_FONT_BYTES)
         .run()
 }
 
@@ -310,7 +312,7 @@ impl Transcoder {
     }
 
     fn view(&self) -> iced::Element<'static, TaskMessage> {
-        println!("size factor {:?}", self.size_factor);
+        // println!("size factor {:?}", self.size_factor);
         let factor = self
             .size_factor
             .as_ref()
@@ -353,55 +355,24 @@ impl Transcoder {
 
 #[derive(Debug, Clone)]
 enum FactorMessage {
-    EditFactor,
-    SaveFactor,
-    OnInputChange(String),
+    OnInputChange(f64),
 }
 
 impl Factor {
     fn update(&mut self, message: FactorMessage) -> Task<TaskMessage> {
         match message {
-            FactorMessage::EditFactor => {
-                self.temp = Some(self.get().to_string());
-                Task::none()
-            }
-            FactorMessage::SaveFactor => {
-                if let Ok(factor) = self.temp.as_ref().unwrap().parse::<f64>() {
-                    self.set(factor);
-                    self.temp = None;
-                    Task::none()
-                } else {
-                    error!("Failed to parse factor: {:?}", self.temp);
-                    Task::none()
-                }
-            }
             FactorMessage::OnInputChange(input) => {
-                self.temp = Some(input);
+                self.set(input);
                 Task::none()
             }
         }
     }
 
     fn view(&self) -> iced::Element<'static, FactorMessage> {
-        if let Some(temp) = self.temp.as_ref() {
-            row![
-                text_input("Factor", temp)
-                    .on_input(FactorMessage::OnInputChange)
-                    .width(iced::Length::Fixed(60.)),
-                space::horizontal().width(5),
-                button("Save").on_press(FactorMessage::SaveFactor),
-            ]
-            .align_y(Vertical::Center)
+        NumberInput::new(&self.get(), 0.1..=10.0, FactorMessage::OnInputChange)
+            .width(60)
+            .step(0.1)
             .into()
-        } else {
-            row![
-                text(format!("Factor: {}", self.get())),
-                space::horizontal().width(5),
-                button("Edit").on_press(FactorMessage::EditFactor),
-            ]
-            .align_y(Vertical::Center)
-            .into()
-        }
     }
 }
 
