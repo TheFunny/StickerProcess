@@ -12,8 +12,8 @@ mod transcoder;
 //     transcoder.run().unwrap();
 // }
 
-use crate::media::MediaFile;
-use crate::transcoder::{Factor, Status, Transcoder};
+use crate::media::{MediaFile, MediaType};
+use crate::transcoder::{Factor, FileSize, Status, Transcoder};
 use iced::{
     Task,
     alignment::Vertical,
@@ -71,7 +71,10 @@ struct App {
 
 impl App {
     fn new() -> (App, Task<Message>) {
-        let mut output = std::env::current_dir().unwrap();
+        let mut output = std::env::current_dir().unwrap_or_else(|e| {
+            error!("Failed to get current directory: {}", e);
+            PathBuf::from(".")
+        });
         output.push("output");
         (
             App {
@@ -139,7 +142,8 @@ impl App {
                 Task::none()
             }
             Message::ClearDone => {
-                self.tasks.retain(|task| task.lock().map_or(true, |t| t.status != Status::Done));
+                self.tasks
+                    .retain(|task| task.lock().map_or(true, |t| t.status != Status::Done));
                 Task::none()
             }
             Message::SelectRun => {
@@ -193,10 +197,16 @@ impl App {
                             task.size_factor = Some(Factor::new(factor));
                         }
                         task.status = match task.check_size() {
-                            Ok(_) => Status::Done,
+                            Ok(_) => {
+                                if task.is_size_excess() {
+                                    Status::SizeExcess
+                                } else {
+                                    Status::Done
+                                }
+                            }
                             Err(e) => {
                                 error!("Error check size: {:?}", e);
-                                Status::SizeExcess
+                                Status::Alert
                             }
                         };
                     }
@@ -313,10 +323,32 @@ impl Transcoder {
             ))
             .width(iced::Length::Fill),
         ]
+        .push(
+            self.output_size
+                .as_ref()
+                .map(|size| size.view(self.is_size_excess())),
+        )
         .push(factor)
+        .height(32)
         .align_y(Vertical::Center)
+        .spacing(10)
         .into()
-}
+    }
+
+    const IMAGE_MAX_SIZE: u64 = 512_000;
+    const VIDEO_MAX_SIZE: u64 = 256_000;
+
+    fn is_size_excess(&self) -> bool {
+        if let Some(size) = &self.output_size {
+            match self.media_file.r#type() {
+                Some(MediaType::Image(_)) => size.size > Self::IMAGE_MAX_SIZE,
+                Some(MediaType::Video(_)) => size.size > Self::VIDEO_MAX_SIZE,
+                None => false,
+            }
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -370,5 +402,19 @@ impl Factor {
             .align_y(Vertical::Center)
             .into()
         }
+    }
+}
+
+impl FileSize {
+    fn view(&self, is_excess: bool) -> iced::Element<'static, TaskMessage> {
+        row![
+            text(format! {"{:.2}KB", self.size as f64 / 1024.0}).style(if is_excess {
+                text::danger
+            } else {
+                text::success
+            }),
+        ]
+        .align_y(Vertical::Center)
+        .into()
     }
 }

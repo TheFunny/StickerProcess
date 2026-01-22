@@ -92,6 +92,21 @@ impl Factor {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FileSize {
+    pub size: u64,
+}
+
+impl FileSize {
+    pub fn new(size: u64) -> Self {
+        Self { size }
+    }
+
+    pub fn set(&mut self, size: u64) {
+        self.size = size;
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Status {
     Pending,
@@ -105,6 +120,7 @@ pub enum Status {
 pub struct Transcoder {
     pub media_file: MediaFile,
     pub size_factor: Option<Factor>,
+    pub output_size: Option<FileSize>,
     pub status: Status,
 }
 
@@ -120,6 +136,7 @@ impl Transcoder {
         Self {
             media_file,
             size_factor: None,
+            output_size: None,
             status,
         }
     }
@@ -302,16 +319,16 @@ impl Transcoder {
         writer.write_all(&buffer).map_err(|_| "Error writing file")
     }
 
-    pub fn check_size(&mut self) -> Result<(), &str> {
+    pub fn check_size(&mut self) -> Result<&FileSize, &str> {
         let metadata = self
             .get_output()
             .ok_or("Output not set")?
             .metadata()
             .map_err(|_e| "Error getting metadata")?;
-        if metadata.len() > 256_000 {
-            Err("File size excess 256kb")
-        } else {
-            Ok(())
+        match self.output_size {
+            Some(ref mut size) => size.set(metadata.len()),
+            None => self.output_size = Some(FileSize::new(metadata.len())),
         }
+        Ok(self.output_size.as_ref().unwrap())
     }
 }
