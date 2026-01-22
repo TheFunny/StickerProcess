@@ -39,24 +39,32 @@ fn main() -> iced::Result {
 
 #[derive(Debug, Clone)]
 enum Message {
-    AddFile,
-    NewFiles(Option<Vec<Box<Path>>>),
-    SelectOutput,
-    SetOutput(Option<PathBuf>),
-    ChangeOutput(String),
-    ClearDone,
-    SelectRun,
-    CurrentProcess(usize),
-    NextProcess(ProcessResult),
-    Done,
-    Error(isize, String),
+    AddFile,                          // on click add file button
+    NewFiles(Option<Vec<Box<Path>>>), // on select new files
+    SelectOutput,                     // on click select output button
+    SetOutput(Option<PathBuf>),       // on select output folder
+    ChangeOutput(String),             // on change output text input
+    ChangeRetry(u8),                  // on change retry times
+    ClearDone,                        // on click clear done button
+    SelectRun,                        // on click run button
+    CurrentProcess(ProcessInfo),      // to start task with index
+    NextProcess(ProcessResult),       // on finish task with result
+    Done,                             // on finish all tasks
+    Error(isize, String),             // on task error
     TaskMessage(usize, TaskMessage),
+}
+
+#[derive(Debug, Clone)]
+struct ProcessInfo {
+    index: usize,
+    retry: u8,
 }
 
 #[derive(Debug, Clone)]
 struct ProcessResult {
     index: usize,
-    result: Result<Option<f64>, String>,
+    result: Result<(), String>,
+    retry: u8,
 }
 
 const VIDEO: [&str; 2] = ["mp4", "gif"];
@@ -69,6 +77,7 @@ struct App {
     tasks: Vec<Arc<Mutex<Transcoder>>>,
     idle: bool,
     progress: f32,
+    max_retry: u8,
 }
 
 impl App {
@@ -82,6 +91,7 @@ impl App {
             App {
                 output_dir: output.to_string_lossy().into(),
                 idle: true,
+                max_retry: 3,
                 ..Self::default()
             },
             Task::none(),
@@ -143,6 +153,10 @@ impl App {
                 self.output_dir = output;
                 Task::none()
             }
+            Message::ChangeRetry(retry) => {
+                self.max_retry = retry;
+                Task::none()
+            }
             Message::ClearDone => {
                 self.tasks
                     .retain(|task| task.lock().map_or(true, |t| t.status != Status::Done));
@@ -161,9 +175,10 @@ impl App {
                 }
                 self.progress = 0.0;
                 self.idle = false;
-                Task::done(Message::CurrentProcess(0))
+                Task::done(Message::CurrentProcess(ProcessInfo { index: 0, retry: 0 }))
             }
-            Message::CurrentProcess(i) => {
+            Message::CurrentProcess(info) => {
+                let i = info.index;
                 if i < self.tasks.len() {
                     let task_arc = Arc::clone(&self.tasks[i]);
                     {
@@ -184,6 +199,7 @@ impl App {
                             ProcessResult {
                                 index: i,
                                 result: handle.await.unwrap(),
+                                retry: info.retry,
                             }
                         },
                         Message::NextProcess,
@@ -193,28 +209,40 @@ impl App {
                 }
             }
             Message::NextProcess(result) => match result.result {
-                Ok(factor) => {
-                    if let Ok(mut task) = self.tasks[result.index].lock() {
-                        if let Some(factor) = factor {
-                            task.size_factor = Some(Factor::new(factor));
-                        }
+                Ok(..) => match self.tasks[result.index].lock() {
+                    Ok(mut task) => {
                         task.status = match task.check_size() {
-                            Ok(_) => {
-                                if task.is_size_excess() {
+                            Ok(_) => match task.size_excess_factor() {
+                                Some(excess) if excess > 1. => {
+                                    let size_factor = task.size_factor.as_mut().unwrap();
+                                    size_factor.set(size_factor.get() / excess * 0.96);
                                     Status::SizeExcess
-                                } else {
-                                    Status::Done
                                 }
-                            }
+                                Some(_) => Status::Done,
+                                None => Status::Alert,
+                            },
                             Err(e) => {
                                 error!("Error check size: {:?}", e);
                                 Status::Alert
                             }
                         };
+                        Task::done(Message::CurrentProcess(
+                            if task.status == Status::SizeExcess && self.max_retry > result.retry {
+                                ProcessInfo {
+                                    index: result.index,
+                                    retry: result.retry + 1,
+                                }
+                            } else {
+                                self.progress = (result.index + 1) as f32 / self.tasks.len() as f32;
+                                ProcessInfo {
+                                    index: result.index + 1,
+                                    retry: 0,
+                                }
+                            },
+                        ))
                     }
-                    self.progress = (result.index + 1) as f32 / self.tasks.len() as f32;
-                    Task::done(Message::CurrentProcess(result.index + 1))
-                }
+                    Err(e) => Task::done(Message::Error(-1, e.to_string())),
+                },
                 Err(e) => {
                     error!("Failed to process: {:?}", e);
                     error!("Current Task: {:?}", self.tasks[result.index]);
@@ -237,7 +265,10 @@ impl App {
                         .await;
                     match i {
                         -1 => Message::Done,
-                        _ => Message::CurrentProcess(i as usize),
+                        _ => Message::CurrentProcess(ProcessInfo {
+                            index: i as usize,
+                            retry: 0,
+                        }),
                     }
                 },
                 |m| m,
@@ -257,8 +288,13 @@ impl App {
                 button("Add File").on_press_maybe(self.idle.then_some(Message::AddFile)),
                 button("Clear Done").on_press_maybe(self.idle.then_some(Message::ClearDone)),
                 space::horizontal().width(iced::Length::Fill),
-                button("Run").on_press_maybe(self.idle.then_some(Message::SelectRun)),
+                text("Retry times:"),
+                NumberInput::new(&self.max_retry, 0u8..=10u8, Message::ChangeRetry).width(50),
+                button("Run").on_press_maybe(
+                    (self.idle && !self.tasks.is_empty()).then_some(Message::SelectRun)
+                ),
             ]
+            .align_y(Vertical::Center)
             .spacing(10),
             row![
                 text("Output Dir:"),
@@ -326,9 +362,9 @@ impl Transcoder {
             .width(iced::Length::Fill),
         ]
         .push(
-            self.output_size
-                .as_ref()
-                .map(|size| size.view(self.is_size_excess())),
+            self.output_size.as_ref().map(|size| {
+                size.view(self.size_excess_factor().is_some_and(|excess| excess > 1.0))
+            }),
         )
         .push(factor)
         .height(32)
@@ -340,16 +376,15 @@ impl Transcoder {
     const IMAGE_MAX_SIZE: u64 = 512_000;
     const VIDEO_MAX_SIZE: u64 = 256_000;
 
-    fn is_size_excess(&self) -> bool {
-        if let Some(size) = &self.output_size {
-            match self.media_file.r#type() {
-                Some(MediaType::Image(_)) => size.size > Self::IMAGE_MAX_SIZE,
-                Some(MediaType::Video(_)) => size.size > Self::VIDEO_MAX_SIZE,
-                None => false,
-            }
-        } else {
-            false
-        }
+    fn size_excess_factor(&self) -> Option<f64> {
+        self.output_size.clone().map(|file_size| {
+            file_size.size as f64
+                / match self.media_file.r#type() {
+                    Some(MediaType::Image(..)) => Self::IMAGE_MAX_SIZE as f64,
+                    Some(MediaType::Video(..)) => Self::VIDEO_MAX_SIZE as f64,
+                    None => unreachable!(),
+                }
+        })
     }
 }
 

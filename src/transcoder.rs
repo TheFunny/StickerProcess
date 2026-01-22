@@ -165,25 +165,18 @@ impl Transcoder {
         self.set_output(&output)
     }
 
-    pub fn run(&mut self) -> Result<Option<f64>, &str> {
+    pub fn run(&mut self) -> Result<(), &str> {
         let media_type = self.media_file.r#type().ok_or("Invalid media type")?;
         let mut command = self
             .gen_command()
-            .map_err(|_e| "Failed to generate command: {e}")?;
+            .map_err(|_e| "Failed to generate command")?;
         let mut process = command.spawn().map_err(|_| "Failed to run transcoder")?;
         match media_type {
             MediaType::Video(_) => match process.wait() {
-                Ok(_) => {
-                    let size_factor = self
-                        .size_factor
-                        .clone()
-                        .map(|f| f.get())
-                        .ok_or("Missing size factor")?;
-                    self.run_video().and(Ok(size_factor.into()))
-                }
+                Ok(_) => self.run_video(),
                 Err(_e) => Err("Error waiting for process"),
             },
-            MediaType::Image(_) => self.run_image(&mut process).and(Ok(None)),
+            MediaType::Image(_) => self.run_image(&mut process),
         }
     }
 
