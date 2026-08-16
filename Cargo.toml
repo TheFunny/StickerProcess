@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4.42"
-ffmpeg-next = "8.0"
+#ffmpeg-next = "8"
+ffmpeg-the-third = "4"
 ffmpeg-sidecar = "2.4"
 iced = { version = "0.14", features = ["tokio"] }
 iced_aw = { version = "0.13", features = ["number_input"] }

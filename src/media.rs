@@ -22,6 +22,7 @@ impl MediaFile {
             Some("jpg") | Some("jpeg") => MediaType::Image(ImageType::Jpg).into(),
             Some("png") => MediaType::Image(ImageType::Png).into(),
             Some("webp") => MediaType::Image(ImageType::Webp).into(),
+            Some("apng") => MediaType::Video(VideoType::Apng).into(),
             _ => None,
         };
         let sticker: Option<StickerType> = r#type.as_ref().map(|t| match t {
@@ -90,6 +91,7 @@ pub enum StickerType {
 pub enum VideoType {
     Mp4,
     Gif,
+    Apng,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -124,6 +126,14 @@ mod tests {
         let path = "test.gif";
         let media_file = MediaFile::new(Path::new(&path));
         assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Gif)));
+        assert_eq!(media_file.sticker, Some(StickerType::Animated));
+    }
+
+    #[test]
+    fn test_new_media_file_apng() {
+        let path = "test.apng";
+        let media_file = MediaFile::new(Path::new(&path));
+        assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Apng)));
         assert_eq!(media_file.sticker, Some(StickerType::Animated));
     }
 

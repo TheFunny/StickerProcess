@@ -67,9 +67,9 @@ struct ProcessResult {
     retry: u8,
 }
 
-const VIDEO: [&str; 2] = ["mp4", "gif"];
+const VIDEO: [&str; 3] = ["mp4", "gif", "apng"];
 const IMAGE: [&str; 3] = ["jpg", "jpeg", "png"];
-const SUPPORTED: [&str; 5] = ["mp4", "gif", "jpg", "jpeg", "png"];
+const SUPPORTED: [&str; 6] = ["mp4", "gif", "apng", "jpg", "jpeg", "png"];
 
 #[derive(Debug, Default)]
 struct App {

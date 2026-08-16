@@ -1,5 +1,5 @@
 use crate::media::{ImageType, MediaFile, MediaType, StickerType, VideoType};
-use ffmpeg_next as ffmpeg;
+use ffmpeg_the_third as ffmpeg;
 use ffmpeg_sidecar::{child::FfmpegChild, command::FfmpegCommand};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -54,6 +54,7 @@ impl MediaFile {
                     );
                     self.set_type(match id {
                         ffmpeg::codec::id::Id::GIF => MediaType::Video(VideoType::Gif),
+                        ffmpeg::codec::id::Id::APNG => MediaType::Video(VideoType::Apng),
                         _ => MediaType::Video(VideoType::Mp4),
                     })
                 }
@@ -188,9 +189,14 @@ impl Transcoder {
             .args(["-sws_flags", "lanczos"])
             .overwrite();
         if let MediaType::Video(v_type) = self.media_file.r#type().ok_or("Invalid media type")? {
-            let duration = self.media_file.duration().ok_or("Invalid media duration")?;
-            if duration <= 0f64 {
-                return Err("Invalid media duration");
+            let duration: f64;
+            if v_type == VideoType::Apng {
+                duration = 1.;
+            } else {
+                duration = self.media_file.duration().ok_or("Invalid media duration")?;
+                if duration <= 0f64 {
+                    return Err("Invalid media duration");
+                }
             }
             let target_bitrate = (256 * 1024 * 8) as f64 / duration;
             let mut factor = match self.size_factor.as_ref() {
@@ -218,11 +224,13 @@ impl Transcoder {
                 .codec_video("libvpx-vp9")
                 .pix_fmt(match v_type {
                     VideoType::Mp4 => "yuv420p10",
-                    VideoType::Gif => "yuva420p10",
+                    VideoType::Gif | VideoType::Apng => "yuva420p",
                 })
+                // .rate(30.)
                 .crf(26)
                 .args(["-b:v", &target_bitrate.to_string()])
                 .args(["-bufsize", &(target_bitrate as f64 * 1.5).to_string()])
+                .args(["-row-mt", "1"])
                 // .args(["-deadline", "best"])
                 .format("webm")
                 .output(
