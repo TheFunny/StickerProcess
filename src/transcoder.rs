@@ -1,6 +1,6 @@
 use crate::media::{ImageType, MediaFile, MediaType, StickerType, VideoType};
-use ffmpeg_the_third as ffmpeg;
 use ffmpeg_sidecar::{child::FfmpegChild, command::FfmpegCommand};
+use ffmpeg_the_third as ffmpeg;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::windows::fs::FileExt;

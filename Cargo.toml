@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = "0.4.42"
+chrono = "0.4.45"
 #ffmpeg-next = "8"
 dioxus = { version = "0.7", features = ["desktop"] }
-ffmpeg-the-third = "4"
-ffmpeg-sidecar = "2.4"
-log = "0.4.29"
-oxipng = { version = "10.0", features = ["parallel", "zopfli", "filetime"], default-features = false }
+ffmpeg-the-third = "6"
+ffmpeg-sidecar = "2.5"
+log = "0.4.34"
+oxipng = { version = "10.2", features = ["parallel", "zopfli"], default-features = false }
 pretty_env_logger = "0.5.0"
-rfd = { version = "0.16", features = ["tokio"] }
-tokio = "1.49"
+rfd = "0.17"
+tokio = "1.53"
 
 [profile.release]
 opt-level = "s"       # 优化代码尺寸，兼顾速度
