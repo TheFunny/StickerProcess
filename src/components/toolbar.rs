@@ -55,6 +55,18 @@ pub fn Toolbar() -> Element {
                 onclick: move |_| ctx.start_run(),
                 "Run"
             }
+            button {
+                class: "btn",
+                disabled: running,
+                onclick: move |_| ctx.theme.set(ctx.theme.cloned().toggled()),
+                "{ctx.theme.cloned().label()}"
+            }
+            button {
+                class: "btn btn-danger",
+                disabled: !running,
+                onclick: move |_| ctx.cancel.set(true),
+                "Cancel"
+            }
         }
 
         div { class: "row",

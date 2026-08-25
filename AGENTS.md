@@ -24,9 +24,9 @@ refactor/packaging (E).
 |---|---|
 | `src/main.rs` | Binary entry: logger init + Dioxus launch with window config |
 | `src/app.rs` | Root component; `UiState` global signals; `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
-| `src/runner.rs` | Async transcode loop: sequential tasks, size-based retry, cancel checks, error dialogs |
-| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar` |
-| `src/app.css` | Stylesheet embedded via `include_str!` (theme variables come in Phase C) |
+| `src/runner.rs` | Async transcode loop: sequential tasks, size-based retry, cancel checks (mid-task kill via `cancel_flag`), progress channel, toasts |
+| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast` |
+| `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`) landed in Phase C |
 | `src/media.rs` | `MediaFile` model: type detection by extension, duration, output path; enums; unit tests |
 | `src/transcoder.rs` | Framework-agnostic core: ffmpeg command generation, image/video processing, size checking; `Factor`, `FileSize`, `Status`; probing via `ffmpeg-the-third` |
 | `MIGRATION_PLAN.md` | Roadmap and phase checklist (A done; B–E pending) |
@@ -38,25 +38,41 @@ refactor/packaging (E).
 ## Architecture
 
 - **State**: `UiState` bundles Copy-able signals (`tasks`, `output_dir`, `max_retry`,
-  `running`, `overall_progress`, `cancel`) provided to components via context.
+  `running`, `overall_progress`, `cancel`, `toasts`, `theme`) provided to components
+  via context.
   Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, ... }`
   shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
   (deliberately NOT cloned). `TaskEntry` also carries *display mirror* fields
-  (path/status/output_size/factor) so rendering never locks the mutex while a
-  worker holds it during transcoding. Mutate a task only through
-  `UiState::with_task(index, …)` — it locks, applies the closure, refreshes the
-  mirror, and notifies subscribers.
+  (path/status/output_size/factor/progress/elapsed/error) so rendering never
+  locks the mutex while a worker holds it during transcoding. Mutate a task only
+  through `UiState::with_task(index, …)` — it locks, applies the closure,
+  refreshes the mirror, and notifies subscribers.
+- **Async probing**: adding a file creates the `Transcoder` without IO probing
+  (`Status::Probing`); `check_input` runs on a background thread and flips the
+  mirror to `Pending`/`Alert`. Run is blocked while any task is probing.
+  `Arc::ptr_eq` guards against stale index writes if the queue shifts.
 - **Execution flow**: Run → `runner::run_all` async loop. Per task: assign a
-  timestamped output path once, set `Processing`, run `Transcoder::run()` inside
-  `spawn_blocking`, then `check_size()`. If over limit, shrink factor
+  timestamped output path once, set `Processing`, run
+  `Transcoder::run_with_progress()` inside `spawn_blocking` (progress parsed from
+  ffmpeg stderr by `ffmpeg-sidecar`'s `iter()`, sent over an mpsc channel to the
+  UI mirror), then `check_size()`. If over limit, shrink factor
   (`factor = factor / excess * 0.96`) and retry up to `max_retry`, else advance.
-  Task errors mark `Alert`, show an `rfd::AsyncMessageDialog`, and skip to the next
-  task. The `cancel` signal is checked between attempts and stops the whole run.
+  Task errors mark `Alert`, push an error toast, and skip to the next task.
+  The `cancel` signal is checked between attempts; mid-task cancel bridges to
+  `Transcoder.cancel_flag: Arc<AtomicBool>` via a watcher task that kills the
+  running ffmpeg process, resets the task to `Pending`, and stops the whole run.
 - **Sequential processing**: tasks run one at a time; overall progress = `(index+1)/len`.
 - **File input**: toolbar uses a hidden `<input type="file" multiple>` triggered by a
-  styled label; output-folder picking and error dialogs use `rfd`. Drag & drop works
-  on the whole window: `ondragover` sets highlight, `ondrop` reads files and
-  `FileData::path()` returns full paths on Windows (verified on dioxus 0.7.x).
+  styled label; output-folder picking uses `rfd` (error dialogs were replaced by
+  toasts in Phase C). Drag & drop works on the whole window: `ondragover` sets
+  highlight, `ondrop` reads files and `FileData::path()` returns full paths on
+  Windows (verified on dioxus 0.7.x).
+- **Status**: `Probing` (async probe in flight), `Pending`, `Processing`,
+  `Done`, `Alert` (error), `SizeExcess` (retry-able); badge colors map to CSS
+  classes in `app.css`.
+- **Theming**: CSS custom properties in `app.css`; `[data-theme="dark"]` on
+  `<html>` overrides variables. Toggle lives in the toolbar (`UiState.theme`),
+  persistence arrives with Phase B settings.
 - **Transcoding**:
   - Video → webm: `-b:v` computed from target size and duration
     (`256 * 1024 * 8 bits / duration_seconds`), `-bufsize = b:v * 1.5`, `-row-mt 1`,

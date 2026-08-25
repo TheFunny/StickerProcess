@@ -1,0 +1,9 @@
+[application]
+name = "StickerProcess"
+
+[bundle]
+identifier = "com.stickerprocess.app"
+publisher = "StickerProcess"
+icon = ["ico/icon.ico"]
+category = "GraphicsAndDesign"
+short_description = "图片/短视频转 Telegram 贴纸工具"

@@ -110,18 +110,22 @@ async fn run_all(state) {
 - 实现: `config.rs` (load/save/默认值/重置) + 设置弹窗组件
 - 保存时机: 变更即写 (防抖) 或关闭面板时保存
 
-### C. 优化功能与视觉提示 (Phase C)
+### C. 优化功能与视觉提示 (Phase C) ✅ 已完成 (2026-08)
 
-1. **每任务实时进度**: ffmpeg-sidecar `-progress pipe:1` → `FfmpegEvent::Progress(ProgressUpdate)`
-   - `transcoder.rs` 增加 `run_with_progress(callback)` (D1 的配套改动)
-   - 任务行内进度条 + 转码耗时统计
-2. **状态视觉**: 徽标颜色 (Pending 灰 / Processing 蓝+旋转 / Done 绿 / Alert 红 / SizeExcess 橙)
-3. **Toast 通知**: 错误、完成、尺寸重试提示 (右上角堆叠, 自动消失)
-4. **主题系统**: CSS 变量, 浅色/深色切换 (跟随设置)
-5. **取消能力**: 当前任务标记取消 (ffmpeg 进程 kill) + 队列停止
-6. **拖拽覆盖层**: 拖入时全窗虚线高亮 + 提示文案
-7. **任务行工具提示**: 悬停显示错误详情
-8. **添加时异步探测**: 后台 probe 时长/尺寸, 显示 "探测中…" (避免 UI 卡顿)
+1. [x] **每任务实时进度**: `ffmpeg-sidecar` 的 `iter()` 直接解析 ffmpeg stderr 进度行
+   （无需 `-progress pipe:1`），`transcoder.rs` 增加 `run_with_progress(callback)`，
+   进度经 mpsc 通道写入任务镜像；任务行内进度条 + 转码耗时统计
+2. [x] **状态视觉**: 徽标颜色 + Processing 旋转指示器 (Pending 灰 / Probing 灰 /
+   Processing 蓝+旋转 / Done 绿 / Alert 红 / SizeExcess 橙)
+3. [x] **Toast 通知**: 错误、完成、尺寸重试、取消提示 (右上角堆叠, 4 秒自动消失)；
+   替代原 rfd 错误弹窗（rfd 仅保留目录选择）
+4. [x] **主题系统**: `app.css` CSS 变量, 浅色/深色切换 (`data-theme` 属性, 工具栏按钮)；
+   持久化随 Phase B 设置落地
+5. [x] **取消能力**: cancel 信号 → watcher → `Transcoder.cancel_flag` (Arc<AtomicBool>)
+   kill ffmpeg 进程；任务回到 Pending，队列停止；工具栏 Cancel 按钮
+6. [x] **拖拽覆盖层**: 全窗虚线高亮 + 提示文案 (Phase A 已有，Phase C 换主题变量)
+7. [x] **任务行工具提示**: 悬停显示完整路径 + 最近错误详情
+8. [x] **添加时异步探测**: 后台线程 probe，显示 "Probing…"；探测期间禁止 Run
 
 ### D. 预览效果 (Phase D) — 迁移的最大动机
 

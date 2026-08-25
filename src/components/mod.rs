@@ -4,4 +4,5 @@ pub mod drop_zone;
 pub mod number_field;
 pub mod progress_bar;
 pub mod task_list;
+pub mod toast;
 pub mod toolbar;

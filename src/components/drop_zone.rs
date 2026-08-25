@@ -17,8 +17,9 @@ pub fn DropZone(children: Element) -> Element {
     rsx! {
         div {
             class: "app",
-            ondragover: move |_| {
-                if !dragging() {
+            ondragover: move |evt: Event<DragData>| {
+                // 文字选择拖动不带文件（files 由 wry 原生文件拖拽合成），不触发覆盖层
+                if !dragging() && !evt.data.files().is_empty() {
                     dragging.set(true);
                 }
             },

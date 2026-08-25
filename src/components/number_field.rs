@@ -1,7 +1,8 @@
 //! 数值输入组件（替代 iced_aw 的 `NumberInput`）。
 //!
-//! 文本框 + 宽松解析：键入过程中解析失败则不回传；
-//! 外部值变化（如运行后系数自动缩小）时通过 use_effect 回写显示。
+//! 文本框 + 宽松解析：键入过程中解析失败则不回传。
+//! 显示采用"编辑态"模式：聚焦时显示本地草稿（避免光标跳动），
+//! 失焦时直接镜像外部值——外部变化（如超限重试自动缩小系数）立即反映到 UI。
 
 use dioxus::prelude::*;
 
@@ -24,23 +25,23 @@ pub fn U8Input(
     disabled: bool,
     on_change: EventHandler<u8>,
 ) -> Element {
-    let mut text = use_signal(|| value.to_string());
-
-    use_effect(move || {
-        if text.peek().trim().parse::<u8>() != Ok(value) {
-            text.set(value.to_string());
-        }
-    });
+    let mut draft = use_signal(String::new);
+    let mut editing = use_signal(|| false);
 
     rsx! {
         input {
             class: "input num",
             r#type: "text",
             disabled,
-            value: "{text}",
+            value: if editing() { draft.cloned() } else { value.to_string() },
+            onfocus: move |_| {
+                editing.set(true);
+                draft.set(value.to_string());
+            },
+            onblur: move |_| editing.set(false),
             oninput: move |evt: Event<FormData>| {
                 let raw = evt.data.value();
-                text.set(raw.clone());
+                draft.set(raw.clone());
                 if let Ok(v) = raw.trim().parse::<u8>() {
                     on_change.call(v.clamp(min, max));
                 }
@@ -57,27 +58,23 @@ pub fn F64Input(
     disabled: bool,
     on_change: EventHandler<f64>,
 ) -> Element {
-    let mut text = use_signal(move || fmt_f64(value));
-
-    use_effect(move || {
-        let differs = match text.cloned().trim().parse::<f64>() {
-            Ok(current) => (current - value).abs() >= f64::EPSILON * 4.0,
-            Err(_) => true,
-        };
-        if differs {
-            text.set(fmt_f64(value));
-        }
-    });
+    let mut draft = use_signal(String::new);
+    let mut editing = use_signal(|| false);
 
     rsx! {
         input {
             class: "input num",
             r#type: "text",
             disabled,
-            value: "{text}",
+            value: if editing() { draft.cloned() } else { fmt_f64(value) },
+            onfocus: move |_| {
+                editing.set(true);
+                draft.set(fmt_f64(value));
+            },
+            onblur: move |_| editing.set(false),
             oninput: move |evt: Event<FormData>| {
                 let raw = evt.data.value();
-                text.set(raw.clone());
+                draft.set(raw.clone());
                 if let Ok(v) = raw.trim().parse::<f64>() {
                     on_change.call(v.clamp(min, max));
                 }

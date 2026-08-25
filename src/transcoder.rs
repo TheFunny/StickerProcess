@@ -5,6 +5,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::windows::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 impl MediaFile {
     pub fn check_input(&mut self) -> Result<(), ffmpeg::Error> {
@@ -108,6 +110,8 @@ impl FileSize {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Status {
+    /// 已入队，等待探测（Phase C: 添加时异步探测时长/编码）。
+    Probing,
     Pending,
     Processing,
     Done,
@@ -121,23 +125,23 @@ pub struct Transcoder {
     pub size_factor: Option<Factor>,
     pub output_size: Option<FileSize>,
     pub status: Status,
+    /// 置位后中断正在运行的 ffmpeg 进程（runner 经 Arc 桥接 UI 的 cancel 信号）。
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 impl Transcoder {
-    pub fn new(mut media_file: MediaFile) -> Self {
-        let status = match media_file.check_input() {
-            Ok(_) => Status::Pending,
-            Err(e) => {
-                log::error!("Error check input: {:?}", e);
-                Status::Alert
-            }
-        };
+    pub fn new(media_file: MediaFile) -> Self {
+        // 构造时不做 IO 探测（仅按扩展名分类），check_input 延后到后台线程
         Self {
             media_file,
             size_factor: None,
             output_size: None,
-            status,
+            status: Status::Probing,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
+    }
+    pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
+        self.media_file.check_input()
     }
 
     // pub fn get_status(&self) -> Status {
@@ -166,18 +170,39 @@ impl Transcoder {
         self.set_output(&output)
     }
 
-    pub fn run(&mut self) -> Result<(), &str> {
+    pub fn run_with_progress(&mut self, mut on_progress: impl FnMut(f32)) -> Result<(), &str> {
+        // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
+        self.cancel_flag.store(false, Ordering::Relaxed);
         let media_type = self.media_file.r#type().ok_or("Invalid media type")?;
         let mut command = self
             .gen_command()
             .map_err(|_e| "Failed to generate command")?;
         let mut process = command.spawn().map_err(|_| "Failed to run transcoder")?;
         match media_type {
-            MediaType::Video(_) => match process.wait() {
-                Ok(_) => self.run_video(),
-                Err(_e) => Err("Error waiting for process"),
-            },
-            MediaType::Image(_) => self.run_image(&mut process),
+            MediaType::Video(_) => {
+                // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件
+                let duration = self.media_file.duration().unwrap_or(1.0).max(0.001);
+                for event in process.iter().map_err(|_| "Error reading process output")? {
+                    if self.cancel_flag.load(Ordering::Relaxed) {
+                        let _ = process.kill();
+                        return Err("Cancelled");
+                    }
+                    if let ffmpeg_sidecar::event::FfmpegEvent::Progress(p) = event {
+                        on_progress((parse_progress_time(&p.time) / duration) as f32);
+                    }
+                }
+                if self.cancel_flag.load(Ordering::Relaxed) {
+                    let _ = process.kill();
+                    return Err("Cancelled");
+                }
+                self.run_video()
+            }
+            MediaType::Image(_) => {
+                if self.cancel_flag.load(Ordering::Relaxed) {
+                    return Err("Cancelled");
+                }
+                self.run_image(&mut process)
+            }
         }
     }
 
@@ -330,4 +355,14 @@ impl Transcoder {
         }
         Ok(self.output_size.as_ref().unwrap())
     }
+}
+
+/// 把 ffmpeg 进度行的 `time`（如 `00:03:29.04`）解析为秒数；解析失败返回 0。
+fn parse_progress_time(time: &str) -> f64 {
+    let mut seconds = 0f64;
+    for part in time.trim().split(':') {
+        let value = part.parse::<f64>().unwrap_or(0.0);
+        seconds = seconds * 60.0 + value;
+    }
+    seconds
 }
