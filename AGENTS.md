@@ -5,58 +5,78 @@ Guidance for AI agents working in this repository.
 ## Project Overview
 
 **StickerProcess** is a desktop tool that converts images and short videos into
-**Telegram-style stickers**, implemented in **Rust** with the **iced** GUI:
+**Telegram-style stickers**, implemented in **Rust** with the **Dioxus 0.7** desktop
+GUI (wry/WebView2):
 
 - Video (mp4 / gif / apng) → animated sticker in **webm** (libvpx-vp9), target ≤ **256 KB**
 - Image (jpg / jpeg / png / webp) → static sticker in **png**, target ≤ **512 KB**
 - All media is scaled to fit **512×512** with aspect ratio preserved
   (`scale=512:512:force_original_aspect_ratio=decrease`, lanczos)
 
-The former Python/tkinter implementation was superseded by this Rust version and
-archived under `archive/` (gitignored). Do not treat Python files as active code.
+Legacy implementations are archived under `archive/` (gitignored). The former
+iced 0.14 GUI was migrated to Dioxus in Phase A of `MIGRATION_PLAN.md`; later
+phases add settings persistence (B), live progress/visuals (C), preview (D),
+refactor/packaging (E).
 
 ## Repository Layout
 
 | Path | Purpose |
 |---|---|
-| `src/main.rs` | iced GUI application: `App`, `Message` enum, task orchestration, views |
-| `src/media.rs` | `MediaFile` model: type detection by extension, duration, output path; `MediaType`/`VideoType`/`ImageType`/`StickerType` enums; unit tests |
-| `src/transcoder.rs` | `Transcoder`: ffmpeg command generation, image/video processing, size checking; `Factor`, `FileSize`, `Status`; ffmpeg probing via `ffmpeg-the-third`; `MediaFile::infer_duration` |
+| `src/main.rs` | Binary entry: logger init + Dioxus launch with window config |
+| `src/app.rs` | Root component; `UiState` global signals; `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
+| `src/runner.rs` | Async transcode loop: sequential tasks, size-based retry, cancel checks, error dialogs |
+| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar` |
+| `src/app.css` | Stylesheet embedded via `include_str!` (theme variables come in Phase C) |
+| `src/media.rs` | `MediaFile` model: type detection by extension, duration, output path; enums; unit tests |
+| `src/transcoder.rs` | Framework-agnostic core: ffmpeg command generation, image/video processing, size checking; `Factor`, `FileSize`, `Status`; probing via `ffmpeg-the-third` |
+| `MIGRATION_PLAN.md` | Roadmap and phase checklist (A done; B–E pending) |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `notes.md` | Developer notes (see Gotchas) |
-| `examples/` | Small Rust snippets (e.g. `f64tobytes.rs`) |
-| `archive/` | Legacy Python implementation and scripts (gitignored) |
+| `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
 
 ## Architecture
 
-- **GUI**: iced 0.14 (`iced_aw` `NumberInput` for retry times and size factor).
-- **State**: `App` holds `tasks: Vec<Arc<Mutex<Transcoder>>>` — shared with background
-  `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>` (deliberately NOT cloned).
-- **Message flow**: `SelectRun` → `CurrentProcess{index, retry}` → `NextProcess(ProcessResult)`
-  → either retry (size excess) or advance to the next task → `Done`.
-- **Sequential processing**: tasks run one at a time; progress = `(index + 1) / tasks.len()`.
-- **Retry loop** (size-based): after a run, `check_size()` compares output size against the
-  target; if `size_excess_factor() > 1.0`, the `size_factor` is shrunk
-  (`factor = factor / excess * 0.96`) and the task is re-run, up to `max_retry` (GUI, default 3).
+- **State**: `UiState` bundles Copy-able signals (`tasks`, `output_dir`, `max_retry`,
+  `running`, `overall_progress`, `cancel`) provided to components via context.
+  Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, ... }`
+  shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
+  (deliberately NOT cloned). `TaskEntry` also carries *display mirror* fields
+  (path/status/output_size/factor) so rendering never locks the mutex while a
+  worker holds it during transcoding. Mutate a task only through
+  `UiState::with_task(index, …)` — it locks, applies the closure, refreshes the
+  mirror, and notifies subscribers.
+- **Execution flow**: Run → `runner::run_all` async loop. Per task: assign a
+  timestamped output path once, set `Processing`, run `Transcoder::run()` inside
+  `spawn_blocking`, then `check_size()`. If over limit, shrink factor
+  (`factor = factor / excess * 0.96`) and retry up to `max_retry`, else advance.
+  Task errors mark `Alert`, show an `rfd::AsyncMessageDialog`, and skip to the next
+  task. The `cancel` signal is checked between attempts and stops the whole run.
+- **Sequential processing**: tasks run one at a time; overall progress = `(index+1)/len`.
+- **File input**: toolbar uses a hidden `<input type="file" multiple>` triggered by a
+  styled label; output-folder picking and error dialogs use `rfd`. Drag & drop works
+  on the whole window: `ondragover` sets highlight, `ondrop` reads files and
+  `FileData::path()` returns full paths on Windows (verified on dioxus 0.7.x).
 - **Transcoding**:
   - Video → webm: `-b:v` computed from target size and duration
     (`256 * 1024 * 8 bits / duration_seconds`), `-bufsize = b:v * 1.5`, `-row-mt 1`,
-    `crf 26`, `pix_fmt` yuv420p10 (mp4) / yuva420p (gif, apng), `-an`.
+    `crf 26`, pix_fmt yuv420p10 (mp4) / yuva420p (gif, apng), `-an`.
   - Image → png: ffmpeg pipes PNG to stdout (`-f image2`, `-c:v png`), then
     `oxipng::optimize_from_memory` (preset 4, safe strip, alpha optimize) writes the file.
-- **Duration inference**: `ffmpeg-the-third` opens the input to read codec id and duration;
-  APNG is assigned a fixed duration of 1 s (no probe). Output filenames are timestamps
-  `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
-- **Webm duration patch** (`run_video`): after encoding, the file is scanned for the binary
-  marker `44 89 88` and 8 bytes are overwritten with `100f64` (big-endian) to force a
-  fixed/fake duration on the sticker.
-- **Status**: `Pending`, `Processing`, `Done`, `Alert` (error), `SizeExcess` (retry-able).
+- **Duration inference**: `ffmpeg-the-third` opens the input to read codec id and
+  duration; APNG is assigned a fixed duration of 1 s (no probe). Output filenames are
+  timestamps `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
+- **Webm duration patch** (`transcoder::run_video`): after encoding, the file is scanned
+  for the binary marker `44 89 88` and 8 bytes are overwritten with `100f64`
+  (big-endian) to force a fixed/fake duration on the sticker.
+- **Status**: `Pending`, `Processing`, `Done`, `Alert` (error), `SizeExcess`
+  (retry-able); badge colors map to CSS classes in `app.css`.
 
 ### Default size factors by duration (video)
 
 `<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`;
-GIF additionally × 0.75. The factor is user-editable in the GUI (0.1..=10.0).
+GIF additionally × 0.75. The factor is user-editable per task (0.1..=10.0) and only
+appears after the first run lazily initializes it.
 
 ## Build & Run
 
@@ -66,27 +86,38 @@ cargo build --release
 cargo test           # media.rs unit tests
 ```
 
+The first build fetches the dioxus dependency tree (~300 crates); rebuilds work
+offline from the registry cache while `Cargo.lock` stays untouched.
+
 ## Conventions
 
 - Commit messages: short lowercase English summary, e.g. `add APNG support and switch to
   ffmpeg-the-third`. Commits may combine feature + cleanup + minor tweaks.
-- Keep the `Arc<Mutex<Transcoder>>` sharing pattern; do not clone task state.
-- New media types must be wired in **three** places:
-  1. `src/main.rs` — `VIDEO` / `IMAGE` / `SUPPORTED` constants
-  2. `src/media.rs` — extension match + `VideoType`/`ImageType` enum + a unit test
-  3. `src/transcoder.rs` — codec probing (`infer_duration`), duration handling, pix_fmt,
-     and any factor adjustments
+- Keep the `Arc<Mutex<Transcoder>>` sharing pattern; do not clone task state;
+  never hold a `MutexGuard` across an `.await`.
+- Keep display-mirror fields in sync whenever mutating a `Transcoder` (use
+  `UiState::with_task`; direct lock + mutation elsewhere will desynchronize the UI).
+- New media types must be wired in **four** places:
+  1. `src/app.rs` — `SUPPORTED` / `VIDEO` / `IMAGE` constants
+  2. `src/components/toolbar.rs` — `FILE_ACCEPT` string
+  3. `src/media.rs` — extension match + enum variant + a unit test
+  4. `src/transcoder.rs` — codec probing (`check_input`), duration handling,
+     pix_fmt, and any factor adjustments
 
 ## Gotchas
 
 - **ffmpeg must be discoverable**: when updating ffmpeg, update BOTH `PATH` and
   `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `notes.md`).
-- The ffmpeg binding crate was switched from `ffmpeg-next` to `ffmpeg-the-third`
-  (see `Cargo.toml`, commented line). Keep that dependency in sync with
-  `ffmpeg-sidecar` usage.
+- The ffmpeg binding crate is `ffmpeg-the-third` (see `Cargo.toml`, commented
+  `ffmpeg-next` line). Keep that dependency in sync with `ffmpeg-sidecar` usage.
 - GIF was changed from `yuva420p10` to `yuva420p` — do not "fix" it back; 10-bit
   yuva is invalid for these formats.
 - The `run_video` duration patch assumes the marker bytes `44 89 88` exist; if the
   encoded webm lacks them, the task errors (`Binary sequence not found`).
 - Output overwrites are allowed (`.overwrite()` / ffmpeg `-y`); output files are
   timestamped to avoid collisions.
+- Dioxus event closures receive `Event<T>` wrappers — use `evt.data.value()` /
+  `evt.data.files()`; signal call-syntax needs a binding, so prefer `sig.cloned()` /
+  `*sig.read()` / `*sig.peek()` over `state.field()`.
+- Hand-edited lockfiles can break offline resolution via target-specific deps
+  (e.g. libredox → plain); regenerate locks online when possible.

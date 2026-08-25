@@ -6,10 +6,9 @@ edition = "2024"
 [dependencies]
 chrono = "0.4.42"
 #ffmpeg-next = "8"
+dioxus = { version = "0.7", features = ["desktop"] }
 ffmpeg-the-third = "4"
 ffmpeg-sidecar = "2.4"
-iced = { version = "0.14", features = ["tokio"] }
-iced_aw = { version = "0.13", features = ["number_input"] }
 log = "0.4.29"
 oxipng = { version = "10.0", features = ["parallel", "zopfli", "filetime"], default-features = false }
 pretty_env_logger = "0.5.0"

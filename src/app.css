@@ -1,0 +1,195 @@
+/* StickerProcess — Phase A 基础样式（Phase C 引入主题变量） */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  color: #1f2328;
+  background: #fafafa;
+}
+
+#main {
+  height: 100%;
+}
+
+.app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.grow {
+  flex: 1;
+}
+
+.label {
+  white-space: nowrap;
+  color: #57606a;
+}
+
+.btn {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  cursor: pointer;
+  user-select: none;
+  line-height: 20px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.btn:hover:not(.disabled) {
+  background: #eef1f4;
+}
+
+.btn.disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn-primary:not(:disabled) {
+  background: #1f883d;
+  border-color: #1f883d;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1a7f37;
+}
+
+.input {
+  padding: 4px 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-sizing: border-box;
+  height: 30px;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.input:focus {
+  outline: 2px solid #0969da33;
+  border-color: #0969da;
+}
+
+.input.num {
+  width: 64px;
+  text-align: center;
+}
+
+.input.grow {
+  width: 100%;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border: 1px solid #eaeef2;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.empty-hint {
+  margin: auto;
+  color: #8c959f;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 2px 8px;
+  border-bottom: 1px solid #f0f2f4;
+}
+
+.task-row .path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex-shrink: 0;
+  min-width: 86px;
+  color: #57606a;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.processing {
+  color: #0969da;
+}
+
+.badge.done {
+  color: #1a7f37;
+}
+
+.badge.alert {
+  color: #cf222e;
+}
+
+.badge.size-excess {
+  color: #bc4c00;
+}
+
+.size-ok {
+  color: #1a7f37;
+  font-variant-numeric: tabular-nums;
+}
+
+.size-excess {
+  color: #cf222e;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #eaeef2;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: #0969da;
+  transition: width 0.15s ease-out;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px dashed #0969da;
+  border-radius: 8px;
+  background: rgba(9, 105, 218, 0.08);
+  color: #0969da;
+  font-size: 22px;
+  pointer-events: none;
+}
