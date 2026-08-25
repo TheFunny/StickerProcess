@@ -248,6 +248,10 @@ impl Transcoder {
                     factor
                 }
             };
+            // GIF 码率计算 patch（程序内固定值，非设置项）
+            if let VideoType::Gif = v_type {
+                factor *= 0.75;
+            }
             let target_bitrate = (target_bitrate * factor) as u32 / 10 * 10;
             if self.target_fps > 0.0 {
                 command.args(["-r", &self.target_fps.to_string()]);

@@ -100,9 +100,10 @@ refactor/packaging (E).
 ### Default size factors by duration (video)
 
 `<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`;
-the whole table is configurable in Settings (band edges stay fixed). The factor
-is user-editable per task (0.1..=10.0) and only appears after the first run
-lazily initializes it.
+the whole table is configurable in Settings (band edges stay fixed). GIF
+additionally × 0.75 — a hard-coded bitrate-calculation patch, NOT a setting. The
+factor is user-editable per task (0.1..=10.0) and only appears after the first
+run lazily initializes it.
 
 ## Build & Run
 
