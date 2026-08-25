@@ -127,6 +127,10 @@ pub struct Transcoder {
     pub status: Status,
     /// 置位后中断正在运行的 ffmpeg 进程（runner 经 Arc 桥接 UI 的 cancel 信号）。
     pub cancel_flag: Arc<AtomicBool>,
+    /// 时长→默认系数表，区间固定：<1s, <2s, <3s, <5s, <8s, ≥8s（来自设置）。
+    pub duration_factors: [f64; 6],
+    /// 强制输出帧率（fps）；<=0 表示不强制。
+    pub target_fps: f64,
 }
 
 impl Transcoder {
@@ -138,8 +142,11 @@ impl Transcoder {
             output_size: None,
             status: Status::Probing,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            duration_factors: [1.2, 1.1, 1.0, 0.9, 0.8, 0.7],
+            target_fps: 0.0,
         }
     }
+
     pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
         self.media_file.check_input()
     }
@@ -227,23 +234,24 @@ impl Transcoder {
             let mut factor = match self.size_factor.as_ref() {
                 Some(factor) => factor.get(),
                 None => {
+                    let [f1, f2, f3, f5, f8, f8p] = self.duration_factors;
                     let factor = match duration {
-                        ..1f64 => 1.2,
-                        ..2f64 => 1.1,
-                        ..3f64 => 1.0,
-                        ..5f64 => 0.9,
-                        ..8f64 => 0.8,
-                        8f64.. => 0.7,
+                        ..1f64 => f1,
+                        ..2f64 => f2,
+                        ..3f64 => f3,
+                        ..5f64 => f5,
+                        ..8f64 => f8,
+                        8f64.. => f8p,
                         _ => 1.0,
                     };
                     self.size_factor = Some(Factor::new(factor));
                     factor
                 }
             };
-            if let VideoType::Gif = v_type {
-                factor *= 0.75;
-            }
             let target_bitrate = (target_bitrate * factor) as u32 / 10 * 10;
+            if self.target_fps > 0.0 {
+                command.args(["-r", &self.target_fps.to_string()]);
+            }
             command
                 .no_audio()
                 .codec_video("libvpx-vp9")

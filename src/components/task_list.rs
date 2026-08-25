@@ -49,11 +49,12 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         Status::SizeExcess => "badge size-excess",
         _ => "badge",
     };
-
-    // 与 iced 一致：输出大小颜色区分是否超限
+    // 与 iced 一致：输出大小颜色区分是否超限（上限来自设置）
+    let settings = ctx.settings.read();
+    let (video_limit, image_limit) = (settings.video_max_size(), settings.image_max_size());
     let is_excess = entry
-        .size_excess_factor()
-        .is_some_and(|excess| excess > 1.0);
+        .size_excess_ratio(video_limit, image_limit)
+        .is_some_and(|ratio| ratio > 1.0);
     let size_text = entry
         .output_size
         .map(|size| format!("{:.2}KB", size as f64 / 1024.0));

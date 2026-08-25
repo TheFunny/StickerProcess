@@ -1,10 +1,8 @@
-//! 工具栏：添加文件、清空完成、输出目录、重试次数、运行按钮。
+//! 工具栏：添加文件、清空完成、设置入口、主题切换、取消、运行按钮。
 //!
-//! 与 iced 版对等：运行期间禁用全部编辑入口；
-//! "Add File" 用隐藏的 `<input type="file" multiple>`（label 触发原生对话框）。
+//! Phase B：输出目录直接读写 `Settings`（防抖落盘）；重试次数移入设置面板。
 
 use crate::app::UiState;
-use crate::components::number_field::U8Input;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 
@@ -14,6 +12,11 @@ const FILE_ACCEPT: &str = ".mp4,.gif,.apng,.jpg,.jpeg,.png";
 pub fn Toolbar() -> Element {
     let mut ctx = use_context::<UiState>();
     let running = ctx.running.cloned();
+    let theme_label = if ctx.settings.read().theme == "dark" {
+        "Light"
+    } else {
+        "Dark"
+    };
 
     rsx! {
         div { class: "row",
@@ -40,32 +43,31 @@ pub fn Toolbar() -> Element {
                 onclick: move |_| ctx.clear_done(),
                 "Clear Done"
             }
-            div { class: "spacer" }
-            span { class: "label", "Retry times:" }
-            U8Input {
-                value: *ctx.max_retry.read(),
-                min: 0u8,
-                max: 10u8,
-                disabled: running,
-                on_change: move |v| ctx.max_retry.set(v),
-            }
-            button {
-                class: "btn btn-primary",
-                disabled: running || ctx.tasks.cloned().is_empty(),
-                onclick: move |_| ctx.start_run(),
-                "Run"
-            }
             button {
                 class: "btn",
                 disabled: running,
-                onclick: move |_| ctx.theme.set(ctx.theme.cloned().toggled()),
-                "{ctx.theme.cloned().label()}"
+                onclick: move |_| ctx.show_settings.set(true),
+                "Settings"
+            }
+            div { class: "spacer" }
+            button {
+                class: "btn",
+                onclick: move |_| {
+                    ctx.update_settings(|s| s.theme = if s.theme == "dark" { "light".into() } else { "dark".into() });
+                },
+                "{theme_label}"
             }
             button {
                 class: "btn btn-danger",
                 disabled: !running,
                 onclick: move |_| ctx.cancel.set(true),
                 "Cancel"
+            }
+            button {
+                class: "btn btn-primary",
+                disabled: running || ctx.tasks.cloned().is_empty(),
+                onclick: move |_| ctx.start_run(),
+                "Run"
             }
         }
 
@@ -75,9 +77,12 @@ pub fn Toolbar() -> Element {
                 class: "input grow",
                 r#type: "text",
                 placeholder: "Type output directory here",
-                value: "{ctx.output_dir.read()}",
+                value: "{ctx.settings.read().output_dir}",
                 disabled: running,
-                oninput: move |evt: Event<FormData>| ctx.output_dir.set(evt.data.value()),
+                oninput: move |evt: Event<FormData>| {
+                    let value = evt.data.value();
+                    ctx.update_settings(move |s| s.output_dir = value);
+                },
             }
             button {
                 class: "btn",

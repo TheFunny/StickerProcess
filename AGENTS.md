@@ -23,9 +23,10 @@ refactor/packaging (E).
 | Path | Purpose |
 |---|---|
 | `src/main.rs` | Binary entry: logger init + Dioxus launch with window config |
-| `src/app.rs` | Root component; `UiState` global signals; `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
+| `src/app.rs` | Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
+| `src/config.rs` | `Settings` model (serde+toml), persisted to `%APPDATA%/StickerProcess/settings.toml`; `load`/`save` + roundtrip tests |
 | `src/runner.rs` | Async transcode loop: sequential tasks, size-based retry, cancel checks (mid-task kill via `cancel_flag`), progress channel, toasts |
-| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast` |
+| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`) landed in Phase C |
 | `src/media.rs` | `MediaFile` model: type detection by extension, duration, output path; enums; unit tests |
 | `src/transcoder.rs` | Framework-agnostic core: ffmpeg command generation, image/video processing, size checking; `Factor`, `FileSize`, `Status`; probing via `ffmpeg-the-third` |
@@ -37,9 +38,18 @@ refactor/packaging (E).
 
 ## Architecture
 
-- **State**: `UiState` bundles Copy-able signals (`tasks`, `output_dir`, `max_retry`,
-  `running`, `overall_progress`, `cancel`, `toasts`, `theme`) provided to components
+- **State**: `UiState` bundles Copy-able signals (`tasks`, `settings`, `show_settings`,
+  `running`, `overall_progress`, `cancel`, `toasts`) provided to components
   via context.
+- **Settings (Phase B)**: `config::Settings` is the single source of truth for all
+  config (output dir, max retry, video/image size limits, retry shrink factor,
+  duration factor table, forced FPS, theme). Mutate only via
+  `UiState::update_settings(…)` — it applies the closure,
+  then debounce-saves to `%APPDATA%/StickerProcess/settings.toml` (500 ms, latest
+  write wins). Missing/corrupt file falls back to defaults at load. Size limits,
+  the duration-factor table and the forced FPS are synced onto each `Transcoder`
+  by the runner before every attempt; the retry shrink factor is applied by the
+  runner when shrinking on size excess.
   Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, ... }`
   shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
   (deliberately NOT cloned). `TaskEntry` also carries *display mirror* fields
@@ -56,7 +66,7 @@ refactor/packaging (E).
   `Transcoder::run_with_progress()` inside `spawn_blocking` (progress parsed from
   ffmpeg stderr by `ffmpeg-sidecar`'s `iter()`, sent over an mpsc channel to the
   UI mirror), then `check_size()`. If over limit, shrink factor
-  (`factor = factor / excess * 0.96`) and retry up to `max_retry`, else advance.
+  (`factor = factor / excess * retry_shrink_factor`) and retry up to `max_retry`, else advance.
   Task errors mark `Alert`, push an error toast, and skip to the next task.
   The `cancel` signal is checked between attempts; mid-task cancel bridges to
   `Transcoder.cancel_flag: Arc<AtomicBool>` via a watcher task that kills the
@@ -71,8 +81,8 @@ refactor/packaging (E).
   `Done`, `Alert` (error), `SizeExcess` (retry-able); badge colors map to CSS
   classes in `app.css`.
 - **Theming**: CSS custom properties in `app.css`; `[data-theme="dark"]` on
-  `<html>` overrides variables. Toggle lives in the toolbar (`UiState.theme`),
-  persistence arrives with Phase B settings.
+  `<html>` overrides variables. Theme is part of `Settings` (persisted); toggles
+  live in the toolbar and the settings panel.
 - **Transcoding**:
   - Video → webm: `-b:v` computed from target size and duration
     (`256 * 1024 * 8 bits / duration_seconds`), `-bufsize = b:v * 1.5`, `-row-mt 1`,
@@ -85,14 +95,14 @@ refactor/packaging (E).
 - **Webm duration patch** (`transcoder::run_video`): after encoding, the file is scanned
   for the binary marker `44 89 88` and 8 bytes are overwritten with `100f64`
   (big-endian) to force a fixed/fake duration on the sticker.
-- **Status**: `Pending`, `Processing`, `Done`, `Alert` (error), `SizeExcess`
-  (retry-able); badge colors map to CSS classes in `app.css`.
-
+- **Status**: `Probing`, `Pending`, `Processing`, `Done`, `Alert` (error),
+  `SizeExcess` (retry-able); badge colors map to CSS classes in `app.css`.
 ### Default size factors by duration (video)
 
 `<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`;
-GIF additionally × 0.75. The factor is user-editable per task (0.1..=10.0) and only
-appears after the first run lazily initializes it.
+the whole table is configurable in Settings (band edges stay fixed). The factor
+is user-editable per task (0.1..=10.0) and only appears after the first run
+lazily initializes it.
 
 ## Build & Run
 

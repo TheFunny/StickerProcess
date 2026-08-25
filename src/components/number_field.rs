@@ -82,3 +82,36 @@ pub fn F64Input(
         }
     }
 }
+
+#[component]
+pub fn U32Input(
+    value: u32,
+    min: u32,
+    max: u32,
+    disabled: bool,
+    on_change: EventHandler<u32>,
+) -> Element {
+    let mut draft = use_signal(String::new);
+    let mut editing = use_signal(|| false);
+
+    rsx! {
+        input {
+            class: "input num",
+            r#type: "text",
+            disabled,
+            value: if editing() { draft.cloned() } else { value.to_string() },
+            onfocus: move |_| {
+                editing.set(true);
+                draft.set(value.to_string());
+            },
+            onblur: move |_| editing.set(false),
+            oninput: move |evt: Event<FormData>| {
+                let raw = evt.data.value();
+                draft.set(raw.clone());
+                if let Ok(v) = raw.trim().parse::<u32>() {
+                    on_change.call(v.clamp(min, max));
+                }
+            },
+        }
+    }
+}

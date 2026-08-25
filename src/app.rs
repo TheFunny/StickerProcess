@@ -2,12 +2,13 @@
 //!
 //! 任务仍以 `Arc<Mutex<Transcoder>>` 共享给后台 worker（共享模式不变），
 //! 另存少量"显示镜像"字段，让 UI 渲染时**不加锁**（worker 转码期间会长期持有锁）。
-//! Phase C 新增：实时进度/耗时/错误详情镜像、Toast、主题切换、添加时异步探测。
+//! Phase B：`Settings` 成为全部可配置项的唯一事实源，变更防抖写盘。
 
 use crate::components::{
-    drop_zone::DropZone, progress_bar::ProgressBar, task_list::TaskList, toast::Toast,
-    toast::ToastKind, toolbar::Toolbar,
+    drop_zone::DropZone, progress_bar::ProgressBar, settings_panel::SettingsPanel,
+    task_list::TaskList, toast::Toast, toast::ToastKind, toolbar::Toolbar,
 };
+use crate::config::{self, Settings};
 use crate::media::MediaFile;
 use crate::transcoder::{Status, Transcoder};
 use dioxus::prelude::*;
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-// AGENTS 约定保留：新增媒体类型时同步维护（rfd 过滤器在 Phase B 设置面板中复用）
+// AGENTS 约定保留：新增媒体类型时同步维护（rfd 过滤器在设置面板中复用）
 #[allow(dead_code)]
 pub const VIDEO: [&str; 3] = ["mp4", "gif", "apng"];
 #[allow(dead_code)]
@@ -23,6 +24,8 @@ pub const IMAGE: [&str; 3] = ["jpg", "jpeg", "png"];
 pub const SUPPORTED: [&str; 6] = ["mp4", "gif", "apng", "jpg", "jpeg", "png"];
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
+/// 防抖代数：仅最新一次修改会真正落盘。
+static SAVE_GEN: AtomicU64 = AtomicU64::new(0);
 
 /// 队列中的一个任务：共享 Transcoder（逻辑层）+ 显示镜像（渲染层）。
 #[derive(Clone)]
@@ -33,6 +36,7 @@ pub struct TaskEntry {
     /// Phase D 预览将展示输入大小对比。
     #[allow(dead_code)]
     pub input_size: u64,
+    /// 异步探测完成后才有值。
     pub input_duration: Option<f64>,
     pub is_video: bool,
     // ---- 显示镜像：由修改 Transcoder 的一方负责同步 ----
@@ -63,7 +67,7 @@ impl PartialEq for TaskEntry {
 
 impl TaskEntry {
     pub fn new(path: &PathBuf) -> Self {
-        // Phase C：不再同步探测（拖入大目录不卡 UI），check_input 延后到后台线程
+        // 不做同步探测（拖入大目录不卡 UI），check_input 延后到后台线程
         let transcoder = Transcoder::new(MediaFile::new(path));
         let input_path = transcoder.media_file.path_str();
         let is_video = matches!(
@@ -86,48 +90,16 @@ impl TaskEntry {
         }
     }
 
-    /// 输出大小是否超限（>1.0 即超限），无输出时返回 None。
-    pub fn size_excess_factor(&self) -> Option<f64> {
-        const IMAGE_MAX_SIZE: f64 = (512 * 1024) as f64;
-        const VIDEO_MAX_SIZE: f64 = (256 * 1024) as f64;
+    /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
+    pub fn size_excess_ratio(&self, video_limit: u64, image_limit: u64) -> Option<f64> {
         let size = self.output_size? as f64;
         Some(
             size / if self.is_video {
-                VIDEO_MAX_SIZE
+                video_limit
             } else {
-                IMAGE_MAX_SIZE
-            },
+                image_limit
+            } as f64,
         )
-    }
-}
-
-/// 浅色/深色主题（持久化随 Phase B 设置落地，当前为会话内切换）。
-#[derive(Clone, Copy, PartialEq)]
-pub enum Theme {
-    Light,
-    Dark,
-}
-
-impl Theme {
-    pub fn attr(self) -> &'static str {
-        match self {
-            Theme::Light => "light",
-            Theme::Dark => "dark",
-        }
-    }
-
-    pub fn toggled(self) -> Self {
-        match self {
-            Theme::Light => Theme::Dark,
-            Theme::Dark => Theme::Light,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Theme::Light => "Dark",
-            Theme::Dark => "Light",
-        }
     }
 }
 
@@ -135,13 +107,15 @@ impl Theme {
 #[derive(Clone, Copy)]
 pub struct UiState {
     pub tasks: Signal<Vec<TaskEntry>>,
-    pub output_dir: Signal<String>,
-    pub max_retry: Signal<u8>,
+    /// 全部可配置项（唯一事实源，变更防抖落盘）。
+    pub settings: Signal<Settings>,
+    /// 设置面板开关。
+    pub show_settings: Signal<bool>,
     pub running: Signal<bool>,
     pub overall_progress: Signal<f32>,
+    /// 取消标记：runner 在每次尝试前检查；运行中的任务经 cancel_flag 中断 ffmpeg。
     pub cancel: Signal<bool>,
     pub toasts: Signal<Vec<Toast>>,
-    pub theme: Signal<Theme>,
 }
 
 impl UiState {
@@ -160,6 +134,25 @@ impl UiState {
             entry.output_size = task.output_size.as_ref().map(|s| s.size);
             Some(out)
         })
+    }
+
+    /// 修改设置并调度防抖保存（500ms 内的连续修改只落盘一次）。
+    pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings)) {
+        self.settings.with_mut(f);
+        let generation = SAVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+        let snapshot = self.settings.cloned();
+        spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if SAVE_GEN.load(Ordering::Relaxed) != generation {
+                return; // 已有更新的修改排队，由它负责落盘
+            }
+            let result = tokio::task::spawn_blocking(move || config::save(&snapshot))
+                .await
+                .unwrap_or_else(|e| Err(format!("join error: {e}")));
+            if let Err(e) = result {
+                log::error!("Failed to save settings: {e}");
+            }
+        });
     }
 
     /// 推送一条通知：停留 3.6 秒 → 0.4 秒渐出 → 移除。
@@ -185,8 +178,7 @@ impl UiState {
         });
     }
 
-    /// 添加文件，仅保留受支持的扩展名（与 iced NewFiles 的过滤一致）。
-    /// 每个新任务在后台线程探测时长/编码，期间显示 Probing 状态。
+    /// 添加文件，仅保留受支持的扩展名。每个新任务在后台线程探测时长/编码。
     pub fn add_files(&mut self, files: Vec<PathBuf>) {
         let mut added = Vec::new();
         self.tasks.with_mut(|list| {
@@ -269,7 +261,7 @@ impl UiState {
             self.push_toast(ToastKind::Info, "Waiting for probing to finish");
             return;
         }
-        let output_dir = PathBuf::from(self.output_dir.peek().clone());
+        let output_dir = PathBuf::from(self.settings.peek().output_dir.clone());
         if !output_dir.exists()
             && let Err(e) = std::fs::create_dir(&output_dir)
         {
@@ -303,40 +295,31 @@ impl UiState {
 
     /// 选择输出目录对话框（HTML 无目录选择器，沿用 rfd）。
     pub fn pick_output_dir(&mut self) {
-        let mut output_dir = self.output_dir;
+        let mut ctx = *self;
         spawn(async move {
             if let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await {
-                output_dir.set(folder.path().to_string_lossy().into());
+                let path = folder.path().to_string_lossy().into_owned();
+                ctx.update_settings(move |s| s.output_dir = path);
             }
         });
     }
-}
-
-fn default_output_dir() -> String {
-    let mut output = std::env::current_dir().unwrap_or_else(|e| {
-        log::error!("Failed to get current directory: {}", e);
-        PathBuf::from(".")
-    });
-    output.push("output");
-    output.to_string_lossy().into()
 }
 
 #[component]
 pub fn App() -> Element {
     let ctx = UiState {
         tasks: use_signal(Vec::new),
-        output_dir: use_signal(default_output_dir),
-        max_retry: use_signal(|| 3u8),
+        settings: use_signal(config::load),
+        show_settings: use_signal(|| false),
         running: use_signal(|| false),
         overall_progress: use_signal(|| 0.0f32),
         cancel: use_signal(|| false),
         toasts: use_signal(Vec::new),
-        theme: use_signal(|| Theme::Light),
     };
 
-    // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖
+    // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖；随设置持久化
     use_effect(move || {
-        let theme = ctx.theme.read().attr();
+        let theme = ctx.settings.read().theme.clone();
         document::eval(&format!(
             "document.documentElement.setAttribute('data-theme', '{theme}')"
         ));
@@ -350,6 +333,7 @@ pub fn App() -> Element {
             Toolbar {}
             TaskList {}
             ProgressBar {}
+            SettingsPanel {}
             crate::components::toast::ToastContainer {}
         }
     }

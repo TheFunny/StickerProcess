@@ -13,9 +13,6 @@ use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-const IMAGE_MAX_SIZE: u64 = 512 * 1024;
-const VIDEO_MAX_SIZE: u64 = 256 * 1024;
-
 /// 单个任务的实时进度更新（进度接收循环消费）。
 pub struct ProgressUpdate {
     pub index: usize,
@@ -23,11 +20,11 @@ pub struct ProgressUpdate {
 }
 
 /// 与原 main.rs 中 `Transcoder::size_excess_factor` 相同的判定。
-fn size_excess_factor(task: &Transcoder) -> Option<f64> {
+fn size_excess_factor(task: &Transcoder, video_limit: u64, image_limit: u64) -> Option<f64> {
     let size = task.output_size.as_ref()?.size as f64;
     let limit = match task.media_file.r#type() {
-        Some(MediaType::Image(_)) => IMAGE_MAX_SIZE,
-        Some(MediaType::Video(_)) => VIDEO_MAX_SIZE,
+        Some(MediaType::Image(_)) => image_limit,
+        Some(MediaType::Video(_)) => video_limit,
         None => unreachable!(),
     };
     Some(size / limit as f64)
@@ -61,10 +58,14 @@ pub async fn run_all(
     mut ctx: UiState,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
 ) {
-    let max_retry = *ctx.max_retry.peek();
+    let settings = ctx.settings.peek().clone();
+    let max_retry = settings.max_retry;
+    let (video_limit, image_limit) = (settings.video_max_size(), settings.image_max_size());
+    let retry_shrink = settings.retry_shrink_factor;
+    let duration_factors = settings.duration_factors;
+    let target_fps = settings.target_fps;
     let mut index = 0usize;
     let mut cancelled = false;
-
     loop {
         // 动态读取队列长度：与 iced 订阅一样允许运行中拖入新文件
         let Some(entry) = ctx.tasks.cloned().get(index).cloned() else {
@@ -75,7 +76,7 @@ pub async fn run_all(
             break;
         }
 
-        let output_dir = ctx.output_dir.peek().clone();
+        let output_dir = ctx.settings.peek().output_dir.clone();
         if let Err(msg) = ensure_output_dir_set(&task_arc, &output_dir) {
             set_mirror(&mut ctx, index, |e| e.error = Some(msg.clone()));
             ctx.with_task(index, |t| t.status = Status::Alert);
@@ -105,7 +106,11 @@ pub async fn run_all(
                 }
             });
 
-            ctx.with_task(index, |t| t.status = Status::Processing);
+            ctx.with_task(index, |t| {
+                t.duration_factors = duration_factors;
+                t.target_fps = target_fps;
+                t.status = Status::Processing;
+            });
             set_mirror(&mut ctx, index, |e| {
                 e.progress = None;
                 e.error = None;
@@ -139,10 +144,10 @@ pub async fn run_all(
                     // 与 iced NextProcess(Ok) 一致：查尺寸 → 调系数 → 决定重试/前进
                     let decision = ctx
                         .with_task(index, |t| match t.check_size() {
-                            Ok(_) => match size_excess_factor(t) {
+                            Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
                                 Some(excess) if excess > 1.0 => {
                                     if let Some(factor) = t.size_factor.as_mut() {
-                                        factor.set(factor.get() / excess * 0.96);
+                                        factor.set(factor.get() / excess * retry_shrink);
                                     }
                                     t.status = Status::SizeExcess;
                                     if retry < max_retry {

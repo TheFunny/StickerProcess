@@ -5,6 +5,7 @@
 
 mod app;
 mod components;
+mod config;
 mod media;
 mod runner;
 mod transcoder;
