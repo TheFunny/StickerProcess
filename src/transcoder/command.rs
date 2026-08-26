@@ -1,0 +1,158 @@
+//! ffmpeg 命令生成（`Transcoder::gen_command`）与码率/系数纯函数。
+//!
+//! 纯函数独立出来以便脱离 ffmpeg 进程单测（E6）。
+
+use super::{Factor, TranscodeError, Transcoder};
+use crate::media::{MediaType, VideoType};
+use ffmpeg_sidecar::command::FfmpegCommand;
+
+/// 视频码率基准（bps）：256 KB 贴纸换算为比特 / 时长。
+const BITRATE_BASE_BYTES: f64 = 256.0 * 1024.0;
+
+/// 目标码率 = 贴纸比特数 / 视频时长。
+fn target_bitrate_bps(duration: f64) -> f64 {
+    BITRATE_BASE_BYTES * 8.0 / duration
+}
+
+/// 时长→默认系数查表，区间固定：<1s, <2s, <3s, <5s, <8s, ≥8s。
+pub fn default_factor(duration: f64, table: &[f64; 6]) -> f64 {
+    let [f1, f2, f3, f5, f8, f8p] = *table;
+    match duration {
+        ..1f64 => f1,
+        ..2f64 => f2,
+        ..3f64 => f3,
+        ..5f64 => f5,
+        ..8f64 => f8,
+        8f64.. => f8p,
+        _ => 1.0, // NaN 等无效值（与旧实现一致）
+    }
+}
+
+/// 码率 × 系数后量化到 10 的倍数（ffmpeg `-b:v` 取整数）。
+fn quantized_bitrate(base_bps: f64, factor: f64) -> u32 {
+    (base_bps * factor) as u32 / 10 * 10
+}
+
+/// 把 ffmpeg 进度行的 `time`（如 `00:03:29.04`）解析为秒数；解析失败返回 0。
+pub fn parse_progress_time(time: &str) -> f64 {
+    let mut seconds = 0f64;
+    for part in time.trim().split(':') {
+        let value = part.parse::<f64>().unwrap_or(0.0);
+        seconds = seconds * 60.0 + value;
+    }
+    seconds
+}
+
+impl Transcoder {
+    pub(super) fn gen_command(&mut self) -> Result<FfmpegCommand, TranscodeError> {
+        let mut command = FfmpegCommand::new();
+        command
+            .input(self.media_file.path_str())
+            .filter("scale=512:512:force_original_aspect_ratio=decrease")
+            .args(["-sws_flags", "lanczos"])
+            .overwrite();
+        if let MediaType::Video(v_type) = self
+            .media_file
+            .r#type()
+            .ok_or(TranscodeError::InvalidMediaType)?
+        {
+            let duration = if v_type == VideoType::Apng {
+                1.0
+            } else {
+                let duration = self
+                    .media_file
+                    .duration()
+                    .ok_or(TranscodeError::InvalidDuration)?;
+                if duration <= 0.0 {
+                    return Err(TranscodeError::InvalidDuration);
+                }
+                duration
+            };
+            let base_bps = target_bitrate_bps(duration);
+            let mut factor = match self.size_factor.as_ref() {
+                Some(factor) => factor.get(),
+                None => {
+                    let factor = default_factor(duration, &self.duration_factors);
+                    self.size_factor = Some(Factor::new(factor));
+                    factor
+                }
+            };
+            // GIF 码率计算 patch（程序内固定值，非设置项）
+            if let VideoType::Gif = v_type {
+                factor *= 0.75;
+            }
+            let target_bitrate = quantized_bitrate(base_bps, factor);
+            if self.target_fps > 0.0 {
+                command.args(["-r", &self.target_fps.to_string()]);
+            }
+            command
+                .no_audio()
+                .codec_video("libvpx-vp9")
+                .pix_fmt(match v_type {
+                    VideoType::Mp4 => "yuv420p10",
+                    VideoType::Gif | VideoType::Apng => "yuva420p",
+                })
+                .crf(26)
+                .args(["-b:v", &target_bitrate.to_string()])
+                .args(["-bufsize", &(target_bitrate as f64 * 1.5).to_string()])
+                .args(["-row-mt", "1"])
+                .format("webm")
+                .output(
+                    self.media_file
+                        .output()
+                        .and_then(|p| p.to_str())
+                        .ok_or(TranscodeError::InvalidOutputPath)?,
+                );
+        } else {
+            command.codec_video("png").format("image2").pipe_stdout();
+        };
+        Ok(command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEFAULT_TABLE: [f64; 6] = [1.2, 1.1, 1.0, 0.9, 0.8, 0.7];
+
+    #[test]
+    fn factor_table_band_edges() {
+        // 左闭右开区间：边界值落在更高一档
+        assert_eq!(default_factor(0.999, &DEFAULT_TABLE), 1.2);
+        assert_eq!(default_factor(1.0, &DEFAULT_TABLE), 1.1);
+        assert_eq!(default_factor(2.0, &DEFAULT_TABLE), 1.0);
+        assert_eq!(default_factor(3.0, &DEFAULT_TABLE), 0.9);
+        assert_eq!(default_factor(5.0, &DEFAULT_TABLE), 0.8);
+        assert_eq!(default_factor(8.0, &DEFAULT_TABLE), 0.7);
+        assert_eq!(default_factor(60.0, &DEFAULT_TABLE), 0.7);
+    }
+
+    #[test]
+    fn factor_table_uses_custom_values() {
+        let table = [2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+        assert_eq!(default_factor(0.5, &table), 2.0);
+    }
+
+    #[test]
+    fn bitrate_base_matches_sticker_budget() {
+        // 256KB*8/1s = 2097152 bps
+        assert_eq!(target_bitrate_bps(1.0), 2_097_152.0);
+        assert!((target_bitrate_bps(2.0) - 1_048_576.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bitrate_quantized_to_tens() {
+        // 2097152 * 1.0 → as u32 截断后再取 10 的倍数
+        assert_eq!(quantized_bitrate(2_097_152.0, 1.0), 2_097_150);
+        assert_eq!(quantized_bitrate(100.0, 1.0), 100);
+        assert_eq!(quantized_bitrate(105.0, 1.0), 100);
+    }
+
+    #[test]
+    fn progress_time_parses() {
+        assert!((parse_progress_time("00:00:01.00") - 1.0).abs() < 1e-9);
+        assert!((parse_progress_time("00:03:29.04") - 209.04).abs() < 1e-9);
+        assert_eq!(parse_progress_time("garbage"), 0.0);
+    }
+}

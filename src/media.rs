@@ -1,3 +1,4 @@
+use ffmpeg_the_third as ffmpeg;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -32,10 +33,6 @@ impl MediaFile {
         }
     }
 
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-
     pub fn path_str(&self) -> String {
         self.path.to_string_lossy().into_owned()
     }
@@ -44,16 +41,8 @@ impl MediaFile {
         self.r#type.clone()
     }
 
-    pub fn set_type(&mut self, r#type: MediaType) {
-        self.r#type = Some(r#type);
-    }
-
     pub fn duration(&self) -> Option<f64> {
         self.duration
-    }
-
-    pub fn set_duration(&mut self, duration: f64) {
-        self.duration = Some(duration);
     }
 
     pub fn output(&self) -> Option<&PathBuf> {
@@ -62,6 +51,68 @@ impl MediaFile {
 
     pub fn set_output(&mut self, output: PathBuf) {
         self.output = Some(output);
+    }
+
+    /// 用 ffmpeg 探测真实编码与时长，并纠正按扩展名误判的类型
+    /// （如视频容器装着图片编码）。供后台探测线程调用。
+    pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
+        let ictx = ffmpeg::format::input(&self.path)?;
+
+        let duration = ictx.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
+
+        ffmpeg::format::context::input::dump(&ictx, 0, Some(&*self.path_str()));
+
+        let ist = ictx
+            .streams()
+            .best(ffmpeg::media::Type::Video)
+            .ok_or(ffmpeg::Error::StreamNotFound)?;
+
+        let decoder = ffmpeg::codec::context::Context::from_parameters(ist.parameters())?
+            .decoder()
+            .video()?;
+
+        let id = decoder.id();
+
+        match id {
+            ffmpeg::codec::id::Id::PNG
+            | ffmpeg::codec::id::Id::MJPEG
+            | ffmpeg::codec::id::Id::WEBP => {
+                // implement animated webp?
+                match self.r#type().ok_or(ffmpeg::Error::InvalidData)? {
+                    MediaType::Image(_) => {}
+                    MediaType::Video(_) => {
+                        log::warn!(
+                            "{} is a video file, but it contains an image codec",
+                            self.path.display()
+                        );
+                        self.r#type = Some(match id {
+                            ffmpeg::codec::id::Id::PNG => MediaType::Image(ImageType::Png),
+                            ffmpeg::codec::id::Id::MJPEG => MediaType::Image(ImageType::Jpg),
+                            ffmpeg::codec::id::Id::WEBP => MediaType::Image(ImageType::Webp),
+                            _ => unreachable!(),
+                        });
+                    }
+                }
+            }
+            _ => match self.r#type().ok_or(ffmpeg::Error::InvalidData)? {
+                MediaType::Image(_) => {
+                    log::warn!(
+                        "{} is an image file, but it contains a video codec",
+                        self.path.display()
+                    );
+                    self.r#type = Some(match id {
+                        ffmpeg::codec::id::Id::GIF => MediaType::Video(VideoType::Gif),
+                        ffmpeg::codec::id::Id::APNG => MediaType::Video(VideoType::Apng),
+                        _ => MediaType::Video(VideoType::Mp4),
+                    });
+                }
+                MediaType::Video(_) => {}
+            },
+        };
+        if duration > 0f64 {
+            self.duration = Some(duration);
+        }
+        Ok(())
     }
 }
 

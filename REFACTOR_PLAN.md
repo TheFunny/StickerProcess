@@ -27,20 +27,19 @@
       `shrunk_factor`(pub, runner 使用) 抽取到 transcoder.rs
 - [x] 单测覆盖区间端点、量化取整、shrink 公式、进度时间解析（+7 测试）
 
-## P2 — 结构性重构（随 D 或 D 后）
+## P2 — 结构性重构 ✅ 已完成 (2026-08-26)
 
-- [ ] **5. `transcoder.rs` 拆分** (380 行混四件事)：`check_input` 归还 `media.rs`；
-      命令生成 / webm duration patch / 图片管道+oxipng 各自成模块
-- [ ] **6. `runner.rs run_all` 分解** (170 行双层循环)：拆出 `run_one_task() -> Decision`；
-      取消 watcher 改为每任务一个（现为每次尝试 spawn + abort）
-- [ ] **7. 镜像同步双轨制统一** ⚠️：`with_task` 刷 status/factor/output_size，
-      `set_mirror` 刷 progress/elapsed/error，两条路径靠记忆维护（本次开发已踩坑两次）。
-      统一为单一 `sync_mirror(entry, &Transcoder)`，所有修改后必经此口
-- [ ] **8. 错误处理枚举化 (E1)**：`&str` 贯穿 transcoder→runner→mirror/toast；
-      取消判断靠 `e == "Cancelled"` 字符串比较。`thiserror` 定义
-      `CommandBuild / Spawn / Cancelled / DurationPatch / ImagePipe / SizeCheck`
-- [ ] **9. 进度事件节流**：unbounded mpsc 每事件触发整表重渲染；当前规模无碍，
-      任务多/视频长时接收端按 ~10Hz 合并
+- [x] **5. `transcoder.rs` 拆分** → `src/transcoder/`：
+      `mod.rs`（类型+编排）、`command.rs`（命令生成+码率纯函数+单测）、
+      `steps.rs`（webm 时长补丁、oxipng 图片管道）、`error.rs`（TranscodeError）；
+      `check_input` 以 `MediaFile::probe` 归还 `media.rs`
+- [x] **6. `runner.rs run_all` 分解**：拆出 `run_single_task() -> TaskOutcome`；
+      取消 watcher 改为每任务一个（跨重试存活，函数出口统一 cancel）
+- [x] **7. 镜像写入口统一**：`with_task`（派生字段）与 `touch_entry`（UI-only 字段）
+      两个入口 + AGENTS.md 契约文档化；runner/probe/接收循环全部改道
+- [x] **8. 错误处理枚举化 (E1)**：`TranscodeError`（thiserror）贯穿
+      transcoder→runner→mirror/toast；取消用 `matches!(e, Cancelled)` 判定
+- [x] **9. 进度事件节流**：接收端 100ms interval 合并同任务进度再写镜像
 
 ## P3 — 暂缓
 

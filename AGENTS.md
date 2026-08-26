@@ -25,11 +25,11 @@ refactor/packaging (E).
 | `src/main.rs` | Binary entry: logger init + Dioxus launch with window config |
 | `src/app.rs` | Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
 | `src/config.rs` | `Settings` model (serde+toml), persisted to `%APPDATA%/StickerProcess/settings.toml`; `load`/`save` + roundtrip tests |
-| `src/runner.rs` | Async transcode loop: sequential tasks, size-based retry, cancel checks (mid-task kill via `cancel_flag`), progress channel, toasts |
-| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel` |
+| `src/runner.rs` | Async transcode loop: `run_all` → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
+| `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`) landed in Phase C |
-| `src/media.rs` | `MediaFile` model: type detection by extension, duration, output path; enums; unit tests |
-| `src/transcoder.rs` | Framework-agnostic core: ffmpeg command generation, image/video processing, size checking; `Factor`, `FileSize`, `Status`; probing via `ffmpeg-the-third` |
+| `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check), duration, output path; enums; unit tests |
+| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration), `command.rs` (ffmpeg command gen + bitrate pure fns), `steps.rs` (webm duration patch, oxipng image pipe), `error.rs` (`TranscodeError`) |
 | `MIGRATION_PLAN.md` | Roadmap and phase checklist (A done; B–E pending) |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `notes.md` | Developer notes (see Gotchas) |
@@ -54,11 +54,14 @@ refactor/packaging (E).
   shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
   (deliberately NOT cloned). `TaskEntry` also carries *display mirror* fields
   (path/status/output_size/factor/progress/elapsed/error) so rendering never
-  locks the mutex while a worker holds it during transcoding. Mutate a task only
-  through `UiState::with_task(index, …)` — it locks, applies the closure,
-  refreshes the mirror, and notifies subscribers.
+  locks the mutex while a worker holds it during transcoding. Mirror writes go
+  through the two write entries — `UiState::with_task(index, …)` for
+  Transcoder-derived fields (locks, applies, syncs status/factor/output_size)
+  and `UiState::touch_entry(index, …)` for UI-only mirrors
+  (progress/elapsed/error/input_duration). Do not mutate mirrors via raw
+  `tasks.with_mut` elsewhere.
 - **Async probing**: adding a file creates the `Transcoder` without IO probing
-  (`Status::Probing`); `check_input` runs on a background thread and flips the
+  (`Status::Probing`); `MediaFile::probe` runs on a background thread and flips the
   mirror to `Pending`/`Alert`. Run is blocked while any task is probing.
   `Arc::ptr_eq` guards against stale index writes if the queue shifts.
 - **Execution flow**: Run → `runner::run_all` async loop. Per task: assign a
@@ -92,7 +95,7 @@ refactor/packaging (E).
 - **Duration inference**: `ffmpeg-the-third` opens the input to read codec id and
   duration; APNG is assigned a fixed duration of 1 s (no probe). Output filenames are
   timestamps `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
-- **Webm duration patch** (`transcoder::run_video`): after encoding, the file is scanned
+- **Webm duration patch** (`transcoder::steps`): after encoding, the file is scanned
   for the binary marker `44 89 88` and 8 bytes are overwritten with `100f64`
   (big-endian) to force a fixed/fake duration on the sticker.
 - **Status**: `Probing`, `Pending`, `Processing`, `Done`, `Alert` (error),
@@ -122,14 +125,18 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   ffmpeg-the-third`. Commits may combine feature + cleanup + minor tweaks.
 - Keep the `Arc<Mutex<Transcoder>>` sharing pattern; do not clone task state;
   never hold a `MutexGuard` across an `.await`.
-- Keep display-mirror fields in sync whenever mutating a `Transcoder` (use
-  `UiState::with_task`; direct lock + mutation elsewhere will desynchronize the UI).
+- Mirror writes: use `UiState::with_task` (Transcoder-derived fields) or
+  `UiState::touch_entry` (UI-only fields); direct `tasks.with_mut` on mirror
+  fields elsewhere will desynchronize the UI.
+- Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
+  cancellation is matched via the enum, never by string comparison.
 - New media types must be wired in **four** places:
-  1. `src/app.rs` — `SUPPORTED` / `VIDEO` / `IMAGE` constants
-  2. `src/components/toolbar.rs` — `FILE_ACCEPT` string
+  1. `src/app.rs` — `VIDEO` / `IMAGE` constants (`SUPPORTED` is derived)
+  2. `src/components/toolbar.rs` — accept string derives from `SUPPORTED`
+     automatically; extend only for special cases
   3. `src/media.rs` — extension match + enum variant + a unit test
-  4. `src/transcoder.rs` — codec probing (`check_input`), duration handling,
-     pix_fmt, and any factor adjustments
+  4. `src/transcoder/command.rs` — pix_fmt / codec handling, plus
+     `MediaFile::probe` codec correction in `src/media.rs`
 
 ## Gotchas
 

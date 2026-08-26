@@ -153,6 +153,17 @@ impl UiState {
         })
     }
 
+    /// UI 专属镜像字段（progress/elapsed/error/input_duration）的唯一修改入口。
+    /// 派生自 Transcoder 的镜像（status/factor/output_size）请走 `with_task`。
+    /// 这两个方法是任务镜像的全部写入口，勿直接 `tasks.with_mut` 改镜像字段。
+    pub fn touch_entry(&mut self, index: usize, f: impl FnOnce(&mut TaskEntry)) {
+        self.tasks.with_mut(|list| {
+            if let Some(entry) = list.get_mut(index) {
+                f(entry);
+            }
+        });
+    }
+
     /// 修改设置并调度防抖保存（500ms 内的连续修改只落盘一次）。
     pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings)) {
         self.settings.with_mut(f);
@@ -232,15 +243,12 @@ impl UiState {
             })
             .await
             .unwrap_or_else(|e| Err(format!("join error: {e}")));
-            ctx.tasks.with_mut(|list| {
+            ctx.touch_entry(index, |e| {
                 // 队列可能已被清空/重排：校验仍是同一个任务
-                let Some(e) = list.get_mut(index) else {
-                    return;
-                };
                 if !Arc::ptr_eq(&e.transcoder, &entry.transcoder) {
                     return;
                 }
-                match result {
+                match &result {
                     Ok(()) => {
                         e.status = Status::Pending;
                         e.input_duration = e
@@ -251,7 +259,7 @@ impl UiState {
                     }
                     Err(err) => {
                         e.status = Status::Alert;
-                        e.error = Some(err);
+                        e.error = Some(err.clone());
                     }
                 }
             });
@@ -293,17 +301,45 @@ impl UiState {
         self.cancel.set(false);
         self.running.set(true);
 
-        // 实时进度通道：worker 线程发送 → 接收循环写显示镜像
+        // 实时进度通道：worker 发送 → 接收端按 ~10Hz 节流合并后写显示镜像
         let (progress_tx, mut progress_rx) =
             tokio::sync::mpsc::unbounded_channel::<crate::runner::ProgressUpdate>();
         let mut tasks = self.tasks;
         spawn(async move {
-            while let Some(update) = progress_rx.recv().await {
-                tasks.with_mut(|list| {
-                    if let Some(entry) = list.get_mut(update.index) {
-                        entry.progress = Some(update.pct.clamp(0.0, 1.0));
+            use std::collections::HashMap;
+            use tokio::time::MissedTickBehavior;
+
+            const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+            let mut pending: HashMap<usize, f32> = HashMap::new();
+            let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+            loop {
+                let closed = tokio::select! {
+                    _ = ticker.tick() => false,
+                    msg = progress_rx.recv() => match msg {
+                        Some(update) => {
+                            pending.insert(update.index, update.pct.clamp(0.0, 1.0));
+                            continue;
+                        }
+                        None => true,
                     }
-                });
+                };
+
+                if !pending.is_empty() {
+                    let latest: Vec<_> = pending.drain().collect();
+                    tasks.with_mut(|list| {
+                        for (index, pct) in latest {
+                            if let Some(entry) = list.get_mut(index) {
+                                entry.progress = Some(pct);
+                            }
+                        }
+                    });
+                }
+                if closed {
+                    break;
+                }
             }
         });
 
