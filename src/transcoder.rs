@@ -1,4 +1,4 @@
-use crate::media::{ImageType, MediaFile, MediaType, StickerType, VideoType};
+use crate::media::{ImageType, MediaFile, MediaType, VideoType};
 use ffmpeg_sidecar::{child::FfmpegChild, command::FfmpegCommand};
 use ffmpeg_the_third as ffmpeg;
 use std::fs::{File, OpenOptions};
@@ -230,20 +230,11 @@ impl Transcoder {
                     return Err("Invalid media duration");
                 }
             }
-            let target_bitrate = (256 * 1024 * 8) as f64 / duration;
+            let base_bps = target_bitrate_bps(duration);
             let mut factor = match self.size_factor.as_ref() {
                 Some(factor) => factor.get(),
                 None => {
-                    let [f1, f2, f3, f5, f8, f8p] = self.duration_factors;
-                    let factor = match duration {
-                        ..1f64 => f1,
-                        ..2f64 => f2,
-                        ..3f64 => f3,
-                        ..5f64 => f5,
-                        ..8f64 => f8,
-                        8f64.. => f8p,
-                        _ => 1.0,
-                    };
+                    let factor = default_factor(duration, &self.duration_factors);
                     self.size_factor = Some(Factor::new(factor));
                     factor
                 }
@@ -252,7 +243,7 @@ impl Transcoder {
             if let VideoType::Gif = v_type {
                 factor *= 0.75;
             }
-            let target_bitrate = (target_bitrate * factor) as u32 / 10 * 10;
+            let target_bitrate = quantized_bitrate(base_bps, factor);
             if self.target_fps > 0.0 {
                 command.args(["-r", &self.target_fps.to_string()]);
             }
@@ -377,4 +368,90 @@ fn parse_progress_time(time: &str) -> f64 {
         seconds = seconds * 60.0 + value;
     }
     seconds
+}
+
+/// 视频码率基准（bps）：256 KB 贴纸换算为比特 / 时长。
+const BITRATE_BASE_BYTES: f64 = 256.0 * 1024.0;
+
+/// 目标码率 = 贴纸比特数 / 视频时长。
+fn target_bitrate_bps(duration: f64) -> f64 {
+    BITRATE_BASE_BYTES * 8.0 / duration
+}
+
+/// 时长→默认系数查表，区间固定：<1s, <2s, <3s, <5s, <8s, ≥8s。
+fn default_factor(duration: f64, table: &[f64; 6]) -> f64 {
+    let [f1, f2, f3, f5, f8, f8p] = *table;
+    match duration {
+        ..1f64 => f1,
+        ..2f64 => f2,
+        ..3f64 => f3,
+        ..5f64 => f5,
+        ..8f64 => f8,
+        8f64.. => f8p,
+        _ => 1.0, // NaN 等无效值（与旧实现一致）
+    }
+}
+
+/// 码率 × 系数后量化到 10 的倍数（ffmpeg `-b:v` 取整数）。
+fn quantized_bitrate(base_bps: f64, factor: f64) -> u32 {
+    (base_bps * factor) as u32 / 10 * 10
+}
+
+/// 超限重试的系数缩放：factor / excess * shrink。
+pub fn shrunk_factor(current: f64, excess: f64, shrink: f64) -> f64 {
+    current / excess * shrink
+}
+
+#[cfg(test)]
+mod pure_tests {
+    use super::*;
+
+    const DEFAULT_TABLE: [f64; 6] = [1.2, 1.1, 1.0, 0.9, 0.8, 0.7];
+
+    #[test]
+    fn factor_table_band_edges() {
+        // 左闭右开区间：边界值落在更高一档
+        assert_eq!(default_factor(0.999, &DEFAULT_TABLE), 1.2);
+        assert_eq!(default_factor(1.0, &DEFAULT_TABLE), 1.1);
+        assert_eq!(default_factor(2.0, &DEFAULT_TABLE), 1.0);
+        assert_eq!(default_factor(3.0, &DEFAULT_TABLE), 0.9);
+        assert_eq!(default_factor(5.0, &DEFAULT_TABLE), 0.8);
+        assert_eq!(default_factor(8.0, &DEFAULT_TABLE), 0.7);
+        assert_eq!(default_factor(60.0, &DEFAULT_TABLE), 0.7);
+    }
+
+    #[test]
+    fn factor_table_uses_custom_values() {
+        let table = [2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
+        assert_eq!(default_factor(0.5, &table), 2.0);
+    }
+
+    #[test]
+    fn bitrate_base_matches_sticker_budget() {
+        // 256KB*8/1s = 2097152 bps
+        assert_eq!(target_bitrate_bps(1.0), 2_097_152.0);
+        assert!((target_bitrate_bps(2.0) - 1_048_576.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bitrate_quantized_to_tens() {
+        // 2097152 * 1.0 → as u32 截断后再取 10 的倍数
+        assert_eq!(quantized_bitrate(2_097_152.0, 1.0), 2_097_150);
+        assert_eq!(quantized_bitrate(100.0, 1.0), 100);
+        assert_eq!(quantized_bitrate(105.0, 1.0), 100);
+    }
+
+    #[test]
+    fn shrunk_factor_formula() {
+        // 与旧行为逐字对应：factor / excess * 0.96
+        assert!((shrunk_factor(0.9, 1.5, 0.96) - 0.576).abs() < 1e-12);
+        assert!((shrunk_factor(1.0, 1.0, 0.96) - 0.96).abs() < 1e-12);
+    }
+
+    #[test]
+    fn progress_time_parses() {
+        assert!((parse_progress_time("00:00:01.00") - 1.0).abs() < 1e-9);
+        assert!((parse_progress_time("00:03:29.04") - 209.04).abs() < 1e-9);
+        assert_eq!(parse_progress_time("garbage"), 0.0);
+    }
 }

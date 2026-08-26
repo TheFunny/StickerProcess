@@ -2,11 +2,18 @@
 //!
 //! Phase B：输出目录直接读写 `Settings`（防抖落盘）；重试次数移入设置面板。
 
-use crate::app::UiState;
+use crate::app::{SUPPORTED, UiState};
 use dioxus::prelude::*;
 use std::path::PathBuf;
 
-const FILE_ACCEPT: &str = ".mp4,.gif,.apng,.jpg,.jpeg,.png";
+/// 文件选择器 accept 属性，从 SUPPORTED 常量派生（避免手写漂移）。
+fn file_accept() -> String {
+    SUPPORTED
+        .iter()
+        .map(|ext| format!(".{ext}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 #[component]
 pub fn Toolbar() -> Element {
@@ -28,7 +35,7 @@ pub fn Toolbar() -> Element {
                     style: "display: none",
                     r#type: "file",
                     multiple: true,
-                    accept: FILE_ACCEPT,
+                    accept: "{file_accept()}",
                     onchange: move |evt: Event<FormData>| {
                         let files: Vec<PathBuf> = evt.data.files().iter().map(|f| f.path()).collect();
                         if !files.is_empty() {

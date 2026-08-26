@@ -16,12 +16,27 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-// AGENTS 约定保留：新增媒体类型时同步维护（rfd 过滤器在设置面板中复用）
-#[allow(dead_code)]
 pub const VIDEO: [&str; 3] = ["mp4", "gif", "apng"];
-#[allow(dead_code)]
 pub const IMAGE: [&str; 3] = ["jpg", "jpeg", "png"];
-pub const SUPPORTED: [&str; 6] = ["mp4", "gif", "apng", "jpg", "jpeg", "png"];
+
+/// 全部受支持扩展名（编译期从 VIDEO/IMAGE 拼装，保证不漂移）。
+pub const SUPPORTED: [&str; 6] = {
+    let mut all = [""; 6];
+    let mut i = 0;
+    let mut j = 0;
+    while j < VIDEO.len() {
+        all[i] = VIDEO[j];
+        i += 1;
+        j += 1;
+    }
+    let mut k = 0;
+    while k < IMAGE.len() {
+        all[i] = IMAGE[k];
+        i += 1;
+        k += 1;
+    }
+    all
+};
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 /// 防抖代数：仅最新一次修改会真正落盘。

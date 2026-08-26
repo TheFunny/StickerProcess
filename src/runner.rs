@@ -147,7 +147,11 @@ pub async fn run_all(
                             Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
                                 Some(excess) if excess > 1.0 => {
                                     if let Some(factor) = t.size_factor.as_mut() {
-                                        factor.set(factor.get() / excess * retry_shrink);
+                                        factor.set(crate::transcoder::shrunk_factor(
+                                            factor.get(),
+                                            excess,
+                                            retry_shrink,
+                                        ));
                                     }
                                     t.status = Status::SizeExcess;
                                     if retry < max_retry {

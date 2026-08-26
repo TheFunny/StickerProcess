@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 pub struct MediaFile {
     path: PathBuf,
     r#type: Option<MediaType>,
-    sticker: Option<StickerType>,
     duration: Option<f64>,
     output: Option<PathBuf>,
 }
@@ -25,14 +24,9 @@ impl MediaFile {
             Some("apng") => MediaType::Video(VideoType::Apng).into(),
             _ => None,
         };
-        let sticker: Option<StickerType> = r#type.as_ref().map(|t| match t {
-            MediaType::Video(_) => StickerType::Animated,
-            MediaType::Image(_) => StickerType::Static,
-        });
         Self {
             path,
             r#type,
-            sticker,
             duration: None,
             output: None,
         }
@@ -52,10 +46,6 @@ impl MediaFile {
 
     pub fn set_type(&mut self, r#type: MediaType) {
         self.r#type = Some(r#type);
-    }
-
-    pub fn sticker(&self) -> Option<StickerType> {
-        self.sticker.clone()
     }
 
     pub fn duration(&self) -> Option<f64> {
@@ -82,12 +72,6 @@ pub enum MediaType {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum StickerType {
-    Static,
-    Animated,
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub enum VideoType {
     Mp4,
     Gif,
@@ -104,45 +88,57 @@ pub enum ImageType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{IMAGE, SUPPORTED, VIDEO};
 
     #[test]
     fn test_new_media_file_mp4() {
-        let path = "test.mp4";
-        let media_file = MediaFile::new(Path::new(&path));
+        let media_file = MediaFile::new(Path::new("test.mp4"));
         assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Mp4)));
-        assert_eq!(media_file.sticker, Some(StickerType::Animated));
     }
 
     #[test]
     fn test_new_media_file_jpg() {
-        let path = "test.jpg";
-        let media_file = MediaFile::new(Path::new(&path));
+        let media_file = MediaFile::new(Path::new("test.jpg"));
         assert_eq!(media_file.r#type, Some(MediaType::Image(ImageType::Jpg)));
-        assert_eq!(media_file.sticker, Some(StickerType::Static));
     }
 
     #[test]
     fn test_new_media_file_gif() {
-        let path = "test.gif";
-        let media_file = MediaFile::new(Path::new(&path));
+        let media_file = MediaFile::new(Path::new("test.gif"));
         assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Gif)));
-        assert_eq!(media_file.sticker, Some(StickerType::Animated));
     }
 
     #[test]
     fn test_new_media_file_apng() {
-        let path = "test.apng";
-        let media_file = MediaFile::new(Path::new(&path));
+        let media_file = MediaFile::new(Path::new("test.apng"));
         assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Apng)));
-        assert_eq!(media_file.sticker, Some(StickerType::Animated));
     }
 
     #[test]
     fn test_new_media_file_empty() {
-        let path = "test";
-        let media_file = MediaFile::new(Path::new(&path));
-        println!("Test with file \"{path}\": {:?}", media_file);
+        let media_file = MediaFile::new(Path::new("test"));
         assert_eq!(media_file.r#type, None);
-        assert_eq!(media_file.sticker, None);
+    }
+
+    /// AGENTS"四处同步"约定的保证：SUPPORTED 的每一项都必须能被识别，
+    /// VIDEO/IMAGE 必须与 SUPPORTED 完全一致。
+    #[test]
+    fn supported_extensions_are_consistent() {
+        assert!(
+            VIDEO.iter().chain(IMAGE.iter()).eq(SUPPORTED.iter()),
+            "VIDEO+IMAGE must equal SUPPORTED"
+        );
+        for ext in SUPPORTED {
+            let file = MediaFile::new(Path::new(&format!("file.{ext}")));
+            assert!(
+                file.r#type.is_some(),
+                "SUPPORTED extension '{ext}' not recognized by MediaFile::new"
+            );
+        }
+        // 反向：不在 SUPPORTED 里的已知扩展必须被拒绝
+        for ext in ["webm", "bmp", "txt"] {
+            let file = MediaFile::new(Path::new(&format!("file.{ext}")));
+            assert!(file.r#type.is_none(), "'{ext}' should be rejected");
+        }
     }
 }

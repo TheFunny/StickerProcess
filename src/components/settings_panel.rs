@@ -5,7 +5,7 @@
 //! 码率基准 / ffmpeg 路径 / 语言 / 并行数为规划中的可选项，暂不开放。
 
 use crate::app::UiState;
-use crate::components::number_field::{F64Input, U8Input, U32Input};
+use crate::components::number_field::NumberInput;
 use crate::config::Settings;
 use dioxus::prelude::*;
 
@@ -50,7 +50,7 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "settings-row",
                     span { class: "label", "Max retry" }
-                    U8Input {
+                    NumberInput<u8> {
                         value: ctx.settings.read().max_retry,
                         min: 0u8,
                         max: 10u8,
@@ -61,7 +61,7 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "settings-row",
                     span { class: "label", "Video max size (KB)" }
-                    U32Input {
+                    NumberInput<u32> {
                         value: ctx.settings.read().video_max_size_kb,
                         min: 16u32,
                         max: 102400u32,
@@ -72,7 +72,7 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "settings-row",
                     span { class: "label", "Image max size (KB)" }
-                    U32Input {
+                    NumberInput<u32> {
                         value: ctx.settings.read().image_max_size_kb,
                         min: 16u32,
                         max: 102400u32,
@@ -83,7 +83,7 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "settings-row",
                     span { class: "label", "Retry shrink factor" }
-                    F64Input {
+                    NumberInput<f64> {
                         value: ctx.settings.read().retry_shrink_factor,
                         min: 0.05,
                         max: 1.0,
@@ -98,7 +98,7 @@ pub fn SettingsPanel() -> Element {
                         for (index, band) in FACTOR_BANDS.iter().enumerate() {
                             label { class: "factor-cell",
                                 span { class: "label", "{band}" }
-                                F64Input {
+                                NumberInput<f64> {
                                     key: "{band}",
                                     value: factors[index],
                                     min: 0.05,
@@ -115,7 +115,7 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "settings-row",
                     span { class: "label", "Force FPS (0 = auto)" }
-                    F64Input {
+                    NumberInput<f64> {
                         value: ctx.settings.read().target_fps,
                         min: 0.0,
                         max: 240.0,

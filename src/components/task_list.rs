@@ -4,7 +4,7 @@
 //! Phase C：行内进度条 + 转码耗时 + 错误详情悬停提示 + Probing 状态。
 
 use crate::app::{TaskEntry, UiState};
-use crate::components::number_field::F64Input;
+use crate::components::number_field::NumberInput;
 use crate::transcoder::Status;
 use dioxus::prelude::*;
 
@@ -87,7 +87,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     span { class: "elapsed", "{elapsed}" }
                 }
                 if let Some(factor) = factor_value {
-                    F64Input {
+                    NumberInput<f64> {
                         value: factor,
                         min: 0.1,
                         max: 10.0,
