@@ -7,6 +7,7 @@ mod app;
 mod components;
 mod config;
 mod media;
+mod preview;
 mod runner;
 mod transcoder;
 
@@ -15,14 +16,15 @@ use dioxus::prelude::*;
 
 fn main() {
     pretty_env_logger::init();
+    let cfg = preview::register(
+        Config::new().with_window(
+            WindowBuilder::new()
+                .with_title("Sticker Process")
+                .with_inner_size(LogicalSize::new(960.0, 680.0))
+                .with_min_inner_size(LogicalSize::new(640.0, 480.0)),
+        ),
+    );
     LaunchBuilder::new()
-        .with_cfg(desktop! {
-            Config::new().with_window(
-                WindowBuilder::new()
-                    .with_title("Sticker Process")
-                    .with_inner_size(LogicalSize::new(960.0, 680.0))
-                    .with_min_inner_size(LogicalSize::new(640.0, 480.0)),
-            )
-        })
+        .with_cfg(desktop! { cfg })
         .launch(app::App);
 }

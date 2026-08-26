@@ -455,3 +455,51 @@ body {
   align-items: center;
   gap: 6px;
 }
+
+/* 预览弹窗（Phase D） */
+.preview-modal {
+  min-width: 720px;
+  max-width: 90vw;
+}
+
+.preview-path {
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preview-pane img,
+.preview-pane video {
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background:
+    repeating-conic-gradient(var(--border-hairline) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--fg-faint);
+}

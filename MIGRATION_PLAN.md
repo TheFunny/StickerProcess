@@ -129,14 +129,20 @@ async fn run_all(state) {
 7. [x] **任务行工具提示**: 悬停显示完整路径 + 最近错误详情
 8. [x] **添加时异步探测**: 后台线程 probe，显示 "Probing…"；探测期间禁止 Run
 
-### D. 预览效果 (Phase D) — 迁移的最大动机
+### D. 预览效果 (Phase D) ✅ 已完成 (2026-08) — 双轨制媒体加载
 
-1. **图片/GIF 预览**: `<img src="data:image/png;base64,...">` (贴纸 ≤512KB, data URL 完全够用)
-2. **视频预览**: `<video src="data:video/webm;base64,..." controls loop muted autoplay>`
-   - 输出 ≤256KB, data URL 可行; 大文件需自定义协议 + Range 支持 (后续)
-3. **点击任务行 → 预览弹窗/侧栏**: 原图 vs 输出并排, 显示尺寸对比 (输入 X KB → 输出 Y KB, 达标 ✓/超限 ✗)
-4. **缩略图 (可选)**: 图片直接缩略; 视频用 ffmpeg 抽首帧缓存
-5. **预览与转码联动**: 转码完成后自动刷新预览 (输出文件已生成)
+1. [x] **图片/GIF 预览（输出）**: data URL (`output_data_url_mime`), 贴纸 ≤512KB 完全够用
+2. [x] **视频预览**: 输出 `<video>` data URL; 输入走自定义协议 `preview://`
+   (`src/preview.rs`: wry `with_asynchronous_custom_protocol`, Windows URL 前缀
+   `http://preview.`, 按扩展名 MIME, **HTTP Range/206** 支持视频拖动,
+   tokio 阻塞线程读盘不卡 UI)
+3. [x] **点击任务行 → 预览弹窗**: 原始 vs 输出并排 (`components/preview.rs`),
+   尺寸对比 (输入 X KB → 输出 Y KB, 达标 ✓ / 超限 ✗, 上限从设置读取);
+   系数输入框 stop_propagation 防误触; GIF/APNG 输入按扩展名用 `<img>` 渲染
+   (浏览器无法在 `<video>` 中解码它们)
+4. [ ] **缩略图**: 暂缓 (任务列表暂不展示)
+5. [x] **预览与转码联动**: 输出编码 effect 内读取 tasks 信号建立依赖,
+   以 (输出路径, 大小) 为键去重 — 转码完成自动重新编码刷新
 
 ### E. 重构与优化 (Phase E, 持续)
 

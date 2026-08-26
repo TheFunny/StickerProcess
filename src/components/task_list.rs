@@ -71,7 +71,10 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     };
 
     rsx! {
-        div { class: "task-row", title: "{tooltip}",
+        div {
+            class: "task-row",
+            title: "{tooltip}",
+            onclick: move |_| ctx.show_preview.set(Some(index)),
             div { class: "row-main",
                 span { class: "{status_class}", "[{entry.status:?}]" }
                 span { class: "path", "{entry.input_path}" }
@@ -87,18 +90,21 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     span { class: "elapsed", "{elapsed}" }
                 }
                 if let Some(factor) = factor_value {
-                    NumberInput<f64> {
-                        value: factor,
-                        min: 0.1,
-                        max: 10.0,
-                        disabled: running,
-                        on_change: move |v| {
-                            ctx.with_task(index, move |t| {
-                                if let Some(f) = t.size_factor.as_mut() {
-                                    f.set(v);
-                                }
-                            });
-                        },
+                    span {
+                        onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
+                        NumberInput<f64> {
+                            value: factor,
+                            min: 0.1,
+                            max: 10.0,
+                            disabled: running,
+                            on_change: move |v| {
+                                ctx.with_task(index, move |t| {
+                                    if let Some(f) = t.size_factor.as_mut() {
+                                        f.set(v);
+                                    }
+                                });
+                            },
+                        }
                     }
                 }
             }

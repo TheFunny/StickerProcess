@@ -126,6 +126,8 @@ pub struct UiState {
     pub settings: Signal<Settings>,
     /// 设置面板开关。
     pub show_settings: Signal<bool>,
+    /// 当前打开预览的任务下标。
+    pub show_preview: Signal<Option<usize>>,
     pub running: Signal<bool>,
     pub overall_progress: Signal<f32>,
     /// 取消标记：runner 在每次尝试前检查；运行中的任务经 cancel_flag 中断 ffmpeg。
@@ -326,6 +328,7 @@ pub fn App() -> Element {
         tasks: use_signal(Vec::new),
         settings: use_signal(config::load),
         show_settings: use_signal(|| false),
+        show_preview: use_signal(|| None),
         running: use_signal(|| false),
         overall_progress: use_signal(|| 0.0f32),
         cancel: use_signal(|| false),
@@ -349,6 +352,7 @@ pub fn App() -> Element {
             TaskList {}
             ProgressBar {}
             SettingsPanel {}
+            crate::components::preview::PreviewModal {}
             crate::components::toast::ToastContainer {}
         }
     }

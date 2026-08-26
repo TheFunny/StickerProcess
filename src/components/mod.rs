@@ -2,6 +2,7 @@
 
 pub mod drop_zone;
 pub mod number_field;
+pub mod preview;
 pub mod progress_bar;
 pub mod settings_panel;
 pub mod task_list;
