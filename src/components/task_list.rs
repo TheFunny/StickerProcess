@@ -40,6 +40,8 @@ fn TaskRow(index: usize) -> Element {
 #[component]
 fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     let mut ctx = use_context::<UiState>();
+    // 拖选文字/数字时按下与松开位置不同——click 会落在行上，需与普通点击区分
+    let mut mouse_down_at = use_signal(|| None::<(f64, f64)>);
 
     let status_class = match entry.status {
         Status::Probing => "badge probing",
@@ -74,7 +76,21 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         div {
             class: "task-row",
             title: "{tooltip}",
-            onclick: move |_| ctx.show_preview.set(Some(index)),
+            onmousedown: move |evt: Event<MouseData>| {
+                let p = evt.data.client_coordinates();
+                mouse_down_at.set(Some((p.x, p.y)));
+            },
+            onclick: move |evt: Event<MouseData>| {
+                // 按下与松开位移超过 4px 视为拖选，不打开预览
+                let p = evt.data.client_coordinates();
+                if let Some((dx, dy)) = mouse_down_at.cloned() {
+                    let moved = ((p.x - dx).powi(2) + (p.y - dy).powi(2)).sqrt();
+                    if moved > 4.0 {
+                        return;
+                    }
+                }
+                ctx.show_preview.set(Some(index));
+            },
             div { class: "row-main",
                 span { class: "{status_class}", "[{entry.status:?}]" }
                 span { class: "path", "{entry.input_path}" }

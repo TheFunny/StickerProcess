@@ -15,7 +15,11 @@ use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 
 fn main() {
-    pretty_env_logger::init();
+    // 默认 Info（重试/系数调整/完成可见）；RUST_LOG 可覆盖
+    pretty_env_logger::formatted_builder()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
     let cfg = preview::register(
         Config::new().with_window(
             WindowBuilder::new()
