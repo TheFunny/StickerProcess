@@ -41,11 +41,36 @@
       transcoder→runner→mirror/toast；取消用 `matches!(e, Cancelled)` 判定
 - [x] **9. 进度事件节流**：接收端 100ms interval 合并同任务进度再写镜像
 
-## P3 — 暂缓
+## P3 — 暂缓项可行性结论 (2026-08-26 复核，D 完成后)
 
-- [ ] **E2 去 `Arc<Mutex>`**：依赖 D 的预览读取形态，先不动
-- [ ] **魔法数常量化**（码率基准 `256*1024*8` / crf 26 / bufsize ×1.5）：等"码率基准进设置"一起做
-- [ ] **config 防抖退出丢写**：500ms 窗口内退出丢最后一次修改，影响极小
+### E2 去 `Arc<Mutex>` — **不建议做**
+D 完成后逐点核查锁的使用：
+- 预览渲染期锁已消除（输出路径进镜像 `output_path`，附带修复了
+  "预览开着转码时 UI 冻结" 的实际 bug）
+- 剩余锁临界区都很短：`with_task` 刷镜像、probe、cancel_flag clone
+- factor 编辑在 running 时本就禁用，不存在 UI 与 worker 并发写
+
+去掉 `Arc<Mutex>` 要求 runner 独占任务列表，与"运行中允许拖入新文件"
+的既有语义冲突（需要额外的消息桥）。收益趋近于零，改动面大。
+**结论：保留现状。** 若将来做 E4 并行转码，每任务独立的 `Arc<Mutex<Transcoder>`
+反而是天然的任务分发单元——届时更没有去除的理由。
+
+### 魔法数常量化 — **常量部分已随 P2 完成，"进设置"仍缓**
+`BITRATE_BASE_BYTES` 已是 `command.rs` 具名常量。剩余 crf 26 / bufsize ×1.5
+提为常量即可（纯命名，无行为变化）；"码率基准进设置"仍是行为变更
+（码率会随上限变化），与"超限时只重试不改预算"的现有语义冲突，维持暂缓。
+
+### config 防抖退出丢写 — **建议改为即时保存（待实施）**
+settings.toml 只有 ~200 字节，写盘亚毫秒级。500ms 防抖的全部收益
+抵不过退出丢写的边界风险。改为 `update_settings` 内直接
+`spawn_blocking(config::save)`，删除 SAVE_GEN 代数计数器。
+
+## P3 执行清单（更新于 2026-08-26）
+
+- [ ] crf 26 / bufsize ×1.5 提为具名常量（command.rs）
+- [ ] update_settings 防抖改为即时落盘（删除 SAVE_GEN）
+- [x] ~~E2 去 Arc<Mutex>~~ — 复核后否决，理由见上
+- [x] 预览渲染期锁消除（output_path 镜像，D 阶段遗留 bug）
 
 ## 已核查无需动
 

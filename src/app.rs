@@ -58,6 +58,8 @@ pub struct TaskEntry {
     pub status: Status,
     pub output_size: Option<u64>,
     pub factor: Option<f64>,
+    /// 输出文件路径镜像（set_output_dir 时同步），供预览免锁读取。
+    pub output_path: Option<PathBuf>,
     /// 当前尝试的转码进度 0..=1（仅 Processing 期间有值）。
     pub progress: Option<f32>,
     /// 最近一次成功转码的耗时。
@@ -76,7 +78,7 @@ impl PartialEq for TaskEntry {
             && self.factor == other.factor
             && self.progress == other.progress
             && self.elapsed_ms == other.elapsed_ms
-            && self.error == other.error
+            && self.output_path == other.output_path
     }
 }
 
@@ -98,6 +100,7 @@ impl TaskEntry {
             is_video,
             status: Status::Probing,
             output_size: None,
+            output_path: None,
             factor: None,
             progress: None,
             elapsed_ms: None,
@@ -149,6 +152,7 @@ impl UiState {
             entry.status = task.status.clone();
             entry.factor = task.size_factor.as_ref().map(|f| f.get());
             entry.output_size = task.output_size.as_ref().map(|s| s.size);
+            entry.output_path = task.get_output().cloned();
             Some(out)
         })
     }

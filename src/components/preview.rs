@@ -48,23 +48,26 @@ pub fn PreviewModal() -> Element {
 
     // 输出侧 data URL：输出 ≤512KB，同步读盘+base64 仅需毫秒级；
     // 渲染随 tasks 信号自动重算，转码完成后 (路径, 大小) 变化即自然刷新。
-    let output_url: Option<String> = entry.output_size.and_then(|_| {
-        entry.transcoder.lock().ok().and_then(|t| {
-            t.get_output().cloned().map(|path| {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                let mime = if ext == "png" {
-                    "image/png"
-                } else {
-                    "video/webm"
-                };
-                preview::output_data_url_mime(mime, &std::fs::read(path).unwrap_or_default())
-            })
-        })
-    });
+    // 使用镜像里的输出路径，避免渲染期锁 Transcoder（转码中会阻塞整个 UI）。
+    let output_url: Option<String> = match (&entry.output_path, &entry.output_size) {
+        (Some(path), Some(_)) => {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let mime = if ext == "png" {
+                "image/png"
+            } else {
+                "video/webm"
+            };
+            Some(preview::output_data_url_mime(
+                mime,
+                &std::fs::read(path).unwrap_or_default(),
+            ))
+        }
+        _ => None,
+    };
 
     let input_url = preview::media_url(Path::new(&entry.input_path));
     let input_video = input_is_video(&entry.input_path);
