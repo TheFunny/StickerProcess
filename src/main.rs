@@ -21,12 +21,15 @@ fn main() {
         .parse_default_env()
         .init();
     let cfg = preview::register(
-        Config::new().with_window(
-            WindowBuilder::new()
-                .with_title("Sticker Process")
-                .with_inner_size(LogicalSize::new(960.0, 680.0))
-                .with_min_inner_size(LogicalSize::new(640.0, 480.0)),
-        ),
+        // with_menu(None) 关闭 dioxus 默认菜单栏（File/View 等）
+        Config::new()
+            .with_menu(None::<dioxus::desktop::muda::Menu>)
+            .with_window(
+                WindowBuilder::new()
+                    .with_title("Sticker Process")
+                    .with_inner_size(LogicalSize::new(960.0, 680.0))
+                    .with_min_inner_size(LogicalSize::new(640.0, 480.0)),
+            ),
     );
     LaunchBuilder::new()
         .with_cfg(desktop! { cfg })
