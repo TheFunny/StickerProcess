@@ -10,3 +10,8 @@ short_description = "图片/短视频转 Telegram 贴纸工具"
 # ffmpeg 随包分发：sidecar 机制要求 ffmpeg.exe 与主程序同目录
 # （ffmpeg-sidecar paths::sidecar_path = current_exe().parent()/ffmpeg.exe）
 resources = ["ffmpeg/ffmpeg.exe"]
+
+[bundle.windows]
+# WebView2 安装策略（文档 Bundle.windows）：
+# OfflineInstaller = 内嵌离线安装器（当前默认行为，安装包大但离线可用）
+webview_install_mode = { OfflineInstaller = { silent = true } }
