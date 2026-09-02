@@ -73,9 +73,9 @@ impl PartialEq for TaskEntry {
     fn eq(&self, other: &Self) -> bool {
         self.input_path == other.input_path
             && self.is_video == other.is_video
-            && self.status == other.status
-            && self.output_size == other.output_size
+            && self.factor == other.factor
             && self.output_file_name == other.output_file_name
+            && self.output_size == other.output_size
             && self.progress == other.progress
             && self.elapsed_ms == other.elapsed_ms
             && self.output_path == other.output_path

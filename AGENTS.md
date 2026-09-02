@@ -130,6 +130,11 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   fields elsewhere will desynchronize the UI.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
+- Numeric inputs (`NumberInput`) use commit-on-enter/blur plus
+  `key: "{value}"` remounting — the key guarantees the field shows the new
+  value after any external change (manual commit or retry shrink).
+  `TaskEntry::eq` MUST include every mirror field a component depends on:
+  a missing field silently memo-skips re-renders (this broke factor display).
 - New media types must be wired in **four** places:
   1. `src/app.rs` — `VIDEO` / `IMAGE` constants (`SUPPORTED` is derived)
   2. `src/components/toolbar.rs` — accept string derives from `SUPPORTED`

@@ -69,7 +69,6 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
 
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
     let factor_value = entry.factor;
-
     // 转码耗时（成功后保留展示）
     let elapsed_text = entry.elapsed_ms.map(format_elapsed);
     // 悬停提示：优先错误详情，否则完整路径
@@ -116,6 +115,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                         onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                         NumberInput<f64> {
                             value: factor,
+                            key: "{factor}",
                             min: 0.1,
                             max: 10.0,
                             disabled: running,
