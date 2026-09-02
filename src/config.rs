@@ -48,7 +48,7 @@ impl Default for Settings {
             retry_shrink_factor: default_retry_shrink_factor(),
             duration_factors: default_duration_factors(),
             target_fps: 0.0,
-            theme: "light".into(),
+            theme: "system".into(),
         }
     }
 }

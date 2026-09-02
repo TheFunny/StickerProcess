@@ -19,11 +19,22 @@ fn file_accept() -> String {
 pub fn Toolbar() -> Element {
     let mut ctx = use_context::<UiState>();
     let running = ctx.running.cloned();
-    let theme_label = if ctx.settings.read().theme == "dark" {
-        "Light"
-    } else {
-        "Dark"
+    // 主题按钮显示当前档位（与设置面板/实际呈现一致），点击切换到下一档
+    let theme_label = match ctx.settings.read().theme.as_str() {
+        "system" => "System",
+        "light" => "Light",
+        _ => "Dark",
     };
+
+    /// 主题三档循环。
+    fn next_theme(current: &str) -> String {
+        match current {
+            "system" => "light",
+            "light" => "dark",
+            _ => "system",
+        }
+        .into()
+    }
 
     rsx! {
         div { class: "row",
@@ -60,7 +71,7 @@ pub fn Toolbar() -> Element {
             button {
                 class: "btn",
                 onclick: move |_| {
-                    ctx.update_settings(|s| s.theme = if s.theme == "dark" { "light".into() } else { "dark".into() });
+                    ctx.update_settings(|s| s.theme = next_theme(&s.theme));
                 },
                 "{theme_label}"
             }

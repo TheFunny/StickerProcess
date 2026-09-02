@@ -55,6 +55,8 @@ pub struct TaskEntry {
     // ---- 显示镜像：由修改 Transcoder 的一方负责同步 ----
     pub status: Status,
     pub output_size: Option<u64>,
+    /// 输出文件名（不含路径，随 output_path 同步），任务行直接展示。
+    pub output_file_name: Option<String>,
     pub factor: Option<f64>,
     /// 输出文件路径镜像（set_output_dir 时同步），供预览免锁读取。
     pub output_path: Option<PathBuf>,
@@ -73,7 +75,7 @@ impl PartialEq for TaskEntry {
             && self.is_video == other.is_video
             && self.status == other.status
             && self.output_size == other.output_size
-            && self.factor == other.factor
+            && self.output_file_name == other.output_file_name
             && self.progress == other.progress
             && self.elapsed_ms == other.elapsed_ms
             && self.output_path == other.output_path
@@ -98,6 +100,7 @@ impl TaskEntry {
             is_video,
             status: Status::Probing,
             output_size: None,
+            output_file_name: None,
             output_path: None,
             factor: None,
             progress: None,
@@ -151,6 +154,10 @@ impl UiState {
             entry.factor = task.size_factor.as_ref().map(|f| f.get());
             entry.output_size = task.output_size.as_ref().map(|s| s.size);
             entry.output_path = task.get_output().cloned();
+            entry.output_file_name = task
+                .get_output()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned());
             Some(out)
         })
     }
@@ -369,12 +376,31 @@ pub fn App() -> Element {
         toasts: use_signal(Vec::new),
     };
 
-    // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖；随设置持久化
+    // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖；随设置持久化。
+    // "system" 档：读取 prefers-color-scheme 并监听系统切换实时回写。
     use_effect(move || {
         let theme = ctx.settings.read().theme.clone();
-        document::eval(&format!(
-            "document.documentElement.setAttribute('data-theme', '{theme}')"
-        ));
+        if theme == "system" {
+            document::eval(
+                "(() => {
+                    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+                    const apply = () => document.documentElement.setAttribute('data-theme', mq.matches ? 'dark' : 'light');
+                    window.__stp_theme_handler && mq.removeEventListener('change', window.__stp_theme_handler);
+                    window.__stp_theme_handler = apply;
+                    mq.addEventListener('change', apply);
+                    apply();
+                })()",
+            );
+        } else {
+            document::eval(&format!(
+                "window.__stp_theme_handler && (() => {{
+                    window.matchMedia('(prefers-color-scheme: dark)')
+                        .removeEventListener('change', window.__stp_theme_handler);
+                    window.__stp_theme_handler = null;
+                }})();
+                document.documentElement.setAttribute('data-theme', '{theme}')"
+            ));
+        }
     });
 
     use_context_provider(move || ctx);

@@ -57,9 +57,15 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     let is_excess = entry
         .size_excess_ratio(video_limit, image_limit)
         .is_some_and(|ratio| ratio > 1.0);
-    let size_text = entry
-        .output_size
-        .map(|size| format!("{:.2}KB", size as f64 / 1024.0));
+    // 输出文件名 + 输出大小（有输出时一起展示）
+    let size_text = entry.output_size.map(|size| {
+        let name = entry.output_file_name.as_deref().unwrap_or_default();
+        if name.is_empty() {
+            format!("{:.2}KB", size as f64 / 1024.0)
+        } else {
+            format!("{}  {:.2}KB", name, size as f64 / 1024.0)
+        }
+    });
 
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
     let factor_value = entry.factor;

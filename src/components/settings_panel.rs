@@ -1,7 +1,7 @@
-//! 设置面板（Phase B）：模态对话框，改动即时生效并防抖落盘。
+//! 设置面板：模态对话框，改动即时生效并即时落盘。
 //!
 //! 覆盖设置项：输出目录、重试次数、视频/图片大小上限、重试缩放系数、
-//! 时长→系数表、强制帧率、主题。
+//! 时长→系数表、强制帧率、主题（System/Light/Dark）。
 //! 码率基准 / ffmpeg 路径 / 语言 / 并行数为规划中的可选项，暂不开放。
 
 use crate::app::UiState;
@@ -133,6 +133,7 @@ pub fn SettingsPanel() -> Element {
                             let theme = evt.data.value();
                             ctx.update_settings(move |s| s.theme = theme);
                         },
+                        option { value: "system", "System (follow OS)" }
                         option { value: "light", "Light" }
                         option { value: "dark", "Dark" }
                     }
