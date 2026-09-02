@@ -67,8 +67,8 @@ settings.toml 只有 ~200 字节，写盘亚毫秒级。500ms 防抖的全部收
 
 ## P3 执行清单（更新于 2026-08-26）
 
-- [ ] crf 26 / bufsize ×1.5 提为具名常量（command.rs）
-- [ ] update_settings 防抖改为即时落盘（删除 SAVE_GEN）
+- [x] crf 26 / bufsize ×1.5 提为具名常量（command.rs：`VP9_CRF` / `BUFSIZE_RATIO`）
+- [x] update_settings 防抖改为即时落盘（删除 SAVE_GEN 代数计数器与 500ms 窗口）
 - [x] ~~E2 去 Arc<Mutex>~~ — 复核后否决，理由见上
 - [x] 预览渲染期锁消除（output_path 镜像，D 阶段遗留 bug）
 

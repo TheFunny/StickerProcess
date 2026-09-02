@@ -9,6 +9,12 @@ use ffmpeg_sidecar::command::FfmpegCommand;
 /// 视频码率基准（bps）：256 KB 贴纸换算为比特 / 时长。
 const BITRATE_BASE_BYTES: f64 = 256.0 * 1024.0;
 
+/// VP9 恒定质量模式的目标质量（越低质量越高、体积越大）。
+const VP9_CRF: u32 = 26;
+
+/// `-bufsize` 与 `-b:v` 的比值（解码器缓冲时长，越大码率越平稳）。
+const BUFSIZE_RATIO: f64 = 1.5;
+
 /// 目标码率 = 贴纸比特数 / 视频时长。
 fn target_bitrate_bps(duration: f64) -> f64 {
     BITRATE_BASE_BYTES * 8.0 / duration
@@ -92,9 +98,12 @@ impl Transcoder {
                     VideoType::Mp4 => "yuv420p10",
                     VideoType::Gif | VideoType::Apng => "yuva420p",
                 })
-                .crf(26)
+                .crf(VP9_CRF)
                 .args(["-b:v", &target_bitrate.to_string()])
-                .args(["-bufsize", &(target_bitrate as f64 * 1.5).to_string()])
+                .args([
+                    "-bufsize",
+                    &(target_bitrate as f64 * BUFSIZE_RATIO).to_string(),
+                ])
                 .args(["-row-mt", "1"])
                 .format("webm")
                 .output(

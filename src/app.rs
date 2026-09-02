@@ -39,8 +39,6 @@ pub const SUPPORTED: [&str; 6] = {
 };
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
-/// 防抖代数：仅最新一次修改会真正落盘。
-static SAVE_GEN: AtomicU64 = AtomicU64::new(0);
 
 /// 队列中的一个任务：共享 Transcoder（逻辑层）+ 显示镜像（渲染层）。
 #[derive(Clone)]
@@ -168,16 +166,12 @@ impl UiState {
         });
     }
 
-    /// 修改设置并调度防抖保存（500ms 内的连续修改只落盘一次）。
+    /// 修改设置并即时落盘（settings.toml 仅 ~200B，写盘亚毫秒级；
+    /// 即时保存消除防抖窗口内退出丢写的风险）。
     pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings)) {
         self.settings.with_mut(f);
-        let generation = SAVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
         let snapshot = self.settings.cloned();
         spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if SAVE_GEN.load(Ordering::Relaxed) != generation {
-                return; // 已有更新的修改排队，由它负责落盘
-            }
             let result = tokio::task::spawn_blocking(move || config::save(&snapshot))
                 .await
                 .unwrap_or_else(|e| Err(format!("join error: {e}")));
