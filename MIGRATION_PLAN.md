@@ -144,15 +144,22 @@ async fn run_all(state) {
 5. [x] **预览与转码联动**: 输出编码 effect 内读取 tasks 信号建立依赖,
    以 (输出路径, 大小) 为键去重 — 转码完成自动重新编码刷新
 
-### E. 重构与优化 (Phase E, 持续)
+### E. 重构与优化 (Phase E) — 状态 (2026-09-02)
 
-- **E1 错误处理**: `transcoder.rs` 的 `Result<(), &str>` → `thiserror` 枚举, 错误详情直达 UI
-- **E2 状态精简**: 评估去掉 `Arc<Mutex>`, 由 runner 独占任务列表 (信号读写同步) — 仅在 UI 与 runner 无并发编辑冲突时做
-- **E3 模块化**: 组件/逻辑/配置分层, 单文件 ≤ ~300 行
-- **E4 并行转码 (可选)**: 设置项控制并发数, `tokio::sync::Semaphore` + 独立进度
-- **E5 打包发布**: `dx bundle` (NSIS/MSI); ffmpeg 随包分发或首次运行自动下载 (ffmpeg-sidecar 支持)
-- **E6 测试**: 配置往返、转码参数生成、重试逻辑纯函数化后单测、media 现有测试
-- **E7 文档**: 更新 AGENTS.md (架构变更)、README (用法)
+- **E1 错误处理**: ✅ 已完成 — `TranscodeError`（thiserror）贯穿，取消用枚举匹配
+- **E2 状态精简**: ❌ 复核后否决 — 去 `Arc<Mutex>` 与"运行中拖入新文件"语义冲突，
+  剩余锁临界区都很短（详见 REFACTOR_PLAN.md P3）
+- **E3 模块化**: ✅ 已完成 — transcoder 拆为 mod/command/steps/error，
+  单文件均 ≤ ~400 行
+- **E4 并行转码 (可选)**: ⏸ 未开始 — 设置项控制并发数, `tokio::sync::Semaphore` + 独立进度
+- **E5 打包发布**: ✅ 已完成 — NSIS 安装包（187MB 含 WebView2 离线安装器 +
+  随包 ffmpeg.exe）；WebView2 策略可配（OfflineInstaller/Skip 1.9MB）；
+  shared 构建 DLL 不随包（目标机需有 ffmpeg 运行时 DLL）
+- **E6 测试**: ✅ 已完成 — 配置往返、码率/系数/缩放纯函数、扩展名一致性、
+  Range 解析、进度时间解析共 21 个单测
+- **E7 文档**: ✅ 已完成 — AGENTS.md 已随各阶段持续更新；README.md（用法/打包/架构）
+- **E6' 进程内转码**: 📋 立项草案 — 见 E6_INPROCESS_RESEARCH.md（替代 sidecar，
+  排队待做）
 
 ## 4. 里程碑估算
 
