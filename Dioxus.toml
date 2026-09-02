@@ -7,3 +7,6 @@ publisher = "StickerProcess"
 icon = ["ico/icon.ico"]
 category = "GraphicsAndDesign"
 short_description = "图片/短视频转 Telegram 贴纸工具"
+# ffmpeg 随包分发：sidecar 机制要求 ffmpeg.exe 与主程序同目录
+# （ffmpeg-sidecar paths::sidecar_path = current_exe().parent()/ffmpeg.exe）
+resources = ["ffmpeg/ffmpeg.exe"]
