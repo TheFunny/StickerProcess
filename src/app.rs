@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub const VIDEO: [&str; 3] = ["mp4", "gif", "apng"];
-pub const IMAGE: [&str; 3] = ["jpg", "jpeg", "png"];
+pub const IMAGE: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 
 /// 全部受支持扩展名（编译期从 VIDEO/IMAGE 拼装，保证不漂移）。
-pub const SUPPORTED: [&str; 6] = {
-    let mut all = [""; 6];
+pub const SUPPORTED: [&str; 7] = {
+    let mut all = [""; 7];
     let mut i = 0;
     let mut j = 0;
     while j < VIDEO.len() {
@@ -41,16 +41,13 @@ pub const SUPPORTED: [&str; 6] = {
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// 队列中的一个任务：共享 Transcoder（逻辑层）+ 显示镜像（渲染层）。
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TaskEntry {
     pub transcoder: Arc<Mutex<Transcoder>>,
     /// 输入文件路径（创建时快照，避免渲染期加锁）。
     pub input_path: String,
     /// Phase D 预览将展示输入大小对比。
-    #[allow(dead_code)]
     pub input_size: u64,
-    /// 异步探测完成后才有值。
-    pub input_duration: Option<f64>,
     pub is_video: bool,
     // ---- 显示镜像：由修改 Transcoder 的一方负责同步 ----
     pub status: Status,
@@ -79,6 +76,8 @@ impl PartialEq for TaskEntry {
             && self.progress == other.progress
             && self.elapsed_ms == other.elapsed_ms
             && self.output_path == other.output_path
+            && self.status == other.status
+            && self.error == other.error
     }
 }
 
@@ -96,7 +95,6 @@ impl TaskEntry {
             transcoder: Arc::new(Mutex::new(transcoder)),
             input_path,
             input_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
-            input_duration: None,
             is_video,
             status: Status::Probing,
             output_size: None,
@@ -162,7 +160,7 @@ impl UiState {
         })
     }
 
-    /// UI 专属镜像字段（progress/elapsed/error/input_duration）的唯一修改入口。
+    /// UI 专属镜像字段（progress/elapsed/error）的唯一修改入口。
     /// 派生自 Transcoder 的镜像（status/factor/output_size）请走 `with_task`。
     /// 这两个方法是任务镜像的全部写入口，勿直接 `tasks.with_mut` 改镜像字段。
     pub fn touch_entry(&mut self, index: usize, f: impl FnOnce(&mut TaskEntry)) {
@@ -172,20 +170,14 @@ impl UiState {
             }
         });
     }
-
-    /// 修改设置并即时落盘（settings.toml 仅 ~200B，写盘亚毫秒级；
-    /// 即时保存消除防抖窗口内退出丢写的风险）。
+    /// 修改设置并即时同步落盘（settings.toml 仅 ~200B，写盘亚毫秒级；
+    /// 同步执行杜绝并发写撕裂/乱序——异步写完成后旧值可能覆盖新值）。
     pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings)) {
         self.settings.with_mut(f);
         let snapshot = self.settings.cloned();
-        spawn(async move {
-            let result = tokio::task::spawn_blocking(move || config::save(&snapshot))
-                .await
-                .unwrap_or_else(|e| Err(format!("join error: {e}")));
-            if let Err(e) = result {
-                log::error!("Failed to save settings: {e}");
-            }
-        });
+        if let Err(e) = config::save(&snapshot) {
+            log::error!("Failed to save settings: {e}");
+        }
     }
 
     /// 推送一条通知：停留 3.6 秒 → 0.4 秒渐出 → 移除。
@@ -256,11 +248,6 @@ impl UiState {
                 match &result {
                     Ok(()) => {
                         e.status = Status::Pending;
-                        e.input_duration = e
-                            .transcoder
-                            .lock()
-                            .ok()
-                            .and_then(|t| t.media_file.duration());
                     }
                     Err(err) => {
                         e.status = Status::Alert;
@@ -415,5 +402,21 @@ pub fn App() -> Element {
             crate::components::preview::PreviewModal {}
             crate::components::toast::ToastContainer {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AGENTS 契约：eq 必须覆盖组件依赖的每个镜像字段——漏字段会 memo 跳过重渲染。
+    #[test]
+    fn task_entry_eq_covers_status_and_error() {
+        let mut a = TaskEntry::new(&PathBuf::from("x.mp4"));
+        let b = a.clone();
+        assert_eq!(a, b);
+        a.status = Status::Alert;
+        a.error = Some("boom".into());
+        assert_ne!(a, b);
     }
 }

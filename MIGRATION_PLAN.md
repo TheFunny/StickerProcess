@@ -40,7 +40,6 @@
 struct TaskEntry {
     transcoder: Arc<Mutex<Transcoder>>,  // 保留共享模式，零逻辑改动
     input_size: u64,
-    input_duration: Option<f64>,         // 添加时异步探测
 }
 
 signals:

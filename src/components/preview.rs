@@ -13,7 +13,9 @@
 use crate::app::{TaskEntry, UiState};
 use crate::preview;
 use dioxus::prelude::*;
-use std::path::Path;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// 输入侧按真实容器选择元素：gif/apng 是动画图片，浏览器不支持在
 /// `<video>` 中解码它们。
@@ -29,6 +31,10 @@ fn input_is_video(path: &str) -> bool {
 #[component]
 pub fn PreviewModal() -> Element {
     let mut ctx = use_context::<UiState>();
+    // 输出 data URL 缓存：以 (输出路径, 大小) 为键，键不变不重读盘/重编码
+    // （hook 必须在早退之前调用；Rc<RefCell> 非信号，绝不触发重渲染）。
+    let output_cache =
+        use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, String)>)));
 
     // ---- 渲染 ----
     let index = ctx.show_preview.cloned();
@@ -46,27 +52,34 @@ pub fn PreviewModal() -> Element {
     };
     let ratio = entry.size_excess_ratio(video_limit, image_limit);
 
-    // 输出侧 data URL：输出 ≤512KB，同步读盘+base64 仅需毫秒级；
-    // 渲染随 tasks 信号自动重算，转码完成后 (路径, 大小) 变化即自然刷新。
+    // 输出侧 data URL：输出 ≤512KB，同步读盘+base64 仅需毫秒级；缓存键为
+    // (输出路径, 大小)——转码期间 tasks 信号 10Hz 更新不会重复编码。
     // 使用镜像里的输出路径，避免渲染期锁 Transcoder（转码中会阻塞整个 UI）。
-    let output_url: Option<String> = match (&entry.output_path, &entry.output_size) {
-        (Some(path), Some(_)) => {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            let mime = if ext == "png" {
-                "image/png"
-            } else {
-                "video/webm"
-            };
-            Some(preview::output_data_url_mime(
-                mime,
-                &std::fs::read(path).unwrap_or_default(),
-            ))
+    let output_url: Option<String> = {
+        let key = match (&entry.output_path, &entry.output_size) {
+            (Some(path), Some(size)) => Some((path.clone(), *size)),
+            _ => None,
+        };
+        let mut slot = output_cache.borrow_mut();
+        match (&key, slot.as_ref()) {
+            (Some((p, s)), Some((lp, ls, url))) if lp == p && ls == s => Some(url.clone()),
+            _ => {
+                let url = key.as_ref().and_then(|(path, _)| {
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    let mime = if ext == "png" { "image/png" } else { "video/webm" };
+                    std::fs::read(path)
+                        .ok()
+                        .map(|bytes| preview::output_data_url_mime(mime, &bytes))
+                });
+                // 键为 None 时也清空缓存，避免复用上一个任务的 URL
+                *slot = key.map(|(p, s)| (p, s, url.clone().unwrap_or_default()));
+                url
+            }
         }
-        _ => None,
     };
 
     let input_url = preview::media_url(Path::new(&entry.input_path));

@@ -2,64 +2,31 @@
 
 use super::{TranscodeError, Transcoder};
 use ffmpeg_sidecar::child::FfmpegChild;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::windows::fs::FileExt;
 
 impl Transcoder {
     /// webm 时长补丁：定位二进制标记 `44 89 88`，其后 8 字节覆写为
     /// `100f64`（大端）强制贴纸时长。
     pub(super) fn run_video(&mut self) -> Result<(), TranscodeError> {
-        fn find_binary_sequence_in_file(
-            mut file: &File,
-            sequence: &[u8],
-        ) -> std::io::Result<Option<u64>> {
-            let mut buffer = [0u8; 1024];
-            let mut position = 0;
-            let mut last_bytes = Vec::new();
-
-            loop {
-                let bytes_read = file.read(&mut buffer)?;
-
-                if bytes_read == 0 {
-                    break; // 读取结束
-                }
-
-                // 将上次未完成的字节和当前缓冲区拼接
-                let mut combined = last_bytes.clone();
-                combined.extend_from_slice(&buffer[..bytes_read]);
-
-                // 查找二进制序列
-                if let Some(index) = combined
-                    .windows(sequence.len())
-                    .position(|window| window == sequence)
-                {
-                    return Ok(Some(position + index as u64));
-                }
-
-                // 保存当前缓冲区的最后部分以处理跨块情况
-                if combined.len() > sequence.len() {
-                    last_bytes = combined.split_off(combined.len() - sequence.len());
-                } else {
-                    last_bytes.clear();
-                }
-
-                position += bytes_read as u64;
-            }
-
-            Ok(None)
-        }
-
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(self.get_output().ok_or(TranscodeError::OutputNotSet)?)
+        let path = self
+            .get_output()
+            .ok_or(TranscodeError::OutputNotSet)?
+            .clone();
+        let mut data = std::fs::read(&path)
             .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
-        let sequence = &[0x44, 0x89, 0x88];
-        let position = find_binary_sequence_in_file(&file, sequence)
-            .map_err(|_| TranscodeError::DurationPatch("error finding sequence"))?
+        let position = data
+            .windows(3)
+            .position(|w| w == [0x44, 0x89, 0x88])
             .ok_or(TranscodeError::DurationPatch("binary sequence not found"))?;
-        file.seek_write(&100f64.to_be_bytes(), position + sequence.len() as u64)
+        let end = position + 3 + 8;
+        if end > data.len() {
+            return Err(TranscodeError::DurationPatch(
+                "binary sequence too close to EOF",
+            ));
+        }
+        data[position + 3..end].copy_from_slice(&100f64.to_be_bytes());
+        std::fs::write(&path, data)
             .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
         Ok(())
     }
@@ -85,5 +52,31 @@ impl Transcoder {
         writer
             .write_all(&buffer)
             .map_err(|_| TranscodeError::ImagePipe("write failed"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::media::MediaFile;
+    use std::path::Path;
+
+    /// 回归：标记跨 1024 字节块边界时旧实现偏移多算 last_bytes 长度。
+    #[test]
+    fn duration_patch_writes_at_marker_offset() {
+        let dir = std::env::temp_dir().join(format!("stp-patch-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.webm");
+        let mut data = vec![0u8; 5000];
+        data[2046..2049].copy_from_slice(&[0x44, 0x89, 0x88]); // 跨块边界
+        std::fs::write(&path, &data).unwrap();
+
+        let mut t = Transcoder::new(MediaFile::new(Path::new("dummy.mp4")));
+        t.set_output(&path);
+        t.run_video().unwrap();
+
+        let patched = std::fs::read(&path).unwrap();
+        assert_eq!(&patched[2049..2057], &100f64.to_be_bytes());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

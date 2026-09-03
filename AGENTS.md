@@ -58,7 +58,7 @@ refactor/packaging (E).
   through the two write entries — `UiState::with_task(index, …)` for
   Transcoder-derived fields (locks, applies, syncs status/factor/output_size)
   and `UiState::touch_entry(index, …)` for UI-only mirrors
-  (progress/elapsed/error/input_duration). Do not mutate mirrors via raw
+  (progress/elapsed/error). Do not mutate mirrors via raw
   `tasks.with_mut` elsewhere.
 - **Async probing**: adding a file creates the `Transcoder` without IO probing
   (`Status::Probing`); `MediaFile::probe` runs on a background thread and flips the
