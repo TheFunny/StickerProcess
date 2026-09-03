@@ -175,9 +175,10 @@ body {
 .task-row {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 2px;
   min-height: 32px;
-  padding: 2px 8px 4px;
+  padding: 2px 8px;
   border-bottom: 1px solid var(--border-hairline);
 }
 
@@ -508,4 +509,65 @@ body {
   border: 1px dashed var(--border);
   border-radius: 4px;
   color: var(--fg-faint);
+}
+
+/* ---- UX polish (row actions, link buttons, progress label) ---- */
+.task-row:hover:not(:active) {
+  background: var(--surface-hover);
+  cursor: pointer;
+}
+
+.btn-mini {
+  align-self: center;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 13px;
+  line-height: 18px;
+  border-radius: 5px;
+  margin-left: 8px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* 移除按钮 hover 红色警示 */
+.btn-mini.btn-remove:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.toast-text {
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.modal {
+  animation: toast-in 0.15s ease-out;
+}
+
+.preview-pane img,
+.preview-pane video {
+  align-self: center;
+}
+
+.progress-track {
+  position: relative;
+}
+
+.progress-label {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: -16px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }

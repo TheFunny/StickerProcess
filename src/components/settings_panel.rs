@@ -24,6 +24,17 @@ pub fn SettingsPanel() -> Element {
     rsx! {
         div {
             class: "modal-backdrop",
+            tabindex: 0,
+            onmounted: move |evt: Event<MountedData>| {
+                spawn(async move {
+                    let _ = evt.data.set_focus(true).await;
+                });
+            },
+            onkeydown: move |evt: Event<KeyboardData>| {
+                if evt.data.key() == dioxus::html::Key::Escape {
+                    ctx.show_settings.set(false);
+                }
+            },
             onclick: move |_| ctx.show_settings.set(false),
             div {
                 class: "modal",

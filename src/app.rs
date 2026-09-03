@@ -264,6 +264,20 @@ impl UiState {
             .with_mut(|list| list.retain(|task| task.status != Status::Done));
     }
 
+    /// 重试单个任务：Alert/SizeExcess → Pending（保留用户系数，重跑由 Run 触发）。
+    pub fn retry_task(&mut self, index: usize) {
+        self.with_task(index, |t| t.status = Status::Pending);
+    }
+
+    /// 移除单个任务（任意状态）。
+    pub fn remove_task(&mut self, index: usize) {
+        self.tasks.with_mut(|list| {
+            if index < list.len() {
+                list.remove(index);
+            }
+        });
+    }
+
     /// 点击 Run：建输出目录后启动异步转码循环。
     pub fn start_run(&mut self) {
         if self.running.cloned() || self.tasks.cloned().is_empty() {
@@ -324,7 +338,12 @@ impl UiState {
                     tasks.with_mut(|list| {
                         for (index, pct) in latest {
                             if let Some(entry) = list.get_mut(index) {
-                                entry.progress = Some(pct);
+                                // 仅 Processing 期间写进度：worker 退出后残留的
+                                // 100% 更新不得覆盖 runner 清掉的 progress（否则
+                                // Done 任务显示进度条而非文件大小）
+                                if matches!(entry.status, Status::Processing) {
+                                    entry.progress = Some(pct);
+                                }
                             }
                         }
                     });

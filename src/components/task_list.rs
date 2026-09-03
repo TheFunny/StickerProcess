@@ -102,8 +102,15 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 if let Some(pct) = entry.progress {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
                 } else if let Some(size) = size_text {
-                    span {
-                        class: if is_excess { "size-excess" } else { "size-ok" },
+                    button {
+                        class: if is_excess { "size-excess btn-link" } else { "size-ok btn-link" },
+                        title: "Open output folder",
+                        onclick: move |evt: Event<MouseData>| {
+                            evt.stop_propagation();
+                            if let Some(dir) = entry.output_path.as_ref().and_then(|p| p.parent()) {
+                                let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                            }
+                        },
                         "{size}"
                     }
                 }
@@ -128,6 +135,26 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                             },
                         }
                     }
+                }
+                if matches!(entry.status, Status::Alert | Status::SizeExcess) {
+                    button {
+                        class: "btn btn-mini",
+                        disabled: running,
+                        onclick: move |evt: Event<MouseData>| {
+                            evt.stop_propagation();
+                            ctx.retry_task(index);
+                        },
+                        "Retry"
+                    }
+                }
+                button {
+                    class: "btn btn-mini btn-remove",
+                    disabled: running,
+                    onclick: move |evt: Event<MouseData>| {
+                        evt.stop_propagation();
+                        ctx.remove_task(index);
+                    },
+                    "✕"
                 }
             }
             if let Some(pct) = entry.progress {
