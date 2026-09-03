@@ -66,6 +66,8 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
             format!("{}  {:.2}KB", name, size as f64 / 1024.0)
         }
     });
+    // 选中输出文件用（onclick 闭包捕获）
+    let select_path = entry.output_path.clone();
 
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
     let factor_value = entry.factor;
@@ -104,11 +106,14 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 } else if let Some(size) = size_text {
                     button {
                         class: if is_excess { "size-excess btn-link" } else { "size-ok btn-link" },
-                        title: "Open output folder",
+                        title: "Select file in Explorer",
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
-                            if let Some(dir) = entry.output_path.as_ref().and_then(|p| p.parent()) {
-                                let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                            // /select 打开资源管理器并选中输出文件
+                            if let Some(path) = select_path.as_ref() {
+                                let _ = std::process::Command::new("explorer")
+                                    .arg(format!("/select,{}", path.display()))
+                                    .spawn();
                             }
                         },
                         "{size}"

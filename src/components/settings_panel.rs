@@ -44,7 +44,11 @@ pub fn SettingsPanel() -> Element {
                 div { class: "settings-row",
                     span { class: "label", "Output Dir" }
                     input {
-                        class: "input grow",
+                        class: if ctx.settings.read().output_dir_valid() {
+                            "input grow"
+                        } else {
+                            "input grow invalid-dir"
+                        },
                         r#type: "text",
                         value: "{ctx.settings.read().output_dir}",
                         oninput: move |evt: Event<FormData>| {

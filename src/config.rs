@@ -54,6 +54,13 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// 输出目录是否可用（已存在，或父目录存在可创建）。
+    pub fn output_dir_valid(&self) -> bool {
+        let path = std::path::Path::new(&self.output_dir);
+        path.is_dir()
+            || (!self.output_dir.is_empty() && path.parent().is_some_and(|p| p.is_dir()))
+    }
+
     pub fn video_max_size(&self) -> u64 {
         u64::from(self.video_max_size_kb) * 1024
     }

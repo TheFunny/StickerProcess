@@ -158,6 +158,15 @@ body {
   width: 100%;
 }
 
+.input.invalid-dir {
+  border-color: var(--danger);
+}
+
+.input.invalid-dir:focus {
+  outline-color: rgba(207, 34, 46, 0.2);
+  border-color: var(--danger);
+}
+
 .task-list {
   display: flex;
   flex-direction: column;

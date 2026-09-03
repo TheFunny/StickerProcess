@@ -92,7 +92,11 @@ pub fn Toolbar() -> Element {
         div { class: "row",
             span { class: "label", "Output Dir:" }
             input {
-                class: "input grow",
+                class: if ctx.settings.read().output_dir_valid() {
+                    "input grow"
+                } else {
+                    "input grow invalid-dir"
+                },
                 r#type: "text",
                 placeholder: "Type output directory here",
                 value: "{ctx.settings.read().output_dir}",
