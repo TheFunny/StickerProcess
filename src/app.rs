@@ -2,7 +2,7 @@
 //!
 //! 任务仍以 `Arc<Mutex<Transcoder>>` 共享给后台 worker（共享模式不变），
 //! 另存少量"显示镜像"字段，让 UI 渲染时**不加锁**（worker 转码期间会长期持有锁）。
-//! Phase B：`Settings` 成为全部可配置项的唯一事实源，变更防抖写盘。
+//! Phase B：`Settings` 成为全部可配置项的唯一事实源，变更即时同步写盘。
 
 use crate::components::{
     drop_zone::DropZone, progress_bar::ProgressBar, settings_panel::SettingsPanel,
@@ -124,7 +124,7 @@ impl TaskEntry {
 #[derive(Clone, Copy)]
 pub struct UiState {
     pub tasks: Signal<Vec<TaskEntry>>,
-    /// 全部可配置项（唯一事实源，变更防抖落盘）。
+    /// 全部可配置项（唯一事实源，变更即时同步落盘）。
     pub settings: Signal<Settings>,
     /// 设置面板开关。
     pub show_settings: Signal<bool>,

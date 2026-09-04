@@ -2,7 +2,7 @@
 //!
 //! `Settings` 是全部可配置项的唯一事实源，序列化为
 //! `%APPDATA%/StickerProcess/settings.toml`。
-//! 读取失败/文件缺失一律回退默认值并记录日志；保存由 UI 层防抖触发。
+//! 读取失败/文件缺失一律回退默认值并记录日志；保存由 UI 层同步触发。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -1,6 +1,6 @@
 //! 工具栏：添加文件、清空完成、设置入口、主题切换、取消、运行按钮。
 //!
-//! Phase B：输出目录直接读写 `Settings`（防抖落盘）；重试次数移入设置面板。
+//! Phase B：输出目录直接读写 `Settings`（即时同步落盘）；重试次数移入设置面板。
 
 use crate::app::{SUPPORTED, UiState};
 use dioxus::prelude::*;

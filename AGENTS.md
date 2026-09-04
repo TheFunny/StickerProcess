@@ -27,10 +27,13 @@ refactor/packaging (E).
 | `src/config.rs` | `Settings` model (serde+toml), persisted to `%APPDATA%/StickerProcess/settings.toml`; `load`/`save` + roundtrip tests |
 | `src/runner.rs` | Async transcode loop: `run_all` → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
-| `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`) landed in Phase C |
+| `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
 | `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check), duration, output path; enums; unit tests |
 | `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration), `command.rs` (ffmpeg command gen + bitrate pure fns), `steps.rs` (webm duration patch, oxipng image pipe), `error.rs` (`TranscodeError`) |
-| `MIGRATION_PLAN.md` | Roadmap and phase checklist (A done; B–E pending) |
+| `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
+| `REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
+| `E6_INPROCESS_RESEARCH.md` | Draft research for replacing the ffmpeg sidecar with in-process transcoding |
+| `MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6' in-process transcoding is a drafted proposal) |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `notes.md` | Developer notes (see Gotchas) |
 | `archive/` | Legacy implementations (gitignored) |
@@ -39,14 +42,17 @@ refactor/packaging (E).
 ## Architecture
 
 - **State**: `UiState` bundles Copy-able signals (`tasks`, `settings`, `show_settings`,
-  `running`, `overall_progress`, `cancel`, `toasts`) provided to components
-  via context.
+  `show_preview`, `running`, `overall_progress`, `cancel`, `toasts`) provided to
+  components via context.
 - **Settings (Phase B)**: `config::Settings` is the single source of truth for all
   config (output dir, max retry, video/image size limits, retry shrink factor,
   duration factor table, forced FPS, theme). Mutate only via
-  `UiState::update_settings(…)` — it applies the closure,
-  then debounce-saves to `%APPDATA%/StickerProcess/settings.toml` (500 ms, latest
-  write wins). Missing/corrupt file falls back to defaults at load. Size limits,
+  `UiState::update_settings(…)` — it applies the closure, then **synchronously**
+  saves to `%APPDATA%/StickerProcess/settings.toml` (file is ~200 B, sub-ms write;
+  sync execution prevents torn/out-of-order writes from per-keystroke async saves).
+  Invalid output dirs (nonexistent, uncreatable parent) render both toolbar and
+  settings inputs with a red border via `Settings::output_dir_valid()`.
+  Missing/corrupt file falls back to defaults at load. Size limits,
   the duration-factor table and the forced FPS are synced onto each `Transcoder`
   by the runner before every attempt; the retry shrink factor is applied by the
   runner when shrinking on size excess.
@@ -56,10 +62,11 @@ refactor/packaging (E).
   (path/status/output_size/factor/progress/elapsed/error) so rendering never
   locks the mutex while a worker holds it during transcoding. Mirror writes go
   through the two write entries — `UiState::with_task(index, …)` for
-  Transcoder-derived fields (locks, applies, syncs status/factor/output_size)
-  and `UiState::touch_entry(index, …)` for UI-only mirrors
-  (progress/elapsed/error). Do not mutate mirrors via raw
-  `tasks.with_mut` elsewhere.
+  Transcoder-derived fields (locks, applies, syncs status/factor/output_size/
+  output_path/output_file_name) and `UiState::touch_entry(index, …)` for
+  UI-only mirrors (progress/elapsed/error). Do not mutate mirrors via raw
+  `tasks.with_mut` elsewhere. Row actions: `retry_task` (Alert/SizeExcess →
+  Pending, factor preserved) and `remove_task` (any status).
 - **Async probing**: adding a file creates the `Transcoder` without IO probing
   (`Status::Probing`); `MediaFile::probe` runs on a background thread and flips the
   mirror to `Pending`/`Alert`. Run is blocked while any task is probing.
@@ -68,7 +75,9 @@ refactor/packaging (E).
   timestamped output path once, set `Processing`, run
   `Transcoder::run_with_progress()` inside `spawn_blocking` (progress parsed from
   ffmpeg stderr by `ffmpeg-sidecar`'s `iter()`, sent over an mpsc channel to the
-  UI mirror), then `check_size()`. If over limit, shrink factor
+  UI mirror; the ~10Hz receiver loop only writes mirrors of tasks still in
+  `Processing` — stale post-completion updates must not resurrect the progress
+  bar on a Done row), then `check_size()`. If over limit, shrink factor
   (`factor = factor / excess * retry_shrink_factor`) and retry up to `max_retry`, else advance.
   Task errors mark `Alert`, push an error toast, and skip to the next task.
   The `cancel` signal is checked between attempts; mid-task cancel bridges to
@@ -80,6 +89,14 @@ refactor/packaging (E).
   toasts in Phase C). Drag & drop works on the whole window: `ondragover` sets
   highlight, `ondrop` reads files and `FileData::path()` returns full paths on
   Windows (verified on dioxus 0.7.x).
+- **Preview (Phase D)**: clicking a task row opens the preview modal
+  (`show_preview`); input streams via the `preview://` custom protocol
+  (`src/preview.rs`, HTTP Range support), output renders from a base64 data URL
+  cached per (output_path, output_size) in the component (no re-encode on
+  10Hz progress updates). Esc closes modals (backdrop autofocuses via
+  `onmounted` + `set_focus`, so no input click needed first).
+- **Row output link**: clicking the output size text runs
+  `explorer /select,<path>` to reveal the file in Explorer.
 - **Status**: `Probing` (async probe in flight), `Pending`, `Processing`,
   `Done`, `Alert` (error), `SizeExcess` (retry-able); badge colors map to CSS
   classes in `app.css`.
@@ -95,11 +112,14 @@ refactor/packaging (E).
 - **Duration inference**: `ffmpeg-the-third` opens the input to read codec id and
   duration; APNG is assigned a fixed duration of 1 s (no probe). Output filenames are
   timestamps `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
-- **Webm duration patch** (`transcoder::steps`): after encoding, the file is scanned
-  for the binary marker `44 89 88` and 8 bytes are overwritten with `100f64`
-  (big-endian) to force a fixed/fake duration on the sticker.
-- **Status**: `Probing`, `Pending`, `Processing`, `Done`, `Alert` (error),
-  `SizeExcess` (retry-able); badge colors map to CSS classes in `app.css`.
+- **Webm duration patch** (`transcoder::steps`): after encoding, the output file
+  is read fully into memory, scanned for the binary marker `44 89 88`, and the
+  8 bytes after it are overwritten with `100f64` (big-endian) to force a
+  fixed/fake duration. Whole-file search avoids the old streaming implementation's
+  offset overshoot when the marker straddles the 1 KB read boundary; an EOF
+  guard rejects truncated outputs. Regression test:
+  `duration_patch_writes_at_marker_offset`.
+
 ### Default size factors by duration (video)
 
 `<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`;
@@ -113,7 +133,7 @@ run lazily initializes it.
 ```bash
 cargo run            # debug
 cargo build --release
-cargo test           # media.rs unit tests
+cargo test           # 23 unit tests across media/config/command/preview/app/steps
 ```
 
 The first build fetches the dioxus dependency tree (~300 crates); rebuilds work
@@ -130,11 +150,13 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   fields elsewhere will desynchronize the UI.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
-- Numeric inputs (`NumberInput`) use commit-on-enter/blur plus
-  `key: "{value}"` remounting — the key guarantees the field shows the new
-  value after any external change (manual commit or retry shrink).
+- Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →
+  `on_change`); focus shows a local draft so the cursor doesn't jump, and the
+  non-editing display mirrors the external value directly (retry shrink is
+  immediately visible). There is no separate enter/blur commit step.
   `TaskEntry::eq` MUST include every mirror field a component depends on:
-  a missing field silently memo-skips re-renders (this broke factor display).
+  a missing field silently memo-skips re-renders (this broke factor display,
+  then status/error badges; regression test `task_entry_eq_covers_status_and_error`).
 - New media types must be wired in **four** places:
   1. `src/app.rs` — `VIDEO` / `IMAGE` constants (`SUPPORTED` is derived)
   2. `src/components/toolbar.rs` — accept string derives from `SUPPORTED`
