@@ -2,8 +2,8 @@
 
 use super::{TranscodeError, Transcoder};
 use ffmpeg_sidecar::child::FfmpegChild;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::BufReader;
+use std::io::Read;
 
 impl Transcoder {
     /// webm 时长补丁：定位二进制标记 `44 89 88`，其后 8 字节覆写为
@@ -31,7 +31,8 @@ impl Transcoder {
         Ok(())
     }
 
-    /// 图片管道：ffmpeg 从 stdout 输出 PNG → oxipng 内存优化（preset 4）→ 写盘。
+    /// 图片管道（sidecar）：ffmpeg stdout PNG → 共享 oxipng 管道写盘。
+    /// oxipng 优化逻辑在 inprocess.rs::write_optimized_png（两引擎共用）。
     pub(super) fn run_image(&mut self, process: &mut FfmpegChild) -> Result<(), TranscodeError> {
         let std_out = process
             .take_stdout()
@@ -41,17 +42,7 @@ impl Transcoder {
         reader
             .read_to_end(&mut buffer)
             .map_err(|_| TranscodeError::ImagePipe("read stdout failed"))?;
-        let mut option = oxipng::Options::from_preset(4);
-        option.strip = oxipng::StripChunks::Safe;
-        option.optimize_alpha = true;
-        let buffer = oxipng::optimize_from_memory(&buffer, &option)
-            .map_err(|_| TranscodeError::ImagePipe("optimize failed"))?;
-        let file = File::create(self.get_output().ok_or(TranscodeError::OutputNotSet)?)
-            .map_err(|_| TranscodeError::ImagePipe("create file failed"))?;
-        let mut writer = BufWriter::new(file);
-        writer
-            .write_all(&buffer)
-            .map_err(|_| TranscodeError::ImagePipe("write failed"))
+        self.write_optimized_png(&buffer)
     }
 }
 

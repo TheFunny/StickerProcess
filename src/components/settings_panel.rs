@@ -140,6 +140,19 @@ pub fn SettingsPanel() -> Element {
                 }
 
                 div { class: "settings-row",
+                    span { class: "label", "Transcode engine" }
+                    select {
+                        class: "input",
+                        value: "{ctx.settings.read().engine}",
+                        onchange: move |evt: Event<FormData>| {
+                            let engine = evt.data.value();
+                            ctx.update_settings(move |s| s.engine = engine);
+                        },
+                        option { value: "sidecar", "Sidecar (ffmpeg.exe)" }
+                        option { value: "inprocess", "In-process (libav)" }
+                    }
+                }
+                div { class: "settings-row",
                     span { class: "label", "Theme" }
                     select {
                         class: "input",

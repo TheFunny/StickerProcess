@@ -156,11 +156,12 @@ async fn run_single_task(
         let result = {
             let task_arc = Arc::clone(&task_arc);
             let tx = progress_tx.clone();
+            let engine = settings.engine.clone();
             tokio::task::spawn_blocking(move || {
                 let mut t = task_arc
                     .lock()
                     .map_err(|e| TranscodeError::Join(e.to_string()))?;
-                t.run_with_progress(move |pct| {
+                t.run_with_progress(&engine, move |pct| {
                     // 发送失败仅意味着接收端已关闭，忽略即可
                     let _ = tx.send(ProgressUpdate { index, pct });
                 })

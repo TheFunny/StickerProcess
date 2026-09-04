@@ -10,15 +10,16 @@ use ffmpeg_sidecar::command::FfmpegCommand;
 const BITRATE_BASE_BYTES: f64 = 256.0 * 1024.0;
 
 /// VP9 恒定质量模式的目标质量（越低质量越高、体积越大）。
-const VP9_CRF: u32 = 26;
+pub(super) const VP9_CRF: u32 = 26;
 
 /// `-bufsize` 与 `-b:v` 的比值（解码器缓冲时长，越大码率越平稳）。
-const BUFSIZE_RATIO: f64 = 1.5;
+pub(super) const BUFSIZE_RATIO: f64 = 1.5;
 
 /// 目标码率 = 贴纸比特数 / 视频时长。
-fn target_bitrate_bps(duration: f64) -> f64 {
+pub(super) fn target_bitrate_bps(duration: f64) -> f64 {
     BITRATE_BASE_BYTES * 8.0 / duration
 }
+
 
 /// 时长→默认系数查表，区间固定：<1s, <2s, <3s, <5s, <8s, ≥8s。
 pub fn default_factor(duration: f64, table: &[f64; 6]) -> f64 {
@@ -35,7 +36,7 @@ pub fn default_factor(duration: f64, table: &[f64; 6]) -> f64 {
 }
 
 /// 码率 × 系数后量化到 10 的倍数（ffmpeg `-b:v` 取整数）。
-fn quantized_bitrate(base_bps: f64, factor: f64) -> u32 {
+pub(super) fn quantized_bitrate(base_bps: f64, factor: f64) -> u32 {
     (base_bps * factor) as u32 / 10 * 10
 }
 
@@ -50,6 +51,38 @@ pub fn parse_progress_time(time: &str) -> f64 {
 }
 
 impl Transcoder {
+    /// 实际参与码率计算的时长（秒）：APNG 固定 1.0（无可靠探测值），
+    /// 其余视频用探测时长；<=0 视为无效。
+    pub(super) fn effective_duration(&self, v_type: &VideoType) -> Result<f64, TranscodeError> {
+        if *v_type == VideoType::Apng {
+            return Ok(1.0);
+        }
+        let duration = self
+            .media_file
+            .duration()
+            .ok_or(TranscodeError::InvalidDuration)?;
+        if duration <= 0.0 {
+            return Err(TranscodeError::InvalidDuration);
+        }
+        Ok(duration)
+    }
+
+    /// 求值码率系数：惰性初始化默认系数（查表）+ GIF 0.75 patch（程序内固定值，非设置项）。
+    pub(super) fn resolve_factor(&mut self, duration: f64, v_type: &VideoType) -> f64 {
+        let mut factor = match self.size_factor.as_ref() {
+            Some(factor) => factor.get(),
+            None => {
+                let factor = default_factor(duration, &self.duration_factors);
+                self.size_factor = Some(Factor::new(factor));
+                factor
+            }
+        };
+        if let VideoType::Gif = v_type {
+            factor *= 0.75;
+        }
+        factor
+    }
+
     pub(super) fn gen_command(&mut self) -> Result<FfmpegCommand, TranscodeError> {
         let mut command = FfmpegCommand::new();
         command
@@ -62,32 +95,9 @@ impl Transcoder {
             .r#type()
             .ok_or(TranscodeError::InvalidMediaType)?
         {
-            let duration = if v_type == VideoType::Apng {
-                1.0
-            } else {
-                let duration = self
-                    .media_file
-                    .duration()
-                    .ok_or(TranscodeError::InvalidDuration)?;
-                if duration <= 0.0 {
-                    return Err(TranscodeError::InvalidDuration);
-                }
-                duration
-            };
-            let base_bps = target_bitrate_bps(duration);
-            let mut factor = match self.size_factor.as_ref() {
-                Some(factor) => factor.get(),
-                None => {
-                    let factor = default_factor(duration, &self.duration_factors);
-                    self.size_factor = Some(Factor::new(factor));
-                    factor
-                }
-            };
-            // GIF 码率计算 patch（程序内固定值，非设置项）
-            if let VideoType::Gif = v_type {
-                factor *= 0.75;
-            }
-            let target_bitrate = quantized_bitrate(base_bps, factor);
+            let duration = self.effective_duration(&v_type)?;
+            let factor = self.resolve_factor(duration, &v_type);
+            let target_bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
             if self.target_fps > 0.0 {
                 command.args(["-r", &self.target_fps.to_string()]);
             }

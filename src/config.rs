@@ -28,6 +28,13 @@ pub struct Settings {
     pub target_fps: f64,
     /// 主题："light" / "dark"。
     pub theme: String,
+    /// 转码引擎："sidecar"（ffmpeg 子进程）或 "inprocess"（libav 进程内）。
+    #[serde(default = "default_engine")]
+    pub engine: String,
+}
+
+fn default_engine() -> String {
+    "sidecar".into()
 }
 
 fn default_retry_shrink_factor() -> f64 {
@@ -46,6 +53,7 @@ impl Default for Settings {
             video_max_size_kb: 256,
             image_max_size_kb: 512,
             retry_shrink_factor: default_retry_shrink_factor(),
+            engine: default_engine(),
             duration_factors: default_duration_factors(),
             target_fps: 0.0,
             theme: "system".into(),
@@ -54,6 +62,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// 转码引擎设置是否为合法值。
+    pub fn engine_valid(&self) -> bool {
+        matches!(self.engine.as_str(), "sidecar" | "inprocess")
+    }
+
     /// 输出目录是否可用（已存在，或父目录存在可创建）。
     pub fn output_dir_valid(&self) -> bool {
         let path = std::path::Path::new(&self.output_dir);
@@ -89,6 +102,13 @@ pub fn load() -> Settings {
         }),
         Err(_) => Settings::default(),
     };
+    if !settings.engine_valid() {
+        log::warn!(
+            "Invalid engine '{}' in settings.toml, falling back to 'sidecar'",
+            settings.engine
+        );
+        settings.engine = "sidecar".into();
+    }
     if settings.output_dir.is_empty() {
         settings.output_dir = default_output_dir();
     }
@@ -136,6 +156,7 @@ mod tests {
         s.duration_factors = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         s.target_fps = 30.0;
         s.theme = "dark".into();
+        s.engine = "inprocess".into();
         let raw = toml::to_string_pretty(&s).unwrap();
         assert_eq!(toml::from_str::<Settings>(&raw).unwrap(), s);
     }
@@ -148,6 +169,24 @@ mod tests {
         assert_eq!(parsed.duration_factors, default_duration_factors());
         assert_eq!(parsed.target_fps, 0.0);
         assert_eq!(parsed.retry_shrink_factor, default_retry_shrink_factor());
+    }
+
+    #[test]
+    fn missing_engine_falls_back_to_sidecar() {
+        // 兼容旧版 settings.toml：缺 engine 键时用默认 sidecar
+        let legacy = "output_dir = 'X'\nmax_retry = 2\nvideo_max_size_kb = 256\nimage_max_size_kb = 512\ntheme = 'light'\n";
+        let parsed: Settings = toml::from_str(legacy).unwrap();
+        assert_eq!(parsed.engine, "sidecar");
+    }
+
+    #[test]
+    fn engine_valid_rejects_unknown_values() {
+        let mut s = Settings::default();
+        assert!(s.engine_valid());
+        s.engine = "inprocess".into();
+        assert!(s.engine_valid());
+        s.engine = "gpu".into();
+        assert!(!s.engine_valid());
     }
 
     #[test]

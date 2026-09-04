@@ -8,6 +8,7 @@
 
 mod command;
 mod error;
+mod inprocess;
 mod steps;
 
 pub use error::TranscodeError;
@@ -129,11 +130,16 @@ impl Transcoder {
         Ok(())
     }
 
-    /// 执行转码；进度经回调上报（0..=1）。取消经 `cancel_flag` 中断。
+    /// 执行转码（按 engine 设置分发 sidecar / inprocess）；
+    /// 进度经回调上报（0..=1）。取消经 `cancel_flag` 中断。
     pub fn run_with_progress(
         &mut self,
+        engine: &str,
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
+        if engine == "inprocess" {
+            return self.run_inprocess(on_progress);
+        }
         // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
         self.cancel_flag.store(false, Ordering::Relaxed);
         let media_type = self

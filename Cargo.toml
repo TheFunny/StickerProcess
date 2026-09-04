@@ -9,6 +9,7 @@ chrono = "0.4.45"
 dioxus = { version = "0.7", features = ["desktop"] }
 ffmpeg-the-third = "6"
 ffmpeg-sidecar = "2.5"
+libc = "0.2"
 log = "0.4.34"
 oxipng = { version = "10.2", features = ["parallel", "zopfli"], default-features = false }
 pretty_env_logger = "0.5.0"

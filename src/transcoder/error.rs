@@ -26,4 +26,12 @@ pub enum TranscodeError {
     SizeCheck(String),
     #[error("join error: {0}")]
     Join(String),
+    #[error("encoder not found: {0}")]
+    EncoderNotFound(&'static str),
+    #[error("decoder error: {0}")]
+    Decoder(String),
+    #[error("filter graph error: {0}")]
+    Filter(String),
+    #[error("muxer error: {0}")]
+    Muxer(String),
 }
