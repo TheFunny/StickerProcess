@@ -7,9 +7,9 @@ publisher = "StickerProcess"
 icon = ["ico/icon.ico"]
 category = "GraphicsAndDesign"
 short_description = "图片/短视频转 Telegram 贴纸工具"
-# ffmpeg 随包分发：sidecar 机制要求 ffmpeg.exe 与主程序同目录
-# （ffmpeg-sidecar paths::sidecar_path = current_exe().parent()/ffmpeg.exe）
-resources = ["ffmpeg/ffmpeg.exe"]
+# ffmpeg.exe 不再随包分发（shared exe 缺 DLL 无法在干净机器上运行）；
+# sidecar 引擎按启动探测结果启用——用户自备 PATH 或主程序同目录的可执行
+# 文件；inprocess（静态 libav）始终可用。构建矩阵规划见 docs/REFACTOR_PLAN.md P5。
 
 [bundle.windows]
 # WebView2 安装策略（文档 Bundle.windows）：

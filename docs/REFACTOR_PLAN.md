@@ -106,16 +106,22 @@ settings.toml 只有 ~200 字节，写盘亚毫秒级。500ms 防抖的全部收
 
 - [x] **NSIS 安装包打通**：`dx bundle --platform windows --package-types nsis`
       产出 `StickerProcess_0.1.0_x64-setup.exe`（187MB，含 WebView2 离线安装器）
-- [x] **ffmpeg 随包分发**：`Dioxus.toml [bundle].resources = ["ffmpeg/ffmpeg.exe"]`；
-      ffmpeg-sidecar 的 sidecar 机制天然支持——它先找主程序同目录的 ffmpeg.exe
-      （`paths::sidecar_path = current_exe().parent()/ffmpeg.exe`），找不到才回落 PATH
-- [x] **静默安装验证**：`setup.exe /S /D=<dir>` 安装出 StickerProcess.exe +
-      ffmpeg.exe，程序可正常启动运行（ffmpeg 依赖 DLL 缺失时由系统 PATH 提供，
-      分发机器需带 WebView2；WebView2 离线安装器已捆绑在 NSIS 中）
-- 注意：shared 构建 DLL 共 220MB，安装包里只带 ffmpeg.exe（0.6MB）；
-      目标机器需自备 ffmpeg DLL 或改用 static 构建（体积换免依赖）
+- [x] **ffmpeg 随包分发**：~~已废弃（2026-09-06）~~ bundled shared ffmpeg.exe
+      运行需要同大版本 av*.dll（~235MB），捆绑 exe 不带 DLL，干净机器上无法启动；
+      有 ffmpeg 的用户 PATH 里已有可用 exe，捆绑冗余。见 docs/RELEASE.md 与
+      E6_INPROCESS_RESEARCH.md §7 的静态构建路线
+- [x] **静默安装验证**：`setup.exe /S /D=<dir>` 安装出 StickerProcess.exe，
+      分发机器需带 WebView2（离线安装器已捆绑在 NSIS 中）
 
 ## P5 — 远期规划
 
 - [ ] **4. i18n**（原 B 表低优先项）：界面文案现散落在各组件 rsx 中；
   引入 fluent 或简单字符串表前先盘点文案数量，建议随 E7 文档阶段一起做
+
+- [ ] **5. CI 发布矩阵**：GitHub Actions 构建多版本安装包并挂 Releases——
+      a) 精简版（静态 ffmpeg inprocess，无 WebView2 离线包，需在线装 WebView2）
+      b) 完整版（同上 + WebView2 离线安装器，当前默认形态）
+      c) 完整版+sidecar（再嵌 vcpkg 静态 `ffmpeg.exe`（`ffmpeg[ffmpeg]` feature，
+      ~20MB），零配置用户也可切 sidecar 引擎）
+      复用工程 `build.rs` 的静态链接逻辑与 vcpkg binary cache；升级语义见
+      docs/RELEASE.md

@@ -5,13 +5,13 @@
 
 // dx bundle 发布产物不弹终端窗口；debug 运行保留控制台看日志
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 mod app;
 mod components;
 mod config;
 mod media;
 mod preview;
 mod runner;
+mod sidecar_probe;
 mod transcoder;
 
 use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
@@ -23,6 +23,8 @@ fn main() {
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .init();
+    // sidecar 可用性探测（进程内缓存一次；日志记录结果）
+    crate::sidecar_probe::SidecarProbe::init();
     let cfg = preview::register(
         // with_menu(None) 关闭 dioxus 默认菜单栏（File/View 等）
         Config::new()

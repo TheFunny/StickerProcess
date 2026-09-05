@@ -18,8 +18,21 @@ pub fn SettingsPanel() -> Element {
     if !ctx.show_settings.cloned() {
         return rsx! {};
     }
-
     let factors = ctx.settings.read().duration_factors;
+
+    // sidecar 可用性：启动探测缓存；不可用时下拉项置灰并显示后缀。
+    // 可用但缺 libvpx-vp9 编码器（极简 ffmpeg 构建）同样视为不可用于转码。
+    let probe = crate::sidecar_probe::SidecarProbe::probe();
+    let sidecar_available =
+        probe.is_some_and(|p| p.has_vp9);
+    let unavailable_suffix = if sidecar_available {
+        ""
+    } else {
+        match probe {
+            Some(_) => " — 缺少 libvpx-vp9 编码器",
+            None => " — 未检测到 ffmpeg",
+        }
+    };
 
     rsx! {
         div {
@@ -148,7 +161,11 @@ pub fn SettingsPanel() -> Element {
                             let engine = evt.data.value();
                             ctx.update_settings(move |s| s.engine = engine);
                         },
-                        option { value: "sidecar", "Sidecar (ffmpeg.exe)" }
+                        option {
+                            value: "sidecar",
+                            disabled: !sidecar_available,
+                            "Sidecar (ffmpeg.exe){unavailable_suffix}"
+                        }
                         option { value: "inprocess", "In-process (libav)" }
                     }
                 }

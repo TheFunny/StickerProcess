@@ -156,7 +156,19 @@ async fn run_single_task(
         let result = {
             let task_arc = Arc::clone(&task_arc);
             let tx = progress_tx.clone();
-            let engine = settings.engine.clone();
+            // 引擎解析：设置值 + sidecar 可用性兜底。设置 sidecar 但探测
+            // 不可用（未装 ffmpeg / 缺 libvpx-vp9）→ 回退 inprocess 并记日志。
+            let engine = match settings.engine.as_str() {
+                "sidecar" if !crate::sidecar_probe::SidecarProbe::probe()
+                    .is_some_and(|p| p.has_vp9) =>
+                {
+                    log::warn!(
+                        "{name}: engine=sidecar 但 ffmpeg/libvpx-vp9 不可用，回退 inprocess"
+                    );
+                    "inprocess".to_string()
+                }
+                other => other.to_string(),
+            };
             tokio::task::spawn_blocking(move || {
                 let mut t = task_arc
                     .lock()
