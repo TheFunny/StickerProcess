@@ -68,73 +68,85 @@
 - **E4 并行转码**: 进程内方案无子进程开销，多任务并行更轻量
 - **日志/进度契约**: `ProgressUpdate` mpsc 结构不变，仅数据来源更精确
 
-## 7. static 构建研究（2026-09-05）
+## 7. static 构建（2026-09-05 研究并落地，提交 2d78447）
 
-目标：让 `ffmpeg-the-third` 以静态库链接（零 DLL 依赖的自包含 exe），
-为 E6 第二阶段（删 sidecar）铺路。
+目标：`ffmpeg-the-third` 以静态库链接，产出零 ffmpeg DLL 依赖的自包含
+exe，为 E6 第二阶段（删 sidecar）铺路。
 
 ### 7.1 build.rs 链接逻辑（`ffmpeg-sys-the-third` 6.0.0+ffmpeg-9.0）
 
 三条路径，按优先级：
 1. **`build` feature（源码编译）**：git clone FFmpeg n9.x → `./configure
    --enable-static --disable-shared --disable-autodetect --disable-programs`
-   → `make install`。`EXTRALIBS` 从 `ffbuild/config.mak` 读取后透传给 rustc。
+   → `make install`。
 2. **`FFMPEG_DIR`（预编译库）**：`link_to_libraries()` 按 `static` feature
-   发 `cargo::rustc-link-lib=static=avutil…`。**无需 `--features build`**——
-   只要 `FFMPEG_DIR/lib` 下有 `avutil.lib` 等 MSVC 静态导入库即可。
-3. vcpkg（未装）/ pkg-config（Windows 不可用）。
+   发 `cargo::rustc-link-lib=static=avutil…`。
+3. vcpkg / pkg-config（Windows 上 pkg-config 不可用）。
 
-### 7.2 本机工具链盘点
+### 7.2 路线对比（结论：C）
 
-| 工具 | 状态 |
+| 路线 | 评价 |
 |---|---|
-| MSVC 2022 Community + cl.exe | ✓（14.42）|
-| Windows SDK | ✓（10.0.22000，含 um/ucrt）|
-| `make` | ✗（Git for Windows 不带；choco 未装 msys2/mingw）|
-| nasm/yasm | ✗（源码编 x86 asm 需要；`--disable-x86asm` 可绕过但慢）|
-| vcpkg | ✗ |
+| A. gyan/BtbN 预编译 static | gyan shared 包的 `.lib` 是 DLL 导入库非静态库；BtbN 产 MinGW `.a`，与 MSVC CRT 不兼容 ✗ |
+| B. 源码编译 `--features build` | 需 MSYS2 全套（gcc/make/nasm）；`compile.rs` 无 Windows 分支，未官方测试 ✗ |
+| **C. vcpkg x64-windows-static** | MSVC 主机唯一官方支持路径，系统库（bcrypt/ole32/ws2_32/secur32）自动链接 ✓ |
 
-### 7.3 三条可行路线对比
+### 7.3 落地实录（踩坑记录）
 
-**A. 预编译 static 库 + FFMPEG_DIR（推荐）**
-gyan.dev 提供 `ffmpeg-*-full_build-shared` 也无 `.lib` 静态库？——其
-`lib/*.lib` 是 DLL 导入库（链接到 DLL），**不是**静态库。需要另找
-BtbN/FFmpeg-Builds 的 `win64-lgpl`/`win64-gpl` **static** 包（产出
-`lib/*.a` + `lib/*.dll.a`，配 MSVC 也能链 `.a` 吗？——MSVC 链接器不吃
-MinGW `libavutil.a`（COFF vs ELF 差异实际是 MinGW 也产 COFF，但
-CRT/异常模型不兼容，链接大概率失败））。
+1. **vcpkg 版本**：旧 checkout（2022-01，ffmpeg 4.4.1）不满足
+   the-third 要求的 avcodec ≥ 59.37（FFmpeg 5.1+）。升级到 2026-07-27
+   （ffmpeg 9.0.1 port，与 the-third 6.0 的 `ffmpeg_9_0` 特性精确匹配）。
+   网络走代理 `http://127.0.0.1:10808`（tarball 替代 git fetch）。
+2. **`--toolchain=msvc` 失效**：旧 `vcpkg-cmake` port 的 `cmake_get_vars`
+   助手不导出 `VCPKG_DETECTED_MSVC` → portfile 不加 `--toolchain=msvc` →
+   ffmpeg configure 在 MSYS 路径（`/c/...`）下做 cl.exe 探测失败
+   （`-Fo` 输出路径被误解为 `D:\c\...`）。换新版 vcpkg-cmake-get-vars
+   （导出该变量）后 configure 走 `TMPDIR=.` 相对路径，一切正常。
+3. **`libvpx[highbitdepth]` 必须**：vpx 默认不带 VP9 10-bit 支持，
+   `yuv420p10le` 编码直接报 "Specified pixel format ... not supported"。
+   装 `libvpx[highbitdepth]` 后重建 ffmpeg 解决。
+4. **png 需要 `ffmpeg[zlib]`**：`--disable-zlib` 时 png 编解码被禁。
+   注意 debug 链接的 zlib 名是 `zsd.lib`（release `zs.lib`）。
+5. **`avicap32.lib` 不在 Windows SDK**：avdevice 的 vfwcap 依赖它，
+   但 SDK 只带 `msvfw32.lib`。用 `lib.exe /def` 从手写 `.def`
+   （仅导出 `capCreateCaptureWindowA` / `capGetDriverDescriptionA`）
+   生成导入库，存放于 `D:/Tools/ffmpeg-static-extras/`。
+6. **系统库补链**：`ffmpeg-sys` 的 `EXTRALIBS` 透传只在 `--features
+   build` 路径生效，FFMPEG_DIR 路径不传外部依赖 → 项目 `build.rs`
+   在 `FFMPEG_DIR` 设置时补链 16 个库：vpx、strmiids、mfuuid、uuid、
+   winmm、ws2_32、secur32、bcrypt、user32、avicap32、msvfw32、gdi32、
+   oleaut32、shlwapi、psapi、ncrypt、crypt32、zs，并加
+   `/NODEFAULTLIB:{LIBCMT,LIBCMTD,MSVCRTD}` 抑制 CRT 冲突。
 
-**B. 源码编译（`--features ffmpeg-the-third/build`）**
-需要 MSYS2（gcc/make/nasm）一套工具链 + `build-lib-vpx`（libvpx 也要
-先编好，configure 会去系统找）。构建脚本在 Windows/MSVC 下**未经
-官方测试**（`compile.rs` 无 windows 分支，`make` 调用假设 unix PATH）。
-估计首次打通 0.5–1 天 + 每次全量重建 10–20 分钟。
+### 7.4 CI 适配（待做）
 
-**C. vcpkg 静态 ffmpeg（`vcpkg install ffmpeg[core] --triplet x64-windows-static`）**
-build.rs 有原生 `try_vcpkg` 分支（含 bcrypt/ole32/ws2_32/secur32 系统库
-自动链接）。最贴近 crate 作者预期路径；vcpkg 构建约 30–60 分钟（一次性，
-binary caching 后秒级）。libvpx 是 ffmpeg 的依赖自动带上。
+当前 `build.rs` 的 avicap32 导入库路径硬编码 `D:/Tools/ffmpeg-static-extras/`。
+CI 化的两个选择：
+- **推荐**：把 `avicap32.def`（仅 5 行文本，见提交 2d78447 的 out/ 历史）
+  放进仓库，CI 里用 `lib.exe /def:avicap32.def /machine:x64
+  /out:<build-dir>/avicap32.lib` 生成——`lib.exe` 随 MSVC 必有，零外部依赖；
+  `build.rs` 改为生成到 `OUT_DIR` 并 `rustc-link-search` 指向它。
+- 备选：vcpkg manifest 模式（`vcpkg.json`）+ GitHub Actions 的
+  `lukka/run-vcpkg` action，binary cache（GitHub Cache backend）后
+  二次构建秒级。
 
-### 7.4 结论与建议
+### 7.5 验证结果（✅ 全部通过）
 
-- **推荐 C（vcpkg x64-windows-static）**：唯一在 MSVC 主机工具链下
-  官方支持的路径；`FFMPEG_DIR` 留空即可走 try_vcpkg。
-- 路线 B（MSYS2 源码编译）为备选：灵活性最高（自定义 encoder 集），
-  但 Windows 打通成本高。
-- 无论哪条：删掉 sidecar 后 exe 体积预计 +15–25MB（静态 libav 剪裁后；
-  gyan 全量 DLL 235MB 是含全部 98 个外部库的，`--disable-autodetect`
-  的源码/vcpkg 默认集小得多——vcpkg ffmpeg[core] 无 libvpx 时需
-  `ffmpeg[core,vpx]`）。
-- license 注意：ffmpeg 静态链接（L）GPL 传染——libvpx 是 BSD 无碍，
-  若启用 x264 需 `build-license-gpl` 并整体 GPL 化发布。
+- `cargo build` 零警告；26 单测 + 3 个 `#[ignore]` libav 冒烟全绿
+- PE 导入表：**零 ffmpeg DLL**（仅剩 `avicap32.dll` 等 Windows 系统库）
+- debug exe 43.5 MB（含未裁剪的 debug 信息；release 预计更小）
+- 复现命令：
+  ```powershell
+  $env:FFMPEG_DIR = "D:\Tools\vcpkg\installed\x64-windows-static"
+  cargo build
+  cargo test -- --ignored
+  ```
+- license：libvpx BSD 无碍；若加 x264 需 GPL 化
 
-### 7.5 验证步骤（待执行）
+### 7.6 下一步（E6 第二阶段候选项）
 
-1. `winget install vcpkg`（或 git clone 到 `D:/Tools/vcpkg`）+
-   `vcpkg install ffmpeg[vpx] --triplet x64-windows-static`
-2. `set VCPKG_ROOT=…` 后 `cargo build --release`（无需改 Cargo.toml；
-   若 vcpkg 不在默认查找路径，用 `FFMPEG_DIR` 指向
-   `vcpkg/installed/x64-windows-static` 亦可，build.rs 两路等价）
-3. `cargo test -- --ignored` 验证 inprocess 冒烟；确认无 DLL 依赖
-   （`dumpbin /dependents StickerProcess.exe` 不含 av*.dll）
-4. NSIS 打包资源表中删除 `ffmpeg/ffmpeg.exe`
+- 删 `ffmpeg-sidecar` 依赖与 `parse_progress_time`
+- 删 sidecar 分支（`gen_command`、`run_image` 的 stdout 管道、
+  `TranscodeError::Spawn/ReadOutput`）
+- NSIS 资源表删 `ffmpeg/ffmpeg.exe`，安装包瘦身
+- CI：见 7.4
