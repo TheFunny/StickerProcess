@@ -216,7 +216,7 @@ impl Transcoder {
                             let encoder = enc.as_mut().unwrap();
                             encoder
                                 .send_frame(&oframe)
-                                .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+                                .map_err(|e| { eprintln!("[dbg] enc send_frame failed: {e}"); TranscodeError::Decoder(e.to_string()) })?;
                             write_packets!(encoder);
                         }
                         Err(ffmpeg::Error::Eof) => break,
@@ -238,7 +238,7 @@ impl Transcoder {
             // packet pts 已在流 tb（in_tb）下，无需重缩放（decoder tb = stream tb）
             decoder
                 .send_packet(&ipacket)
-                .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+                .map_err(|e| { eprintln!("[dbg] send_packet failed: {e}"); TranscodeError::Decoder(e.to_string()) })?;
             loop {
                 match decoder.receive_frame(&mut iframe) {
                     Ok(()) => {
@@ -329,7 +329,7 @@ impl Transcoder {
             }
             decoder
                 .send_packet(&ipacket)
-                .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+                .map_err(|e| { eprintln!("[dbg] send_packet failed: {e}"); TranscodeError::Decoder(e.to_string()) })?;
             loop {
                 match decoder.receive_frame(&mut iframe) {
                     Ok(()) => {
