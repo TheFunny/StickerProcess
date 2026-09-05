@@ -106,7 +106,8 @@ src/
 build.rs                静态 ffmpeg 链接适配（vcpkg）：补系统库、生成 avicap32.lib
 ```
 详细约定（镜像写入口、NumberInput 契约、新增媒体类型的四处同步点等）
-见 [AGENTS.md](AGENTS.md)；重构历史与待办见
+见 [AGENTS.md](AGENTS.md)；发布与升级说明见
+[docs/RELEASE.md](docs/RELEASE.md)；重构历史与待办见
 [REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md)；进程内转码（E6 第一阶段，
 双引擎并存）与静态构建记录见
 [E6_INPROCESS_RESEARCH.md](docs/E6_INPROCESS_RESEARCH.md)。
