@@ -21,9 +21,9 @@
 cargo run
 ```
 
-设置面板中可选择转码引擎：**Sidecar**（默认，调用 ffmpeg.exe 子进程）或
-**In-process**（libav 进程内转码，无子进程、进度更精确、取消更干净）。
-选择持久化到 settings.toml。
+设置面板中可选择转码引擎，启动时自动探测 ffmpeg 可执行文件（主程序
+同目录或 PATH）：**In-process**（libav，默认——零依赖、进度精确、取消干净）
+与 **Sidecar**（ffmpeg.exe 子进程，探测到才可选）。选择持久化到 settings.toml。
 
 ### 构建安装包（NSIS，内嵌 WebView2 离线安装器 + 随包 ffmpeg）
 
@@ -56,7 +56,7 @@ WebView2 运行时安装策略可在 `Dioxus.toml` 的
 ```bash
 cargo build            # debug
 cargo build --release  # release（size-optimized: lto=fat, panic=abort, strip）
-cargo test             # 26 个单元测试
+cargo test             # 28 个单元测试
 cargo test -- --ignored  # libav 集成冒烟测试（需静态 ffmpeg，见下）
 dx bundle …            # 安装包（见上）
 ```

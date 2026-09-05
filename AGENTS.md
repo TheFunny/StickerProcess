@@ -14,8 +14,12 @@ GUI (wry/WebView2):
   (`scale=512:512:force_original_aspect_ratio=decrease`, lanczos)
 
 E6 Phase 1 added an in-process transcoding engine (libav via `ffmpeg-the-third`),
-selected by the `engine` setting (`"sidecar"` default / `"inprocess"`); both
-paths coexist. Static ffmpeg linking (vcpkg x64-windows-static) is also
+selected by the `engine` setting (`"inprocess"` is always available and is
+the practical default; `"sidecar"` requires a detected ffmpeg.exe). Sidecar
+availability is probed once at startup (`src/sidecar_probe.rs`: exe adjacent
+to the app, else PATH, plus a `libvpx-vp9` encoder check); the settings
+dropdown disables sidecar when unavailable, and the runner falls back to
+inprocess with a warning if a saved `sidecar` preference can't be honored. Static ffmpeg linking (vcpkg x64-windows-static) is also
 supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 
 ## Repository Layout
@@ -37,6 +41,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
 | `docs/E6_INPROCESS_RESEARCH.md` | In-process transcoding: E6 phase-1 design, API verification, and the static-build record (§7) |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
+| `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `docs/notes.md` | Developer notes, gitignored (see Gotchas) |
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |

@@ -62,7 +62,8 @@ Tauri 式更新：签名 manifest（ed25519）+ 增量下载 + 静默替换重�
 
 ## 相关联的事
 
-- 静态构建（`E6_INPROCESS_RESEARCH.md` §7）落地后，安装包不再需要
-  `ffmpeg.exe` 资源（`Dioxus.toml` 的 `resources` 项可删），安装包体积
-  与升级下载量都会下降。
+- 静态构建（`E6_INPROCESS_RESEARCH.md` §7）落地后，安装包已不再捆绑
+  `ffmpeg.exe`（`Dioxus.toml` 的 `resources` 已移除，2026-09-06）——
+  shared exe 缺 DLL 在干净机器上无法启动，捆绑无意义；sidecar 引擎改为
+  启动探测可用性后按需启用。
 - release 构建已隐藏终端窗口（`windows_subsystem`），升级体验无黑框。
