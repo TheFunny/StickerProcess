@@ -133,7 +133,6 @@ impl Transcoder {
         // webm muxer 需要全局头（open 时生成 extradata 供 copy_parameters）
         enc_video_opt.as_mut().unwrap().set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
         enc_video_opt.as_mut().unwrap().set_time_base(OUT_TB);
-        eprintln!("[dbg] target_bitrate={}", target_bitrate);
         enc_video_opt.as_mut().unwrap().set_bit_rate(target_bitrate as usize);
         // CLI 语义对齐：ffmpeg.c 的 -b:v 只设 AVCodecContext.bit_rate（libvpx 的
         // rc_target_bitrate），rc_max_rate 保持 0（VBR）；-bufsize → rc_buffer_size。
