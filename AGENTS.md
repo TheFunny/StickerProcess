@@ -16,7 +16,7 @@ GUI (wry/WebView2):
 E6 Phase 1 added an in-process transcoding engine (libav via `ffmpeg-the-third`),
 selected by the `engine` setting (`"sidecar"` default / `"inprocess"`); both
 paths coexist. Static ffmpeg linking (vcpkg x64-windows-static) is also
-supported — see `E6_INPROCESS_RESEARCH.md` §7.
+supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 
 ## Repository Layout
 
@@ -33,11 +33,12 @@ supported — see `E6_INPROCESS_RESEARCH.md` §7.
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
-| `REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
-| `E6_INPROCESS_RESEARCH.md` | In-process transcoding: E6 phase-1 design, API verification, and the static-build record (§7) |
-| `MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
+| `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
+| `docs/E6_INPROCESS_RESEARCH.md` | In-process transcoding: E6 phase-1 design, API verification, and the static-build record (§7) |
+| `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
-| `notes.md` | Developer notes (see Gotchas) |
+| `docs/notes.md` | Developer notes, gitignored (see Gotchas) |
+| `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
 
@@ -176,7 +177,7 @@ ffmpeg static install via `FFMPEG_DIR`.
 
 ### ffmpeg environment
 
-Two supported setups (see `E6_INPROCESS_RESEARCH.md` §7 for the full record):
+Two supported setups (see `docs/E6_INPROCESS_RESEARCH.md` §7 for the full record):
 
 - **Dev (shared ffmpeg)**: `FFMPEG_DIR` → ffmpeg 8.x/9.x shared build root
   (with `include/` + `lib/`), `bin/` on `PATH`. `ffmpeg-the-third` links
@@ -226,12 +227,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
 
 ## Gotchas
 - **ffmpeg must be discoverable**: when updating ffmpeg, update BOTH `PATH` and
-  `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `notes.md`).
+  `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `docs/notes.md`).
 - The ffmpeg binding crate is `ffmpeg-the-third` (see `Cargo.toml`, commented
   `ffmpeg-next` line). Keep that dependency in sync with `ffmpeg-sidecar` usage.
 - GIF was changed from `yuva420p10` to `yuva420p` — do not "fix" it back; 10-bit
   yuva is invalid for these formats.
-- **Static build gotchas** (see `E6_INPROCESS_RESEARCH.md` §7.3 for details):
+- **Static build gotchas** (see `docs/E6_INPROCESS_RESEARCH.md` §7.3 for details):
   vcpkg checkout must be recent enough (ffmpeg ≥ 5.1, avcodec ≥ 59.37);
   `libvpx[highbitdepth]` is required for yuv420p10le encoding (gif/png smoke
   tests pass without it, mp4 smoke fails with "Invalid argument");

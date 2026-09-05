@@ -81,7 +81,7 @@ cargo build --release
 产出自包含 exe（无 av*.dll 依赖，release 约 27 MB）。注意：
 - 需要 `libvpx[highbitdepth]`（否则 mp4 的 yuv420p10le 编码报错）
 - 工程的 `build.rs` 自动补齐 vpx/DirectShow 等系统库链接并生成
-  `avicap32.lib`（详见 `E6_INPROCESS_RESEARCH.md` §7）
+  `avicap32.lib`（详见 `docs/E6_INPROCESS_RESEARCH.md` §7）
 - 静态模式下使用 In-process 引擎（无 ffmpeg.exe）
 
 ## 架构概览
@@ -105,8 +105,8 @@ src/
                          number_field / drop_zone / progress_bar / toast
 build.rs                静态 ffmpeg 链接适配（vcpkg）：补系统库、生成 avicap32.lib
 ```
-
 详细约定（镜像写入口、NumberInput 契约、新增媒体类型的四处同步点等）
-见 [AGENTS.md](AGENTS.md)；重构历史与待办见 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)；
-进程内转码（E6 第一阶段，双引擎并存）与静态构建记录见
-[E6_INPROCESS_RESEARCH.md](E6_INPROCESS_RESEARCH.md)。
+见 [AGENTS.md](AGENTS.md)；重构历史与待办见
+[REFACTOR_PLAN.md](docs/REFACTOR_PLAN.md)；进程内转码（E6 第一阶段，
+双引擎并存）与静态构建记录见
+[E6_INPROCESS_RESEARCH.md](docs/E6_INPROCESS_RESEARCH.md)。

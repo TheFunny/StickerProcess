@@ -1,6 +1,6 @@
 //! StickerProcess — Dioxus 0.7 desktop 引导入口。
 //!
-//! 迁移自 iced 0.14（见 MIGRATION_PLAN.md Phase A）：
+//! 迁移自 iced 0.14（见 docs/MIGRATION_PLAN.md Phase A）：
 //! 仅重写 UI 层，`media.rs` / `transcoder.rs` 核心逻辑零改动。
 
 // dx bundle 发布产物不弹终端窗口；debug 运行保留控制台看日志
