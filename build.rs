@@ -3,24 +3,36 @@ fn main() {
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMTD");
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMT");
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:MSVCRTD");
-    if let Ok(ffmpeg_dir) = std::env::var("FFMPEG_DIR") {
-        println!("cargo:rustc-link-search=native={ffmpeg_dir}/lib");
+    let ffmpeg_dir = match std::env::var("FFMPEG_DIR") {
+        Ok(dir) => dir,
+        Err(_) => panic!(
+            "FFMPEG_DIR 未设置：静态构建需要指向含 lib/*.lib 的 ffmpeg 静态安装目录\
+             （如 D:\\Tools\\vcpkg\\installed\\x64-windows-static）。\
+             搭建方法见 E6_INPROCESS_RESEARCH.md §7"
+        ),
+    };
+    if !std::path::Path::new(&ffmpeg_dir).join("lib").is_dir() {
+        panic!(
+            "FFMPEG_DIR 无效：{} 下不存在 lib/ 目录（需要 avcodec.lib 等静态库）",
+            ffmpeg_dir
+        );
+    }
+    println!("cargo:rustc-link-search=native={ffmpeg_dir}/lib");
 
-        // vfwcap（avdevice）依赖 avicap32，Windows SDK 不带其导入库。
-        // 从 build/avicap32.def 生成到 OUT_DIR（CI 友好：lib.exe 随 MSVC 必有）。
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        generate_avicap32_import_lib(&out_dir);
-        println!("cargo:rustc-link-search=native={out_dir}");
+    // vfwcap（avdevice）依赖 avicap32，Windows SDK 不带其导入库。
+    // 从 build/avicap32.def 生成到 OUT_DIR（CI 友好：lib.exe 随 MSVC 必有）。
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    generate_avicap32_import_lib(&out_dir);
+    println!("cargo:rustc-link-search=native={out_dir}");
 
-        // ffmpeg-sys 的 EXTRALIBS 透传只在 --features build 路径生效，
-        // FFMPEG_DIR 路径需手动补齐 vpx 与 avdevice 的全部系统依赖。
-        for lib in [
-            "vpx", "strmiids", "mfuuid", "uuid", "winmm", "ws2_32", "secur32",
-            "bcrypt", "user32", "avicap32", "msvfw32", "gdi32", "oleaut32",
-            "shlwapi", "psapi", "ncrypt", "crypt32", "zs",
-        ] {
-            println!("cargo:rustc-link-lib=static={lib}");
-        }
+    // ffmpeg-sys 的 EXTRALIBS 透传只在 --features build 路径生效，
+    // FFMPEG_DIR 路径需手动补齐 vpx 与 avdevice 的全部系统依赖。
+    for lib in [
+        "vpx", "strmiids", "mfuuid", "uuid", "winmm", "ws2_32", "secur32",
+        "bcrypt", "user32", "avicap32", "msvfw32", "gdi32", "oleaut32",
+        "shlwapi", "psapi", "ncrypt", "crypt32", "zs",
+    ] {
+        println!("cargo:rustc-link-lib=static={lib}");
     }
     println!("cargo:rerun-if-env-changed=FFMPEG_DIR");
 }
