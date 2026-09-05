@@ -125,8 +125,11 @@ impl Transcoder {
         // webm muxer 需要全局头（open 时生成 extradata 供 copy_parameters）
         enc_video_opt.as_mut().unwrap().set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
         enc_video_opt.as_mut().unwrap().set_time_base(OUT_TB);
+        eprintln!("[dbg] target_bitrate={}", target_bitrate);
         enc_video_opt.as_mut().unwrap().set_bit_rate(target_bitrate as usize);
-        // CLI -bufsize/-maxrate 的 AVCodecContext 底层选项名 + libvpx 私有项
+        // CLI 语义对齐：ffmpeg.c 的 -b:v 只设 AVCodecContext.bit_rate（libvpx 的
+        // rc_target_bitrate），rc_max_rate 保持 0（VBR）；-bufsize → rc_buffer_size。
+        // 之前多设 rc_max_rate=b:v 迫使 libvpx 进入 CBR 式封顶，输出比 CLI 小 ~35%。
         let mut opts = Some(ffmpeg::Dictionary::new());
         opts.as_mut().unwrap().set("crf", VP9_CRF.to_string());
         opts.as_mut().unwrap().set("row-mt", "1");
@@ -134,9 +137,6 @@ impl Transcoder {
             "rc_buffer_size",
             &(target_bitrate as f64 * BUFSIZE_RATIO).to_string(),
         );
-        opts.as_mut()
-            .unwrap()
-            .set("rc_max_rate", target_bitrate.to_string());
 
         let out_path = self
             .get_output()
@@ -148,6 +148,7 @@ impl Transcoder {
         let mut packet = ffmpeg::Packet::empty();
         let mut iframe = VideoFrame::empty();
         let mut oframe = VideoFrame::empty();
+        let mut last_pts: Option<i64> = None;
         let mut enc: Option<ffmpeg::codec::encoder::video::Encoder> = None;
 
         // 收编码器包并写盘（enc 已 open）
@@ -204,14 +205,26 @@ impl Transcoder {
                                     .map_err(|e| TranscodeError::Muxer(e.to_string()))?;
                                 enc = Some(opened);
                             }
-                            if let Some(pts) = oframe.pts() {
-                                // 滤镜内 tb = in_tb；统一重缩放到输出毫秒 tb
-                                oframe.set_pts(Some(pts.rescale(in_tb, OUT_TB)));
-                                if duration > 0.0 {
-                                    let seconds =
-                                        pts as f64 * in_tb.numerator() as f64 / in_tb.denominator() as f64;
-                                    on_progress((seconds / duration).clamp(0.0, 1.0) as f32);
+                            // VFR/异常源可能出现 pts=None 的帧；libvpx 拿到
+                            // NOPTS 会产生损坏时间戳。回退为 last_pts+1ms
+                            // 保证严格递增。
+                            let pts = match oframe.pts() {
+                                Some(p) => {
+                                    let scaled = p.rescale(in_tb, OUT_TB);
+                                    last_pts = Some(last_pts.map_or(scaled, |lp| scaled.max(lp + 1)));
+                                    scaled
                                 }
+                                None => {
+                                    let fallback = last_pts.map_or(0, |lp| lp + 1);
+                                    last_pts = Some(fallback);
+                                    fallback
+                                }
+                            };
+                            oframe.set_pts(Some(pts));
+                            if duration > 0.0 {
+                                let seconds =
+                                    pts as f64 * OUT_TB.numerator() as f64 / OUT_TB.denominator() as f64;
+                                on_progress((seconds / duration).clamp(0.0, 1.0) as f32);
                             }
                             let encoder = enc.as_mut().unwrap();
                             encoder
@@ -516,9 +529,9 @@ mod tests {
     #[test]
     #[ignore]
     fn inprocess_video_smoke() {
-        let mut t = Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(
-            "input/1.mp4",
-        )));
+        let input = std::env::var("SMOKE_INPUT").unwrap_or_else(|_| "input/1.mp4".into());
+        let mut t =
+            Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(&input)));
         t.probe().unwrap();
         t.set_output(&format!("out/_e6_smoke_{}.webm", std::process::id()));
         t.run_inprocess(|_| {}).unwrap();
