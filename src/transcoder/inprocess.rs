@@ -71,7 +71,6 @@ impl Transcoder {
             VideoType::Mp4 => Pixel::YUV420P10LE,
             VideoType::Gif | VideoType::Apng => Pixel::YUVA420P,
         };
-        let fps = (self.target_fps > 0.0).then(|| fps_rational(self.target_fps));
 
         let mut ictx = ffmpeg::format::input(&self.media_file.path_str())
             .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
@@ -81,6 +80,15 @@ impl Transcoder {
             .ok_or(TranscodeError::Decoder("no video stream".into()))?;
         let stream_index = istream.index();
 
+        // 输出流的平均帧率：强制 fps 优先，否则沿用源流（matroska 用它推
+        // 导 track 默认块时长——缺失时最后一帧时长记 0，流 DURATION 标签
+        // 会比 CLI 少一帧的时长）
+        let fps = if self.target_fps > 0.0 {
+            Some(fps_rational(self.target_fps))
+        } else {
+            let src_fps = istream.avg_frame_rate();
+            (src_fps.numerator() > 0 && src_fps.denominator() > 0).then_some(src_fps)
+        };
         let mut dec_ctx = ffmpeg::codec::Context::from_parameters(istream.parameters())
             .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get());
