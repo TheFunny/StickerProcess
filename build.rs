@@ -3,18 +3,34 @@ fn main() {
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMTD");
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMT");
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:MSVCRTD");
+    // ffmpeg 库目录解析顺序：FFMPEG_DIR 显式指定 → VCPKG_ROOT 推导
+    // （installed/<triplet>，triplet 取 VCPKG_DEFAULT_TRIPLET 或默认
+    // x64-windows-static——本工程静态链接目标）。两者都缺 → 明确报错。
     let ffmpeg_dir = match std::env::var("FFMPEG_DIR") {
         Ok(dir) => dir,
-        Err(_) => panic!(
-            "FFMPEG_DIR 未设置：静态构建需要指向含 lib/*.lib 的 ffmpeg 静态安装目录\
-             （如 D:\\Tools\\vcpkg\\installed\\x64-windows-static）。\
-             搭建方法见 E6_INPROCESS_RESEARCH.md §7"
-        ),
+        Err(_) => {
+            let triplet = std::env::var("VCPKG_DEFAULT_TRIPLET")
+                .unwrap_or_else(|_| "x64-windows-static".into());
+            let derived = std::env::var("VCPKG_ROOT").map(|root| {
+                format!("{root}/installed/{triplet}")
+            });
+            match derived {
+                Ok(dir) if std::path::Path::new(&dir).join("lib").is_dir() => {
+                    println!("cargo:warning=FFMPEG_DIR 未设置，使用 VCPKG_ROOT 推导: {dir}");
+                    dir
+                }
+                _ => panic!(
+                    "找不到 ffmpeg 静态库：请设置 FFMPEG_DIR（含 lib/*.lib 的安装根目录，\
+                     如 D:\\Tools\\vcpkg\\installed\\x64-windows-static）\
+                     或 VCPKG_ROOT（vcpkg 根目录，自动推导 installed/<triplet>）。\
+                     搭建方法见 docs/E6_INPROCESS_RESEARCH.md §7"
+                ),
+            }
+        }
     };
     if !std::path::Path::new(&ffmpeg_dir).join("lib").is_dir() {
         panic!(
-            "FFMPEG_DIR 无效：{} 下不存在 lib/ 目录（需要 avcodec.lib 等静态库）",
-            ffmpeg_dir
+            "FFMPEG_DIR 无效：{ffmpeg_dir} 下不存在 lib/ 目录（需要 avcodec.lib 等静态库）"
         );
     }
     println!("cargo:rustc-link-search=native={ffmpeg_dir}/lib");
