@@ -16,7 +16,7 @@ fn main() {
             });
             match derived {
                 Ok(dir) if std::path::Path::new(&dir).join("lib").is_dir() => {
-                    println!("cargo:warning=FFMPEG_DIR 未设置，使用 VCPKG_ROOT 推导: {dir}");
+                    println!("cargo:warning=FFMPEG_DIR 未设置，使用 VCPKG_ROOT 推导的库目录（信息性提示）: {dir}");
                     dir
                 }
                 _ => panic!(
@@ -36,7 +36,6 @@ fn main() {
     println!("cargo:rustc-link-search=native={ffmpeg_dir}/lib");
 
     // vfwcap（avdevice）依赖 avicap32，Windows SDK 不带其导入库。
-    // 从 build/avicap32.def 生成到 OUT_DIR（CI 友好：lib.exe 随 MSVC 必有）。
     let out_dir = std::env::var("OUT_DIR").unwrap();
     generate_avicap32_import_lib(&out_dir);
     println!("cargo:rustc-link-search=native={out_dir}");
