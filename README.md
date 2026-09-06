@@ -16,8 +16,10 @@
 ### 从源码运行
 
 ```bash
-# 前置：FFMPEG_DIR 指向 ffmpeg 8.x/9.x 安装根目录（含 include/ 与 lib/），
-# bin/ 加入 PATH；或指向 vcpkg 静态安装（见下"静态构建"）
+# 前置（三选一，配置一次后无需再设）：
+#   a) 项目 .cargo/config.toml [env] 里写 FFMPEG_DIR（模板已建好，填路径即可）
+#   b) setx FFMPEG_DIR <ffmpeg 安装根目录>        （shared 或 vcpkg 静态）
+#   c) setx VCPKG_ROOT <vcpkg 根目录>             （自动推导 installed/<triplet>）
 cargo run
 ```
 
@@ -25,7 +27,7 @@ cargo run
 同目录或 PATH）：**In-process**（libav，默认——零依赖、进度精确、取消干净）
 与 **Sidecar**（ffmpeg.exe 子进程，探测到才可选）。选择持久化到 settings.toml。
 
-### 构建安装包（NSIS，内嵌 WebView2 离线安装器 + 随包 ffmpeg）
+### 构建安装包（NSIS，内嵌 WebView2 离线安装器；不含 ffmpeg）
 
 ```bash
 dx bundle --release --platform windows --package-types nsis
@@ -74,6 +76,7 @@ dx bundle …            # 安装包（见上）
 vcpkg install "ffmpeg[avdevice,avformat,avfilter,swscale,swresample,vpx,zlib]" ^
               --triplet x64-windows-static
 vcpkg install "libvpx[highbitdepth]" --triplet x64-windows-static --recurse
+# 之后配置环境（三选一，见"从源码运行"）：
 set FFMPEG_DIR=D:\Tools\vcpkg\installed\x64-windows-static
 cargo build --release
 ```

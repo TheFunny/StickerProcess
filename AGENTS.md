@@ -173,15 +173,27 @@ run lazily initializes it.
 cargo run            # debug
 cargo build --release
 cargo test           # 26 unit tests + 3 #[ignore] libav smoke tests
-cargo test -- --ignored   # needs FFMPEG_DIR pointing at a static ffmpeg install
+cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
 ```
 
 Test count: 26 unit tests across media/config/command/preview/app/steps/
 inprocess, plus 3 integration smoke tests (`inprocess_video_smoke`,
-`inprocess_gif_smoke`, `inprocess_image_smoke`) that require a real
-ffmpeg static install via `FFMPEG_DIR`.
+`inprocess_gif_smoke`, `inprocess_image_smoke`) that require the static
+ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
+`SMOKE_INPUT` env var to transcode an arbitrary input.
 
 ### ffmpeg environment
+
+The lib dir is resolved in `build.rs` in this order:
+1. `FFMPEG_DIR` (explicit install root), else
+2. `VCPKG_ROOT` → `{root}/installed/{triplet}` (triplet from
+   `VCPKG_DEFAULT_TRIPLET`, default `x64-windows-static`; `VCPKGRS_TRIPLET`
+   controls the `ffmpeg-sys` vcpkg probe), else
+3. panic with setup instructions.
+
+Neither set → build fails with clear Chinese instructions. Per-machine setup
+lives in gitignored `.cargo/config.toml` `[env]` (template committed empty;
+see `.gitignore`) or `setx` user env vars.
 
 Two supported setups (see `docs/E6_INPROCESS_RESEARCH.md` §7 for the full record):
 
@@ -244,9 +256,9 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   tests pass without it, mp4 smoke fails with "Invalid argument");
   `avicap32.lib` is synthesized by `build.rs` from `build/avicap32.def`
   (Windows SDK doesn't ship it); debug zlib links as `zsd.lib`.
-  `build.rs` panics with a clear message when `FFMPEG_DIR` is unset/invalid —
-  it must point at the static install root, not the shared one, for the
-  extra link libs to resolve.
+  `build.rs` resolves the lib dir from `FFMPEG_DIR` or `VCPKG_ROOT` and panics
+  with setup instructions when neither resolves; it must point at the static
+  install root, not the shared one, for the extra link libs to resolve.
 - The `run_video` duration patch assumes the marker bytes `44 89 88` exist; if the
   encoded webm lacks them, the task errors (`Binary sequence not found`).
 - Output overwrites are allowed (`.overwrite()` / ffmpeg `-y`); output files are
