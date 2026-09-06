@@ -11,12 +11,13 @@ fn main() {
         Err(_) => {
             let triplet = std::env::var("VCPKG_DEFAULT_TRIPLET")
                 .unwrap_or_else(|_| "x64-windows-static".into());
-            let derived = std::env::var("VCPKG_ROOT").map(|root| {
-                format!("{root}/installed/{triplet}")
-            });
+            let derived =
+                std::env::var("VCPKG_ROOT").map(|root| format!("{root}/installed/{triplet}"));
             match derived {
                 Ok(dir) if std::path::Path::new(&dir).join("lib").is_dir() => {
-                    println!("cargo:warning=FFMPEG_DIR 未设置，使用 VCPKG_ROOT 推导的库目录（信息性提示）: {dir}");
+                    println!(
+                        "cargo:warning=FFMPEG_DIR 未设置，使用 VCPKG_ROOT 推导的库目录（信息性提示）: {dir}"
+                    );
                     dir
                 }
                 _ => panic!(
@@ -29,9 +30,7 @@ fn main() {
         }
     };
     if !std::path::Path::new(&ffmpeg_dir).join("lib").is_dir() {
-        panic!(
-            "FFMPEG_DIR 无效：{ffmpeg_dir} 下不存在 lib/ 目录（需要 avcodec.lib 等静态库）"
-        );
+        panic!("FFMPEG_DIR 无效：{ffmpeg_dir} 下不存在 lib/ 目录（需要 avcodec.lib 等静态库）");
     }
     println!("cargo:rustc-link-search=native={ffmpeg_dir}/lib");
 
@@ -43,9 +42,8 @@ fn main() {
     // ffmpeg-sys 的 EXTRALIBS 透传只在 --features build 路径生效，
     // FFMPEG_DIR 路径需手动补齐 vpx 与 avdevice 的全部系统依赖。
     for lib in [
-        "vpx", "strmiids", "mfuuid", "uuid", "winmm", "ws2_32", "secur32",
-        "bcrypt", "user32", "avicap32", "msvfw32", "gdi32", "oleaut32",
-        "shlwapi", "psapi", "ncrypt", "crypt32", "zs",
+        "vpx", "strmiids", "mfuuid", "uuid", "winmm", "ws2_32", "secur32", "bcrypt", "user32",
+        "avicap32", "msvfw32", "gdi32", "oleaut32", "shlwapi", "psapi", "ncrypt", "crypt32", "zs",
     ] {
         println!("cargo:rustc-link-lib=static={lib}");
     }

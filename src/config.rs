@@ -70,8 +70,7 @@ impl Settings {
     /// 输出目录是否可用（已存在，或父目录存在可创建）。
     pub fn output_dir_valid(&self) -> bool {
         let path = std::path::Path::new(&self.output_dir);
-        path.is_dir()
-            || (!self.output_dir.is_empty() && path.parent().is_some_and(|p| p.is_dir()))
+        path.is_dir() || (!self.output_dir.is_empty() && path.parent().is_some_and(|p| p.is_dir()))
     }
 
     pub fn video_max_size(&self) -> u64 {
@@ -100,7 +99,11 @@ pub fn load() -> Settings {
             log::warn!("Failed to parse settings.toml, using defaults: {e}");
             Settings::default()
         }),
-        Err(_) => Settings::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(e) => {
+            log::warn!("Failed to read settings.toml, using defaults: {e}");
+            Settings::default()
+        }
     };
     if !settings.engine_valid() {
         log::warn!(

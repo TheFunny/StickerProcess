@@ -60,8 +60,6 @@ impl MediaFile {
 
         let duration = ictx.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
-        ffmpeg::format::context::input::dump(&ictx, 0, Some(&*self.path_str()));
-
         let ist = ictx
             .streams()
             .best(ffmpeg::media::Type::Video)

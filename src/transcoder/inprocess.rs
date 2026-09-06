@@ -10,18 +10,18 @@
 //! 时间基决策：整条管道统一 1/1000（毫秒）。解码后帧 pts 一次性重缩放到
 //! 1/1000，编码器/输出流/滤镜 buffer 参数均以此为基准，mux 前无需再缩放。
 
-use super::command::{quantized_bitrate, target_bitrate_bps, BUFSIZE_RATIO, VP9_CRF};
+use super::command::{BUFSIZE_RATIO, VP9_CRF, quantized_bitrate, target_bitrate_bps};
 use super::{TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
 use ffmpeg_the_third as ffmpeg;
+use ffmpeg_the_third::Rational;
 use ffmpeg_the_third::codec::threading;
 use ffmpeg_the_third::format::Pixel;
 use ffmpeg_the_third::frame::video::Video as VideoFrame;
 use ffmpeg_the_third::util::mathematics::Rescale;
-use ffmpeg_the_third::Rational;
 use libc::EAGAIN;
-use std::sync::atomic::Ordering;
 use std::sync::LazyLock;
+use std::sync::atomic::Ordering;
 
 /// 输出流时间基：webm muxer 惯例毫秒。
 const OUT_TB: Rational = Rational(1, 1000);
@@ -117,23 +117,38 @@ impl Transcoder {
             sar = Rational(1, 1);
         }
 
-        let mut graph = build_graph(
-            in_w, in_h, in_pix, in_tb, sar, out_pix,
-            "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
-        )?;
+        // 强制 fps 与 sidecar `-r` 语义对齐：fps 滤镜复制/丢帧到目标 CFR
+        // （置于 scale 之后，保留 alpha 通道）；未强制时沿用源流帧率仅作元数据。
+        let spec = if self.target_fps > 0.0 {
+            format!(
+                "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,fps={}",
+                self.target_fps
+            )
+        } else {
+            "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos".to_string()
+        };
+        let mut graph = build_graph(in_w, in_h, in_pix, in_tb, sar, out_pix, &spec)?;
 
         // 编码器（open 推迟到首帧：宽高以滤镜输出为准；setter 都在 Video 包装上）
         let codec = ffmpeg::codec::encoder::find_by_name("libvpx-vp9")
             .ok_or(TranscodeError::EncoderNotFound("libvpx-vp9"))?;
         let enc_ctx = ffmpeg::codec::Context::new_with_codec(codec);
-        let mut enc_video_opt = Some(enc_ctx
-            .encoder()
-            .video()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?);
+        let mut enc_video_opt = Some(
+            enc_ctx
+                .encoder()
+                .video()
+                .map_err(|e| TranscodeError::Decoder(e.to_string()))?,
+        );
         // webm muxer 需要全局头（open 时生成 extradata 供 copy_parameters）
-        enc_video_opt.as_mut().unwrap().set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
+        enc_video_opt
+            .as_mut()
+            .unwrap()
+            .set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
         enc_video_opt.as_mut().unwrap().set_time_base(OUT_TB);
-        enc_video_opt.as_mut().unwrap().set_bit_rate(target_bitrate as usize);
+        enc_video_opt
+            .as_mut()
+            .unwrap()
+            .set_bit_rate(target_bitrate as usize);
         // CLI 语义对齐：ffmpeg.c 的 -b:v 只设 AVCodecContext.bit_rate（libvpx 的
         // rc_target_bitrate），rc_max_rate 保持 0（VBR）；-bufsize → rc_buffer_size。
         // 之前多设 rc_max_rate=b:v 迫使 libvpx 进入 CBR 式封顶，输出比 CLI 小 ~35%。
@@ -172,7 +187,7 @@ impl Transcoder {
                         // VP9 delay：EOF 即收尾；EAGAIN 表示暂无包
                         Err(ffmpeg::Error::Eof) => break,
                         Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => break,
-                        Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
+                        Err(e) => return Err(TranscodeError::Encoder(e.to_string())),
                     }
                 }
             };
@@ -212,31 +227,21 @@ impl Transcoder {
                                     .map_err(|e| TranscodeError::Muxer(e.to_string()))?;
                                 enc = Some(opened);
                             }
-                            // VFR/异常源可能出现 pts=None 的帧；libvpx 拿到
-                            // NOPTS 会产生损坏时间戳。回退为 last_pts+1ms
-                            // 保证严格递增。
-                            let pts = match oframe.pts() {
-                                Some(p) => {
-                                    let scaled = p.rescale(in_tb, OUT_TB);
-                                    last_pts = Some(last_pts.map_or(scaled, |lp| scaled.max(lp + 1)));
-                                    scaled
-                                }
-                                None => {
-                                    let fallback = last_pts.map_or(0, |lp| lp + 1);
-                                    last_pts = Some(fallback);
-                                    fallback
-                                }
-                            };
+                            // VFR/异常源可能出现 pts=None 或非单调的帧；libvpx
+                            // 拿到 NOPTS/回退时间戳会产生损坏输出。统一走
+                            // next_pts：重缩放并钳位为 last+1ms，保证严格递增。
+                            let pts = next_pts(last_pts, oframe.pts(), in_tb, OUT_TB);
+                            last_pts = Some(pts);
                             oframe.set_pts(Some(pts));
                             if duration > 0.0 {
-                                let seconds =
-                                    pts as f64 * OUT_TB.numerator() as f64 / OUT_TB.denominator() as f64;
+                                let seconds = pts as f64 * OUT_TB.numerator() as f64
+                                    / OUT_TB.denominator() as f64;
                                 on_progress((seconds / duration).clamp(0.0, 1.0) as f32);
                             }
                             let encoder = enc.as_mut().unwrap();
                             encoder
                                 .send_frame(&oframe)
-                                .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+                                .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
                             write_packets!(encoder);
                         }
                         Err(ffmpeg::Error::Eof) => break,
@@ -294,7 +299,7 @@ impl Transcoder {
         if let Some(encoder) = enc.as_mut() {
             encoder
                 .send_eof()
-                .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+                .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
             write_packets!(encoder);
         }
         octx.write_trailer()
@@ -331,7 +336,12 @@ impl Transcoder {
             sar = Rational(1, 1);
         }
         let mut graph = build_graph(
-            in_w, in_h, in_pix, in_tb, sar, Pixel::RGBA,
+            in_w,
+            in_h,
+            in_pix,
+            in_tb,
+            sar,
+            Pixel::RGBA,
             "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
         )?;
 
@@ -379,8 +389,7 @@ impl Transcoder {
                 Err(e) => return Err(TranscodeError::Filter(e.to_string())),
             }
         }
-        let out_frame = out_frame
-            .ok_or(TranscodeError::Filter("no filtered frame".into()))?;
+        let out_frame = out_frame.ok_or(TranscodeError::Filter("no filtered frame".into()))?;
         // png 编码进内存（PNG 裸流即文件格式，无需 muxer；alpha 对不透明源无害）
         let codec = ffmpeg::codec::encoder::find_by_name("png")
             .ok_or(TranscodeError::EncoderNotFound("png"))?;
@@ -388,20 +397,20 @@ impl Transcoder {
         let mut enc = enc_ctx
             .encoder()
             .video()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+            .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
         enc.set_width(out_frame.width());
         enc.set_height(out_frame.height());
         enc.set_format(Pixel::RGBA);
         enc.set_time_base(OUT_TB);
         let mut encoder = enc
             .open()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+            .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
         encoder
             .send_frame(&out_frame)
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+            .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
         encoder
             .send_eof()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+            .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
         let mut pkt = ffmpeg::Packet::empty();
         let mut png = Vec::new();
         loop {
@@ -413,7 +422,7 @@ impl Transcoder {
                 }
                 Err(ffmpeg::Error::Eof) => break,
                 Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => continue,
-                Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
+                Err(e) => return Err(TranscodeError::Encoder(e.to_string())),
             }
         }
         Ok(png)
@@ -462,16 +471,14 @@ fn build_graph(
             ),
         )
         .map_err(|e| TranscodeError::Filter(e.to_string()))?;
-    let buffersink = ffmpeg::filter::find("buffersink")
-        .ok_or(TranscodeError::Filter("filter 'buffersink' not found".into()))?;
+    let buffersink = ffmpeg::filter::find("buffersink").ok_or(TranscodeError::Filter(
+        "filter 'buffersink' not found".into(),
+    ))?;
     graph
         .add(&buffersink, "out", "")
         .map_err(|e| TranscodeError::Filter(e.to_string()))?;
     // buffersink 的 pix_fmts 选项限定输出像素格式
-    graph
-        .get("out")
-        .unwrap()
-        .set_pixel_format(out_pix);
+    graph.get("out").unwrap().set_pixel_format(out_pix);
     // spec 挂到 "in" 的输出 pad 与 "out" 的输入 pad 之间
     let out_pix_name = out_pix.descriptor().map_or("none", |d| d.name());
     graph
@@ -486,10 +493,7 @@ fn build_graph(
 }
 
 /// 送一帧进滤镜 source（每次重新 get，借用模型不允许长期持有 Source）。
-fn push_frame(
-    graph: &mut ffmpeg::filter::Graph,
-    frame: &VideoFrame,
-) -> Result<(), ffmpeg::Error> {
+fn push_frame(graph: &mut ffmpeg::filter::Graph, frame: &VideoFrame) -> Result<(), ffmpeg::Error> {
     graph.get("in").unwrap().source().add(frame)
 }
 
@@ -507,18 +511,30 @@ fn sink_frame(
 }
 
 /// 编码器 open 失败映射：EncoderNotFound 单列（本机无 libvpx 时显式报错，
-/// 不静默回退 sidecar），其余归 Decoder。
+/// 不静默回退 sidecar），其余归 Encoder。
 fn map_open_err(e: ffmpeg::Error) -> TranscodeError {
     if matches!(e, ffmpeg::Error::EncoderNotFound) {
         TranscodeError::EncoderNotFound("libvpx-vp9")
     } else {
-        TranscodeError::Decoder(e.to_string())
+        TranscodeError::Encoder(e.to_string())
     }
 }
 
 /// fps → Rational（毫秒精度）。
 fn fps_rational(fps: f64) -> Rational {
     Rational((fps * 1000.0).round() as i32, 1000)
+}
+
+/// 下一帧输出 pts：重缩放到输出时间基，并钳位为严格递增（last+1ms）。
+/// None-pts 帧回退 last+1（首帧 0）。VFR/异常源的时间戳损坏防线。
+fn next_pts(last: Option<i64>, pts: Option<i64>, from: Rational, to: Rational) -> i64 {
+    match pts {
+        Some(p) => {
+            let scaled = p.rescale(from, to);
+            last.map_or(scaled, |lp| scaled.max(lp + 1))
+        }
+        None => last.map_or(0, |lp| lp + 1),
+    }
 }
 
 #[cfg(test)]
@@ -530,6 +546,19 @@ mod tests {
         assert_eq!(fps_rational(25.0), Rational(25_000, 1000));
         assert_eq!(fps_rational(29.97), Rational(29_970, 1000));
     }
+    #[test]
+    fn next_pts_monotonic_and_rescale() {
+        let tb_in = Rational(1, 90000);
+        // 正常重缩放：90000 基下 9000 → 100ms
+        assert_eq!(next_pts(None, Some(9000), tb_in, OUT_TB), 100);
+        // 回退 pts：None → last+1
+        assert_eq!(next_pts(Some(100), None, tb_in, OUT_TB), 101);
+        // 首帧 None-pts → 0
+        assert_eq!(next_pts(None, None, tb_in, OUT_TB), 0);
+        // 回退/重复帧钳位为 last+1（严格递增）
+        assert_eq!(next_pts(Some(100), Some(90), tb_in, OUT_TB), 101);
+        assert_eq!(next_pts(Some(100), Some(100), tb_in, OUT_TB), 101);
+    }
 
     /// libav 集成冒烟：需 FFMPEG_DIR/PATH 环境，手动 `cargo test -- --ignored`。
     /// 不做大小/时长断言——A/B 对比由人工完成。
@@ -537,8 +566,7 @@ mod tests {
     #[ignore]
     fn inprocess_video_smoke() {
         let input = std::env::var("SMOKE_INPUT").unwrap_or_else(|_| "input/1.mp4".into());
-        let mut t =
-            Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(&input)));
+        let mut t = Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(&input)));
         t.probe().unwrap();
         t.set_output(&format!("out/_e6_smoke_{}.webm", std::process::id()));
         t.run_inprocess(|_| {}).unwrap();
@@ -571,5 +599,71 @@ mod tests {
         let size = std::fs::metadata(t.get_output().unwrap()).unwrap().len();
         assert!(size > 0);
     }
-}
 
+    /// 图片任务永远没有 size_factor（resolve_factor 只对视频惰性初始化）；
+    /// runner 依赖该不变量跳过图片超限的空转重试。
+    #[test]
+    #[ignore]
+    fn image_has_no_size_factor_after_transcode() {
+        let mut t = Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(
+            "input/2024-04-10-315.png",
+        )));
+        t.probe().unwrap();
+        t.set_output(&format!("out/_e6_imgf_{}.png", std::process::id()));
+        t.run_inprocess(|_| {}).unwrap();
+        t.check_size().unwrap();
+        assert!(t.size_factor.is_none());
+    }
+
+    /// Force FPS 双引擎帧数对齐：sidecar `-r` 与 inprocess `fps` 滤镜应产出
+    /// 相同帧数（用 ffprobe 计数；无 ffprobe 时跳过）。需 ffmpeg CLI 在 PATH。
+    #[test]
+    #[ignore]
+    fn force_fps_frame_count_matches_sidecar() {
+        let ffprobe = |path: &str| -> Option<u64> {
+            let out = std::process::Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-count_frames",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=nb_read_frames",
+                    "-of",
+                    "csv=p=0",
+                    path,
+                ])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+        };
+        let run = |engine: &str, out: String| -> String {
+            let mut t = Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(
+                "input/1.mp4",
+            )));
+            t.probe().unwrap();
+            t.target_fps = 15.0;
+            t.set_output(&out);
+            t.run_with_progress(engine, |_| {}).unwrap();
+            out
+        };
+        let a = run(
+            "inprocess",
+            format!("out/_fps_inproc_{}.webm", std::process::id()),
+        );
+        let b = run(
+            "sidecar",
+            format!("out/_fps_side_{}.webm", std::process::id()),
+        );
+        let (fa, fb) = (ffprobe(&a), ffprobe(&b));
+        let _ = (std::fs::remove_file(&a), std::fs::remove_file(&b));
+        match (fa, fb) {
+            (Some(fa), Some(fb)) => {
+                println!("force_fps frames: inprocess={fa} sidecar={fb}");
+                assert_eq!(fa, fb, "frame count mismatch: inprocess={fa} sidecar={fb}")
+            }
+            _ => eprintln!("ffprobe unavailable, skipped frame count assert"),
+        }
+    }
+}

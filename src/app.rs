@@ -149,6 +149,10 @@ impl UiState {
             let mut task = entry.transcoder.lock().ok()?;
             let out = f(&mut task);
             entry.status = task.status.clone();
+            entry.is_video = matches!(
+                task.media_file.r#type(),
+                Some(crate::media::MediaType::Video(_))
+            );
             entry.factor = task.size_factor.as_ref().map(|f| f.get());
             entry.output_size = task.output_size.as_ref().map(|s| s.size);
             entry.output_path = task.get_output().cloned();
@@ -240,21 +244,25 @@ impl UiState {
             })
             .await
             .unwrap_or_else(|e| Err(format!("join error: {e}")));
-            ctx.touch_entry(index, |e| {
-                // 队列可能已被清空/重排：校验仍是同一个任务
-                if !Arc::ptr_eq(&e.transcoder, &entry.transcoder) {
-                    return;
-                }
-                match &result {
-                    Ok(()) => {
-                        e.status = Status::Pending;
-                    }
-                    Err(err) => {
-                        e.status = Status::Alert;
-                        e.error = Some(err.clone());
-                    }
-                }
-            });
+            // 先校验仍是同一任务（队列可能已被清空/重排），再写入：
+            // probe 不写 Transcoder.status，需在闭包内赋值由 with_task 同步镜像
+            // （含 probe 纠正类型后的 is_video，避免用错大小上限/预览渲染元素）。
+            if !ctx
+                .tasks
+                .cloned()
+                .get(index)
+                .is_some_and(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
+            {
+                return;
+            }
+            let status = match &result {
+                Ok(()) => Status::Pending,
+                Err(_) => Status::Alert,
+            };
+            ctx.with_task(index, |t| t.status = status);
+            if let Err(err) = &result {
+                ctx.touch_entry(index, |e| e.error = Some(err.clone()));
+            }
         });
     }
 

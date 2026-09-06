@@ -20,7 +20,6 @@ pub(super) fn target_bitrate_bps(duration: f64) -> f64 {
     BITRATE_BASE_BYTES * 8.0 / duration
 }
 
-
 /// 时长→默认系数查表，区间固定：<1s, <2s, <3s, <5s, <8s, ≥8s。
 pub fn default_factor(duration: f64, table: &[f64; 6]) -> f64 {
     let [f1, f2, f3, f5, f8, f8p] = *table;

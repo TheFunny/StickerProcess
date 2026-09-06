@@ -30,6 +30,8 @@ pub enum TranscodeError {
     EncoderNotFound(&'static str),
     #[error("decoder error: {0}")]
     Decoder(String),
+    #[error("encoder error: {0}")]
+    Encoder(String),
     #[error("filter graph error: {0}")]
     Filter(String),
     #[error("muxer error: {0}")]

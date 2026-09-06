@@ -33,8 +33,7 @@ pub fn PreviewModal() -> Element {
     let mut ctx = use_context::<UiState>();
     // 输出 data URL 缓存：以 (输出路径, 大小) 为键，键不变不重读盘/重编码
     // （hook 必须在早退之前调用；Rc<RefCell> 非信号，绝不触发重渲染）。
-    let output_cache =
-        use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, String)>)));
+    let output_cache = use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, String)>)));
 
     // ---- 渲染 ----
     let index = ctx.show_preview.cloned();
@@ -70,7 +69,11 @@ pub fn PreviewModal() -> Element {
                         .and_then(|e| e.to_str())
                         .unwrap_or_default()
                         .to_ascii_lowercase();
-                    let mime = if ext == "png" { "image/png" } else { "video/webm" };
+                    let mime = if ext == "png" {
+                        "image/png"
+                    } else {
+                        "video/webm"
+                    };
                     std::fs::read(path)
                         .ok()
                         .map(|bytes| preview::output_data_url_mime(mime, &bytes))

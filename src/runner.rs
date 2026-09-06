@@ -159,8 +159,8 @@ async fn run_single_task(
             // 引擎解析：设置值 + sidecar 可用性兜底。设置 sidecar 但探测
             // 不可用（未装 ffmpeg / 缺 libvpx-vp9）→ 回退 inprocess 并记日志。
             let engine = match settings.engine.as_str() {
-                "sidecar" if !crate::sidecar_probe::SidecarProbe::probe()
-                    .is_some_and(|p| p.has_vp9) =>
+                "sidecar"
+                    if !crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9) =>
                 {
                     log::warn!(
                         "{name}: engine=sidecar 但 ffmpeg/libvpx-vp9 不可用，回退 inprocess"
@@ -207,7 +207,7 @@ async fn run_single_task(
                                     );
                                 }
                                 t.status = Status::SizeExcess;
-                                if retry < max_retry {
+                                if retry < max_retry && t.size_factor.is_some() {
                                     Decision::Retry
                                 } else {
                                     Decision::Advance
@@ -283,6 +283,12 @@ async fn run_single_task(
     }
 
     if cancelled {
+        // 半成品输出（无 trailer 的 webm 等）直接清理，避免残留坏文件
+        if let Ok(t) = task_arc.lock()
+            && let Some(out) = t.get_output()
+        {
+            let _ = std::fs::remove_file(out);
+        }
         ctx.touch_entry(index, |e| e.progress = None);
         ctx.with_task(index, |t| t.status = Status::Pending);
         return TaskOutcome::Cancelled;

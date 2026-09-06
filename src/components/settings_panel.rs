@@ -23,8 +23,7 @@ pub fn SettingsPanel() -> Element {
     // sidecar 可用性：启动探测缓存；不可用时下拉项置灰并显示后缀。
     // 可用但缺 libvpx-vp9 编码器（极简 ffmpeg 构建）同样视为不可用于转码。
     let probe = crate::sidecar_probe::SidecarProbe::probe();
-    let sidecar_available =
-        probe.is_some_and(|p| p.has_vp9);
+    let sidecar_available = probe.is_some_and(|p| p.has_vp9);
     let unavailable_suffix = if sidecar_available {
         ""
     } else {
