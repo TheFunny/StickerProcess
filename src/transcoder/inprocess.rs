@@ -72,7 +72,12 @@ impl Transcoder {
             VideoType::Gif | VideoType::Apng => Pixel::YUVA420P,
         };
 
-        let mut ictx = ffmpeg::format::input(&self.media_file.path_str())
+        let input_path = self
+            .media_file
+            .path()
+            .ok_or(TranscodeError::InvalidOutputPath)?
+            .to_path_buf();
+        let mut ictx = ffmpeg::format::input(&input_path)
             .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
         let istream = ictx
             .streams()
@@ -309,7 +314,12 @@ impl Transcoder {
 
     /// 图片管道：解码首帧 → 滤镜(RGBA) → png 编码进内存 → oxipng → 写盘。
     fn encode_image_rgba(&mut self) -> Result<Vec<u8>, TranscodeError> {
-        let mut ictx = ffmpeg::format::input(&self.media_file.path_str())
+        let input_path = self
+            .media_file
+            .path()
+            .ok_or(TranscodeError::InvalidOutputPath)?
+            .to_path_buf();
+        let mut ictx = ffmpeg::format::input(&input_path)
             .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
         let istream = ictx
             .streams()
@@ -435,10 +445,7 @@ impl Transcoder {
         option.optimize_alpha = true;
         let optimized = oxipng::optimize_from_memory(raw, &option)
             .map_err(|_| TranscodeError::ImagePipe("optimize failed"))?;
-        let file = std::fs::File::create(self.get_output().ok_or(TranscodeError::OutputNotSet)?)
-            .map_err(|_| TranscodeError::ImagePipe("create file failed"))?;
-        let mut writer = std::io::BufWriter::new(file);
-        std::io::Write::write_all(&mut writer, &optimized)
+        self.store_output(optimized)
             .map_err(|_| TranscodeError::ImagePipe("write failed"))
     }
 }

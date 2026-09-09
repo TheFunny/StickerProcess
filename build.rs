@@ -1,4 +1,10 @@
 fn main() {
+    // ffmpeg 静态链接仅桌面 target 需要；web（wasm）构建跳过全部 libav 链接。
+    let desktop = std::env::var("CARGO_FEATURE_DESKTOP").is_ok();
+    if !desktop {
+        println!("cargo:rustc-check-cfg=cfg(feature, values(\"desktop\"))");
+        return;
+    }
     // vcpkg 静态库用 /MT（LIBCMT），Rust debug 默认引 LIBCMTD —— 冲突告警抑制
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMTD");
     println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMT");

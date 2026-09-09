@@ -1,4 +1,4 @@
-//! StickerProcess — Dioxus 0.7 desktop 引导入口。
+//! StickerProcess — Dioxus 0.7 引导入口（desktop / web 双平台）。
 //!
 //! 迁移自 iced 0.14（见 docs/MIGRATION_PLAN.md Phase A）：
 //! 仅重写 UI 层，`media.rs` / `transcoder.rs` 核心逻辑零改动。
@@ -9,15 +9,20 @@ mod app;
 mod components;
 mod config;
 mod media;
-mod preview;
 mod runner;
-mod sidecar_probe;
 mod transcoder;
 
-use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
-use dioxus::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+mod preview; // wry 自定义协议，桌面专属
+#[cfg(not(target_arch = "wasm32"))]
+mod sidecar_probe; // ffmpeg.exe 子进程探测，桌面专属
 
+// 桌面入口：wry 窗口 + preview:// 协议 + sidecar 探测
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
+    use dioxus::prelude::*;
+
     // 默认 Info（重试/系数调整/完成可见）；RUST_LOG 可覆盖
     pretty_env_logger::formatted_builder()
         .filter_level(log::LevelFilter::Info)
@@ -39,4 +44,14 @@ fn main() {
     LaunchBuilder::new()
         .with_cfg(desktop! { cfg })
         .launch(app::App);
+}
+
+// 网页入口：无 preview 协议 / sidecar；转码引擎下一阶段接 WebCodecs 桥
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    pretty_env_logger::formatted_builder()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
+    dioxus::launch(app::App);
 }

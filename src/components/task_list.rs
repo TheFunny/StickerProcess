@@ -67,7 +67,10 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         }
     });
     // 选中输出文件用（onclick 闭包捕获）
+    #[cfg(not(target_arch = "wasm32"))]
     let select_path = entry.output_path.clone();
+    #[cfg(target_arch = "wasm32")]
+    let select_path = Option::<std::path::PathBuf>::None;
 
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
     let factor_value = entry.factor;
@@ -110,10 +113,16 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
                             // /select 打开资源管理器并选中输出文件
+                            #[cfg(not(target_arch = "wasm32"))]
                             if let Some(path) = select_path.as_ref() {
+                                // /select 打开资源管理器并选中输出文件
                                 let _ = std::process::Command::new("explorer")
                                     .arg(format!("/select,{}", path.display()))
                                     .spawn();
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                // web：下载链接，下一阶段
                             }
                         },
                         "{size}"

@@ -7,3 +7,4 @@
 /archive
 /docs/notes.md
 /.cargo/config.toml
+/wasm-demo

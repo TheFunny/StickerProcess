@@ -85,7 +85,7 @@ impl TaskEntry {
     pub fn new(path: &PathBuf) -> Self {
         // 不做同步探测（拖入大目录不卡 UI），check_input 延后到后台线程
         let transcoder = Transcoder::new(MediaFile::new(path));
-        let input_path = transcoder.media_file.path_str();
+        let input_path = transcoder.media_file.display_name();
         let is_video = matches!(
             transcoder.media_file.r#type(),
             Some(crate::media::MediaType::Video(_))
@@ -94,7 +94,11 @@ impl TaskEntry {
         Self {
             transcoder: Arc::new(Mutex::new(transcoder)),
             input_path,
+            // wasm：无文件系统，input_size 下一阶段由前端文件对象填充
+            #[cfg(not(target_arch = "wasm32"))]
             input_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+            #[cfg(target_arch = "wasm32")]
+            input_size: 0,
             is_video,
             status: Status::Probing,
             output_size: None,
@@ -238,12 +242,20 @@ impl UiState {
         let task_arc = Arc::clone(&entry.transcoder);
         let mut ctx = *self;
         spawn(async move {
-            let result = tokio::task::spawn_blocking(move || {
+            let awaited = crate::runner::run_blocking(move || {
                 let mut t = task_arc.lock().map_err(|e| e.to_string())?;
-                t.probe().map_err(|e| e.to_string())
+                #[cfg(not(target_arch = "wasm32"))]
+                let probe_result = t.probe().map_err(|e| e.to_string());
+                #[cfg(target_arch = "wasm32")]
+                let probe_result = t.probe().map_err(|_: ()| "probe failed".to_string());
+                probe_result
             })
-            .await
-            .unwrap_or_else(|e| Err(format!("join error: {e}")));
+            .await;
+            // 扁平化 JoinError 包装（与 runner 同一模式）
+            let result = match awaited {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("join error: {e}")),
+            };
             // 先校验仍是同一任务（队列可能已被清空/重排），再写入：
             // probe 不写 Transcoder.status，需在闭包内赋值由 with_task 同步镜像
             // （含 probe 纠正类型后的 is_video，避免用错大小上限/预览渲染元素）。
@@ -300,16 +312,20 @@ impl UiState {
             self.push_toast(ToastKind::Info, "Waiting for probing to finish");
             return;
         }
-        let output_dir = PathBuf::from(self.settings.peek().output_dir.clone());
-        if !output_dir.exists()
-            && let Err(e) = std::fs::create_dir(&output_dir)
+        // wasm：无输出目录概念，跳过创建与校验
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            log::error!("Failed to create output directory: {:?}", e);
-            self.push_toast(
-                ToastKind::Error,
-                format!("Failed to create output directory: {e}"),
-            );
-            return;
+            let output_dir = PathBuf::from(self.settings.peek().output_dir.clone());
+            if !output_dir.exists()
+                && let Err(e) = std::fs::create_dir(&output_dir)
+            {
+                log::error!("Failed to create output directory: {:?}", e);
+                self.push_toast(
+                    ToastKind::Error,
+                    format!("Failed to create output directory: {e}"),
+                );
+                return;
+            }
         }
         self.overall_progress.set(0.0);
         self.cancel.set(false);
@@ -366,6 +382,8 @@ impl UiState {
     }
 
     /// 选择输出目录对话框（HTML 无目录选择器，沿用 rfd）。
+    /// wasm：无目录选择，函数体为空（下一阶段 showSaveFilePicker / 下载）。
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn pick_output_dir(&mut self) {
         let mut ctx = *self;
         spawn(async move {
@@ -375,6 +393,9 @@ impl UiState {
             }
         });
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn pick_output_dir(&mut self) {}
 }
 
 #[component]

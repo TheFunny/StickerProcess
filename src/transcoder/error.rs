@@ -36,4 +36,6 @@ pub enum TranscodeError {
     Filter(String),
     #[error("muxer error: {0}")]
     Muxer(String),
+    #[error("unsupported engine: {0}")]
+    UnsupportedEngine(&'static str),
 }

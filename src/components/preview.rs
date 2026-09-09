@@ -11,6 +11,7 @@
 //! (输出路径, 大小) 为键去重，避免转码期间进度高频更新导致重复编码。
 
 use crate::app::{TaskEntry, UiState};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::preview;
 use dioxus::prelude::*;
 use std::cell::RefCell;
@@ -74,9 +75,17 @@ pub fn PreviewModal() -> Element {
                     } else {
                         "video/webm"
                     };
-                    std::fs::read(path)
-                        .ok()
-                        .map(|bytes| preview::output_data_url_mime(mime, &bytes))
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        std::fs::read(path)
+                            .ok()
+                            .map(|bytes| preview::output_data_url_mime(mime, &bytes))
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        // web：输出下一阶段从内存 output_bytes 生成 objectURL
+                        None::<String>
+                    }
                 });
                 // 键为 None 时也清空缓存，避免复用上一个任务的 URL
                 *slot = key.map(|(p, s)| (p, s, url.clone().unwrap_or_default()));
@@ -85,7 +94,10 @@ pub fn PreviewModal() -> Element {
         }
     };
 
+    #[cfg(not(target_arch = "wasm32"))]
     let input_url = preview::media_url(Path::new(&entry.input_path));
+    #[cfg(target_arch = "wasm32")]
+    let input_url = String::new(); // web：preview:// 协议不可用，下一阶段换 fetch 流
     let input_video = input_is_video(&entry.input_path);
 
     let input_kb = kb(entry.input_size);

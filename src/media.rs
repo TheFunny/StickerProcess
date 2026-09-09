@@ -1,9 +1,21 @@
+#[cfg(feature = "desktop")]
 use ffmpeg_the_third as ffmpeg;
 use std::path::{Path, PathBuf};
 
+/// 媒体来源：桌面为文件路径；网页端为前端读入内存的字节 + 文件名。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Source {
+    Path(PathBuf),
+    /// 网页端：前端已读入内存的文件字节 + 原始文件名（扩展名判定用）
+    Bytes {
+        data: Vec<u8>,
+        name: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct MediaFile {
-    path: PathBuf,
+    source: Source,
     r#type: Option<MediaType>,
     duration: Option<f64>,
     output: Option<PathBuf>,
@@ -11,11 +23,16 @@ pub struct MediaFile {
 
 impl MediaFile {
     pub fn new(path: &Path) -> Self {
-        let path = PathBuf::from(path);
-        let ext = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|s| s.to_ascii_lowercase());
+        Self::from_source(Source::Path(path.to_path_buf()))
+    }
+
+    /// 网页端：前端读入内存的字节 + 原始文件名（扩展名判定类型）。
+    pub fn from_bytes(data: Vec<u8>, name: String) -> Self {
+        Self::from_source(Source::Bytes { data, name })
+    }
+
+    fn from_source(source: Source) -> Self {
+        let ext = Self::ext_of(&source).map(|s| s.to_ascii_lowercase());
         let r#type: Option<MediaType> = match ext.as_deref() {
             Some("mp4") => MediaType::Video(VideoType::Mp4).into(),
             Some("gif") => MediaType::Video(VideoType::Gif).into(),
@@ -26,15 +43,40 @@ impl MediaFile {
             _ => None,
         };
         Self {
-            path,
+            source,
             r#type,
             duration: None,
             output: None,
         }
     }
 
-    pub fn path_str(&self) -> String {
-        self.path.to_string_lossy().into_owned()
+    /// 扩展名（小写前调用方处理）：Path 用 extension()，Bytes 用 name 的最后一个点后缀。
+    fn ext_of(source: &Source) -> Option<&str> {
+        match source {
+            Source::Path(p) => p.extension().and_then(|e| e.to_str()),
+            Source::Bytes { name, .. } => name.rsplit('.').next(),
+        }
+    }
+
+    /// 桌面专属：文件路径。Bytes 源返回 None（网页端无文件系统路径）。
+    pub fn path(&self) -> Option<&Path> {
+        match &self.source {
+            Source::Path(p) => Some(p.as_path()),
+            Source::Bytes { .. } => None,
+        }
+    }
+
+    /// 展示名：Path 用完整路径，Bytes 用原始文件名。
+    pub fn display_name(&self) -> String {
+        match &self.source {
+            Source::Path(p) => p.to_string_lossy().into_owned(),
+            Source::Bytes { name, .. } => name.clone(),
+        }
+    }
+
+    /// 是否为内存字节源（网页端任务）。
+    pub fn is_bytes(&self) -> bool {
+        matches!(self.source, Source::Bytes { .. })
     }
 
     pub fn r#type(&self) -> Option<MediaType> {
@@ -55,8 +97,27 @@ impl MediaFile {
 
     /// 用 ffmpeg 探测真实编码与时长，并纠正按扩展名误判的类型
     /// （如视频容器装着图片编码）。供后台探测线程调用。
+    ///
+    /// Bytes 源（网页端）跳过 ffmpeg 探测：时长/类型由前端传入，直接 Ok。
+    #[cfg(feature = "desktop")]
     pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
-        let ictx = ffmpeg::format::input(&self.path)?;
+        if matches!(self.source, Source::Bytes { .. }) {
+            return Ok(());
+        }
+        self.probe_desktop()
+    }
+
+    /// wasm：无 ffmpeg。Bytes 源类型由前端判定（from_bytes），时长下一阶段
+    /// 由前端元数据填充；本阶段直接 Ok。
+    #[cfg(not(feature = "desktop"))]
+    pub fn probe(&mut self) -> Result<(), ()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    fn probe_desktop(&mut self) -> Result<(), ffmpeg::Error> {
+        let path = self.path().expect("probe on Bytes guarded above");
+        let ictx = ffmpeg::format::input(path)?;
 
         let duration = ictx.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
@@ -81,7 +142,7 @@ impl MediaFile {
                     MediaType::Video(_) => {
                         log::warn!(
                             "{} is a video file, but it contains an image codec",
-                            self.path.display()
+                            self.display_name()
                         );
                         self.r#type = Some(match id {
                             ffmpeg::codec::id::Id::PNG => MediaType::Image(ImageType::Png),
@@ -96,7 +157,7 @@ impl MediaFile {
                 MediaType::Image(_) => {
                     log::warn!(
                         "{} is an image file, but it contains a video codec",
-                        self.path.display()
+                        self.display_name()
                     );
                     self.r#type = Some(match id {
                         ffmpeg::codec::id::Id::GIF => MediaType::Video(VideoType::Gif),
@@ -189,5 +250,33 @@ mod tests {
             let file = MediaFile::new(Path::new(&format!("file.{ext}")));
             assert!(file.r#type.is_none(), "'{ext}' should be rejected");
         }
+    }
+
+    #[test]
+    fn from_bytes_type_detection() {
+        let mp4 = MediaFile::from_bytes(vec![], "clip.mp4".into());
+        assert_eq!(mp4.r#type, Some(MediaType::Video(VideoType::Mp4)));
+        let gif = MediaFile::from_bytes(vec![], "anim.gif".into());
+        assert_eq!(gif.r#type, Some(MediaType::Video(VideoType::Gif)));
+        let png = MediaFile::from_bytes(vec![], "pic.png".into());
+        assert_eq!(png.r#type, Some(MediaType::Image(ImageType::Png)));
+        let unknown = MediaFile::from_bytes(vec![], "file.xyz".into());
+        assert_eq!(unknown.r#type, None);
+    }
+
+    /// Bytes 契约：probe 直接 Ok（时长/类型由前端传入），path() 为 None。
+    #[test]
+    fn bytes_source_probe_ok_and_path_none() {
+        let mut media = MediaFile::from_bytes(vec![], "a.gif".into());
+        assert!(media.path().is_none());
+        assert_eq!(media.display_name(), "a.gif");
+        media.probe().unwrap();
+    }
+
+    #[test]
+    fn path_source_still_works() {
+        let media = MediaFile::new(Path::new("test.mp4"));
+        assert!(media.path().is_some());
+        assert_eq!(media.display_name(), "test.mp4");
     }
 }

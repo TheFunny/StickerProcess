@@ -13,7 +13,7 @@ use crate::app::{TaskEntry, UiState};
 use crate::components::toast::ToastKind;
 use crate::config::Settings;
 use crate::media::MediaType;
-use crate::transcoder::{Status, TranscodeError, Transcoder, shrunk_factor};
+use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, shrunk_factor};
 use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -22,6 +22,61 @@ use std::time::Instant;
 pub struct ProgressUpdate {
     pub index: usize,
     pub pct: f32,
+}
+
+/// 平台无关的阻塞执行桥：桌面走 tokio spawn_blocking 线程池；
+/// wasm 单线程直接执行（阻塞 UI —— 下一阶段换 web worker）。
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> impl Future<Output = Result<T, String>> {
+    async move {
+        tokio::task::spawn_blocking(f)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn run_blocking<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    Ok(f())
+}
+
+/// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎字符串。
+/// - 非法值（parse 失败）→ 回落 inprocess（config.load 已兜底，此处是运行期保险）
+/// - webcodecs 且浏览器不支持（`web_supported=false`）→ 回落 inprocess
+/// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
+/// 桌面端 `web_supported` 恒为 false；wasm 侧由 JS 探测结果传入。
+pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
+    let engine = match Engine::parse(setting) {
+        Some(e) => e,
+        None => {
+            log::warn!("engine='{setting}' 非法，回落 inprocess");
+            return Engine::Inprocess.as_str().to_string();
+        }
+    };
+    match engine {
+        Engine::Webcodecs if !web_supported => {
+            log::warn!("engine=webcodecs 但浏览器不支持，回落 inprocess");
+            Engine::Inprocess.as_str().to_string()
+        }
+        Engine::Sidecar if !sidecar_vp9_available() => {
+            log::warn!("engine=sidecar 但 ffmpeg/libvpx-vp9 不可用，回落 inprocess");
+            Engine::Inprocess.as_str().to_string()
+        }
+        other => other.as_str().to_string(),
+    }
+}
+
+/// sidecar 可用性：桌面查探测缓存；wasm 恒 false（无子进程）。
+#[cfg(feature = "desktop")]
+fn sidecar_vp9_available() -> bool {
+    crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9)
+}
+
+#[cfg(not(feature = "desktop"))]
+fn sidecar_vp9_available() -> bool {
+    false
 }
 
 /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
@@ -156,20 +211,10 @@ async fn run_single_task(
         let result = {
             let task_arc = Arc::clone(&task_arc);
             let tx = progress_tx.clone();
-            // 引擎解析：设置值 + sidecar 可用性兜底。设置 sidecar 但探测
-            // 不可用（未装 ffmpeg / 缺 libvpx-vp9）→ 回退 inprocess 并记日志。
-            let engine = match settings.engine.as_str() {
-                "sidecar"
-                    if !crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9) =>
-                {
-                    log::warn!(
-                        "{name}: engine=sidecar 但 ffmpeg/libvpx-vp9 不可用，回退 inprocess"
-                    );
-                    "inprocess".to_string()
-                }
-                other => other.to_string(),
-            };
-            tokio::task::spawn_blocking(move || {
+            // 引擎解析：设置值 + 可用性兜底（详见 resolve_engine）。
+            // 桌面端 web_supported 恒 false；wasm 化时改为传 JS 探测结果。
+            let engine = resolve_engine(&settings.engine, false);
+            let awaited = run_blocking(move || {
                 let mut t = task_arc
                     .lock()
                     .map_err(|e| TranscodeError::Join(e.to_string()))?;
@@ -178,15 +223,18 @@ async fn run_single_task(
                     let _ = tx.send(ProgressUpdate { index, pct });
                 })
             })
-            .await
-            .unwrap_or_else(|e| Err(TranscodeError::Join(e.to_string())))
+            .await;
+            // 扁平化 run_blocking 的 JoinError 包装：内层就是转码结果
+            match awaited {
+                Ok(inner) => inner,
+                Err(e) => Err(TranscodeError::Join(e)),
+            }
         };
 
         match result {
             Ok(()) => {
                 let elapsed_ms = started.elapsed().as_millis() as u64;
                 ctx.touch_entry(index, |e| {
-                    e.elapsed_ms = Some(elapsed_ms);
                     e.progress = None;
                 });
                 // 与 iced NextProcess(Ok) 一致：查尺寸 → 调系数 → 决定重试/前进
@@ -294,4 +342,29 @@ async fn run_single_task(
         return TaskOutcome::Cancelled;
     }
     TaskOutcome::Advanced
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_engine;
+
+    #[test]
+    fn resolve_engine_passthrough_valid() {
+        assert_eq!(resolve_engine("inprocess", false), "inprocess");
+        // sidecar 直通与否取决于本机 ffmpeg 探测结果，两者都是合法输出
+        let sc = resolve_engine("sidecar", false);
+        assert!(sc == "sidecar" || sc == "inprocess");
+    }
+
+    #[test]
+    fn resolve_engine_webcodecs_falls_back_when_unsupported() {
+        assert_eq!(resolve_engine("webcodecs", false), "inprocess");
+        assert_eq!(resolve_engine("webcodecs", true), "webcodecs");
+    }
+
+    #[test]
+    fn resolve_engine_invalid_falls_back() {
+        assert_eq!(resolve_engine("gpu", false), "inprocess");
+        assert_eq!(resolve_engine("", false), "inprocess");
+    }
 }

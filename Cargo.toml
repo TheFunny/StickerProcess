@@ -6,19 +6,47 @@ edition = "2024"
 [dependencies]
 chrono = "0.4.45"
 #ffmpeg-next = "8"
-dioxus = { version = "0.7", features = ["desktop"] }
-ffmpeg-the-third = "6"
-ffmpeg-sidecar = "2.5"
-libc = "0.2"
+dioxus = { version = "0.7", default-features = false, features = ["lib"] }
 log = "0.4.34"
-oxipng = { version = "10.2", features = ["parallel", "zopfli"], default-features = false }
 pretty_env_logger = "0.5.0"
-rfd = "0.17"
-tokio = "1.53"
+tokio = { version = "1.53", features = ["rt", "sync", "time", "macros"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 base64 = "0.23"
 thiserror = "2"
 toml = "1"
+web-sys = { version = "0.3", features = ["Window", "Storage"], optional = true }
+
+# 桌面专属：ffmpeg 双引擎 / 文件对话框 / 资源管理器定位 / png 优化
+ffmpeg-the-third = { version = "6", optional = true }
+ffmpeg-sidecar = { version = "2.5", optional = true }
+libc = { version = "0.2", optional = true }
+oxipng = { version = "10.2", features = ["parallel", "zopfli"], default-features = false, optional = true }
+rfd = { version = "0.17", optional = true }
+
+[features]
+default = ["desktop"]
+desktop = [
+    "dep:ffmpeg-the-third",
+    "dep:ffmpeg-sidecar",
+    "dep:libc",
+    "dep:oxipng",
+    "dep:rfd",
+    "dioxus/desktop",
+    "dioxus/document",
+    "dioxus/devtools",
+    "dioxus/launch",
+]
+web = [
+    "dep:web-sys",
+    "dioxus/web",
+    "dioxus/document",
+    "dioxus/devtools",
+    "dioxus/launch",
+    "dioxus/html",
+    "dioxus/signals",
+    "dioxus/hooks",
+]
 
 [profile.release]
 opt-level = "s"       # 优化代码尺寸，兼顾速度

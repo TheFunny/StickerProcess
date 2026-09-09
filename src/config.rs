@@ -64,7 +64,7 @@ impl Default for Settings {
 impl Settings {
     /// 转码引擎设置是否为合法值。
     pub fn engine_valid(&self) -> bool {
-        matches!(self.engine.as_str(), "sidecar" | "inprocess")
+        crate::transcoder::Engine::parse(self.engine.as_str()).is_some()
     }
 
     /// 输出目录是否可用（已存在，或父目录存在可创建）。
@@ -82,6 +82,11 @@ impl Settings {
     }
 }
 
+// ---- 持久化（按平台拆分，签名一致）----
+// 桌面：%APPDATA%/StickerProcess/settings.toml（toml 格式，用户已有文件）
+// wasm：localStorage key "StickerProcess.settings"（JSON 格式，体积小无转义负担）
+
+#[cfg(not(target_arch = "wasm32"))]
 fn config_path() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(|base| {
@@ -92,7 +97,11 @@ fn config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("settings.toml"))
 }
 
+#[cfg(target_arch = "wasm32")]
+const LOCAL_STORAGE_KEY: &str = "StickerProcess.settings";
+
 /// 启动时读取设置；缺失/损坏时返回默认值。
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load() -> Settings {
     let mut settings = match std::fs::read_to_string(config_path()) {
         Ok(raw) => toml::from_str(&raw).unwrap_or_else(|e| {
@@ -105,9 +114,32 @@ pub fn load() -> Settings {
             Settings::default()
         }
     };
+    sanitize(&mut settings);
+    settings
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn load() -> Settings {
+    let mut settings = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item(LOCAL_STORAGE_KEY).ok().flatten())
+        .and_then(|raw| match serde_json::from_str::<Settings>(&raw) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                log::warn!("Failed to parse localStorage settings, using defaults: {e}");
+                None
+            }
+        })
+        .unwrap_or_default();
+    sanitize(&mut settings);
+    settings
+}
+
+/// 公共兜底：引擎值 / 输出目录（两平台一致）。
+fn sanitize(settings: &mut Settings) {
     if !settings.engine_valid() {
         log::warn!(
-            "Invalid engine '{}' in settings.toml, falling back to 'sidecar'",
+            "Invalid engine '{}' in settings, falling back to 'sidecar'",
             settings.engine
         );
         settings.engine = "sidecar".into();
@@ -115,10 +147,10 @@ pub fn load() -> Settings {
     if settings.output_dir.is_empty() {
         settings.output_dir = default_output_dir();
     }
-    settings
 }
 
 /// 阻塞写盘（调用方放在 spawn_blocking 中）。
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save(settings: &Settings) -> Result<(), String> {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -126,6 +158,17 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     }
     let raw = toml::to_string_pretty(settings).map_err(|e| e.to_string())?;
     std::fs::write(path, raw).map_err(|e| e.to_string())
+}
+
+/// 阻塞写 localStorage（wasm 无独立线程，直接同步写，量级 ~1KB）。
+#[cfg(target_arch = "wasm32")]
+pub fn save(settings: &Settings) -> Result<(), String> {
+    let raw = serde_json::to_string(settings).map_err(|e| e.to_string())?;
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .ok_or_else(|| "localStorage unavailable".to_string())?
+        .set_item(LOCAL_STORAGE_KEY, &raw)
+        .map_err(|e| format!("localStorage set_item failed: {e:?}"))
 }
 
 fn default_output_dir() -> String {

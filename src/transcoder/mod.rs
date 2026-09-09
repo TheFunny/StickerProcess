@@ -6,15 +6,20 @@
 //!
 //! 对外暴露 `Transcoder` / `Factor` / `FileSize` / `Status` / `shrunk_factor`。
 
+#[cfg(feature = "desktop")]
 mod command;
 mod error;
+#[cfg(feature = "desktop")]
 mod inprocess;
+#[cfg(feature = "desktop")]
 mod steps;
 
 pub use error::TranscodeError;
 
+#[cfg(feature = "desktop")]
 use ffmpeg_the_third as ffmpeg;
 
+#[cfg(feature = "desktop")]
 use ffmpeg_sidecar::event::FfmpegEvent;
 
 use crate::media::{MediaFile, MediaType};
@@ -67,6 +72,34 @@ pub enum Status {
     SizeExcess,
 }
 
+/// 转码引擎：sidecar（ffmpeg 子进程）/ inprocess（libav 进程内）为桌面双轨；
+/// webcodecs 为网页端浏览器原生编解码（仅 wasm target 可用）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Engine {
+    Sidecar,
+    Inprocess,
+    Webcodecs,
+}
+
+impl Engine {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "sidecar" => Some(Self::Sidecar),
+            "inprocess" => Some(Self::Inprocess),
+            "webcodecs" => Some(Self::Webcodecs),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sidecar => "sidecar",
+            Self::Inprocess => "inprocess",
+            Self::Webcodecs => "webcodecs",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Transcoder {
     pub media_file: MediaFile,
@@ -79,6 +112,9 @@ pub struct Transcoder {
     pub duration_factors: [f64; 6],
     /// 强制输出帧率（fps）；<=0 表示不强制。
     pub target_fps: f64,
+    /// 内存输出（网页端契约）：Bytes 源任务转码产物写这里而非磁盘。
+    /// 桌面 Path 源恒为 None（走 output 路径）。
+    pub output_bytes: Option<Vec<u8>>,
 }
 
 impl Transcoder {
@@ -92,11 +128,19 @@ impl Transcoder {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             duration_factors: [1.2, 1.1, 1.0, 0.9, 0.8, 0.7],
             target_fps: 0.0,
+            output_bytes: None,
         }
     }
 
     /// 同步执行探测（读编码/时长），供后台线程调用。
+    /// wasm：media_file.probe() 直接 Ok（见 media.rs 平台分支）。
+    #[cfg(feature = "desktop")]
     pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
+        self.media_file.probe()
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    pub fn probe(&mut self) -> Result<(), ()> {
         self.media_file.probe()
     }
 
@@ -130,58 +174,107 @@ impl Transcoder {
         Ok(())
     }
 
-    /// 执行转码（按 engine 设置分发 sidecar / inprocess）；
+    /// 执行转码（按 engine 设置分发 sidecar / inprocess / webcodecs）；
     /// 进度经回调上报（0..=1）。取消经 `cancel_flag` 中断。
     pub fn run_with_progress(
         &mut self,
         engine: &str,
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
+        if engine == "webcodecs" {
+            // 网页端浏览器原生编解码（WebCodecs + webm-muxer）。桥接实现
+            // （wasm-bindgen 调 JS transcode()）在下一阶段落地；本阶段
+            // 所有平台统一返回 UnsupportedEngine 占位。
+            let _ = &mut on_progress;
+            return Err(TranscodeError::UnsupportedEngine(
+                "webcodecs bridge not yet implemented",
+            ));
+        }
+        #[cfg(feature = "desktop")]
         if engine == "inprocess" {
             return self.run_inprocess(on_progress);
         }
-        // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
-        self.cancel_flag.store(false, Ordering::Relaxed);
-        let media_type = self
-            .media_file
-            .r#type()
-            .ok_or(TranscodeError::InvalidMediaType)?;
-        let mut command = self.gen_command()?;
-        let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
-        match media_type {
-            MediaType::Video(_) => {
-                // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件
-                let duration = self.media_file.duration().unwrap_or(1.0).max(0.001);
-                for event in process.iter().map_err(|_| TranscodeError::ReadOutput)? {
+        // sidecar 分支（ffmpeg 子进程）桌面专属；wasm 无子进程
+        #[cfg(feature = "desktop")]
+        {
+            // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
+            self.cancel_flag.store(false, Ordering::Relaxed);
+            let media_type = self
+                .media_file
+                .r#type()
+                .ok_or(TranscodeError::InvalidMediaType)?;
+            let mut command = self.gen_command()?;
+            let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
+            match media_type {
+                MediaType::Video(_) => {
+                    // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件
+                    let duration = self.media_file.duration().unwrap_or(1.0).max(0.001);
+                    for event in process.iter().map_err(|_| TranscodeError::ReadOutput)? {
+                        if self.cancel_flag.load(Ordering::Relaxed) {
+                            let _ = process.kill();
+                            return Err(TranscodeError::Cancelled);
+                        }
+                        if let FfmpegEvent::Progress(p) = event {
+                            on_progress((command::parse_progress_time(&p.time) / duration) as f32);
+                        }
+                    }
+                    self.run_video()
+                }
+                MediaType::Image(_) => {
                     if self.cancel_flag.load(Ordering::Relaxed) {
-                        let _ = process.kill();
                         return Err(TranscodeError::Cancelled);
                     }
-                    if let FfmpegEvent::Progress(p) = event {
-                        on_progress((command::parse_progress_time(&p.time) / duration) as f32);
-                    }
+                    self.run_image(&mut process)
                 }
-                self.run_video()
             }
-            MediaType::Image(_) => {
-                if self.cancel_flag.load(Ordering::Relaxed) {
-                    return Err(TranscodeError::Cancelled);
-                }
-                self.run_image(&mut process)
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            let _ = (&engine, &mut on_progress);
+            Err(TranscodeError::UnsupportedEngine(
+                "sidecar requires desktop",
+            ))
+        }
+    }
+
+    /// 收尾产物落位：Path 源写盘（桌面现状），Bytes 源写内存（网页端契约）。
+    /// 两条路径都同步 output_size 供尺寸重试判定。
+    pub fn store_output(&mut self, bytes: Vec<u8>) -> Result<(), TranscodeError> {
+        if self.media_file.is_bytes() {
+            let size = bytes.len() as u64;
+            self.output_bytes = Some(bytes);
+            match &mut self.output_size {
+                Some(s) => s.set(size),
+                None => self.output_size = Some(FileSize::new(size)),
             }
+            return Ok(());
+        }
+        #[cfg(feature = "desktop")]
+        {
+            let path = self.get_output().ok_or(TranscodeError::OutputNotSet)?;
+            std::fs::write(path, &bytes).map_err(|e| TranscodeError::SizeCheck(e.to_string()))?;
+            Ok(())
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            Err(TranscodeError::OutputNotSet)
         }
     }
 
     /// 转码完成后读取输出文件大小（供尺寸重试判定）。
     pub fn check_size(&mut self) -> Result<&FileSize, TranscodeError> {
-        let metadata = self
-            .get_output()
-            .ok_or(TranscodeError::OutputNotSet)?
-            .metadata()
-            .map_err(|e| TranscodeError::SizeCheck(e.to_string()))?;
+        let size = if let Some(bytes) = &self.output_bytes {
+            bytes.len() as u64
+        } else {
+            self.get_output()
+                .ok_or(TranscodeError::OutputNotSet)?
+                .metadata()
+                .map_err(|e| TranscodeError::SizeCheck(e.to_string()))?
+                .len()
+        };
         match &mut self.output_size {
-            Some(size) => size.set(metadata.len()),
-            None => self.output_size = Some(FileSize::new(metadata.len())),
+            Some(size_slot) => size_slot.set(size),
+            None => self.output_size = Some(FileSize::new(size)),
         }
         Ok(self.output_size.as_ref().unwrap())
     }

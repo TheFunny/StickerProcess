@@ -85,7 +85,13 @@ impl Transcoder {
     pub(super) fn gen_command(&mut self) -> Result<FfmpegCommand, TranscodeError> {
         let mut command = FfmpegCommand::new();
         command
-            .input(self.media_file.path_str())
+            .input(
+                self.media_file
+                    .path()
+                    .ok_or(TranscodeError::InvalidOutputPath)?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
             .filter("scale=512:512:force_original_aspect_ratio=decrease")
             .args(["-sws_flags", "lanczos"])
             .overwrite();

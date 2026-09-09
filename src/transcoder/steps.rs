@@ -26,7 +26,7 @@ impl Transcoder {
             ));
         }
         data[position + 3..end].copy_from_slice(&100f64.to_be_bytes());
-        std::fs::write(&path, data)
+        self.store_output(data)
             .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
         Ok(())
     }
