@@ -71,14 +71,11 @@ impl Transcoder {
             .media_file
             .r#type()
             .ok_or(TranscodeError::InvalidMediaType)?;
-        let (engine, kind, bitrate) = match media_type {
-            MediaType::Video(v @ (VideoType::Gif | VideoType::Apng)) => {
-                ("ffmpeg-wasm", "video", self.video_bitrate(&v)?)
-            }
-            MediaType::Video(VideoType::Mp4) => {
-                ("webcodecs", "video", self.video_bitrate(&VideoType::Mp4)?)
-            }
-            MediaType::Image(_) => ("webcodecs", "image", 0),
+        let (engine, kind) = super::Engine::for_web(&media_type);
+        let engine = engine.as_str();
+        let bitrate = match media_type {
+            MediaType::Video(v) => self.video_bitrate(&v)?,
+            MediaType::Image(_) => 0,
         };
         let data = match self.media_file.bytes() {
             Some(bytes) => bytes.to_vec(),

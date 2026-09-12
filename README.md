@@ -53,14 +53,52 @@ WebView2 运行时安装策略可在 `Dioxus.toml` 的
 （Sidecar / In-process）、主题。所有修改即时落盘到
 `%APPDATA%/StickerProcess/settings.toml`。
 
+## 网页端
+
+同一套代码编译为 wasm 在浏览器运行（`--no-default-features --features web`）：
+
+- **GIF/APNG** → ffmpeg.wasm（ST core，透明双轨 VP9）
+- **MP4 / 图片** → WebCodecs（浏览器原生解码 + VP9 编码 + webm-muxer；图片走
+  Canvas→PNG）。引擎按媒体类型自动选择（矩阵即策略），无 ffmpeg 下载。
+- 拖拽/选择文件、进度、超限重试、预览、下载、设置持久化（localStorage）全通。
+
+### 本地运行 / 部署
+
+```bash
+# 开发预览
+dx serve --platform web
+
+# 发布构建（产物是纯静态文件，任意静态托管即可；无 SharedArrayBuffer，
+# 因此不需要 COOP/COEP 跨域隔离头）
+dx build --platform web --release
+
+# ⚠ dx（serve 与 build 皆然）不会把项目 assets/ 拷进产物目录，跑起来/部署前手动补齐：
+cp assets/{ffmpeg.js,814.ffmpeg.js,ffmpeg-core-st.js,ffmpeg-core-st.wasm,\
+ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js} \
+   target/dx/StickerProcess/debug/web/public/    # release 换 release/
+```
+
+改过 assets/ 下任何 JS 后同样要重新 cp（构建目录里的副本不会自动同步）。
+
+`ffmpeg-core-st.wasm`（32 MB）不入库（`.gitignore`），构建网页端前需本地存在
+（获取方式见 docs/WEB_DEMO_FINDINGS.md）。glue 加载路径全部是 web **根路径**
+（`/ffmpeg-engine.js` 等），所以托管时产物目录必须挂在域名根，且静态服务器
+不要对未知路径做 SPA fallback 返回 HTML（会伪装成 200 导致加载失败）。
+
 ## 构建
 
 ```bash
 cargo build            # debug
 cargo build --release  # release（size-optimized: lto=fat, panic=abort, strip）
-cargo test             # 28 个单元测试
+cargo test             # 40 个单元测试
 cargo test -- --ignored  # libav 集成冒烟测试（需静态 ffmpeg，见下）
-dx bundle …            # 安装包（见上）
+
+# 网页端（wasm）
+cargo check --target wasm32-unknown-unknown --no-default-features --features web
+dx serve --platform web
+dx build --platform web --release   # 部署前手动补 assets/，见"网页端"节
+
+dx bundle …            # 桌面安装包（见上）
 ```
 
 ### ffmpeg 环境（两种）
@@ -103,6 +141,8 @@ src/
 │   │                    effective_duration / resolve_factor（含单测）
 │   ├── inprocess.rs     libav 进程内管道：解码→滤镜→编码→封装（E6）
 │   ├── steps.rs         webm 时长补丁、sidecar 图片 stdout 读取
+│   ├── web.rs           wasm32 专属：双引擎桥（ffmpeg.wasm / WebCodecs），
+│   │                    两段式 prepare/finish 不跨 await 持锁、glue 注入、原生探测
 │   └── error.rs         TranscodeError（thiserror）
 └── components/          UI 组件：toolbar / task_list / settings_panel / preview /
                          number_field / drop_zone / progress_bar / toast

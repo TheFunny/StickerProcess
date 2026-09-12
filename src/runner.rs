@@ -68,18 +68,6 @@ pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
     }
 }
 
-/// 网页端引擎选择（按媒体类型自动，设置值忽略）。
-/// Gif/Apng → "ffmpeg-wasm"（alpha）；Mp4/图片 → "webcodecs"（W2 落地）。
-/// 实际分发在 prepare_web_job 内嵌的 job.engine（与此矩阵一致）。
-#[cfg(test)] // 矩阵的记录/回归面；生产分发在 web.rs::prepare_web_job（与 kind 同源决策）
-fn resolve_web_engine(media_type: Option<&crate::media::MediaType>) -> &'static str {
-    use crate::media::{MediaType, VideoType};
-    match media_type {
-        Some(MediaType::Video(VideoType::Gif | VideoType::Apng)) => "ffmpeg-wasm",
-        _ => "webcodecs",
-    }
-}
-
 /// sidecar 可用性：桌面查探测缓存；wasm 恒 false（无子进程）。
 #[cfg(feature = "desktop")]
 fn sidecar_vp9_available() -> bool {
@@ -420,7 +408,7 @@ async fn run_single_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_engine, resolve_web_engine};
+    use super::resolve_engine;
 
     #[test]
     fn resolve_engine_passthrough_valid() {
@@ -440,30 +428,6 @@ mod tests {
     fn resolve_engine_invalid_falls_back() {
         assert_eq!(resolve_engine("gpu", false), "inprocess");
         assert_eq!(resolve_engine("", false), "inprocess");
-    }
-
-    #[test]
-    fn resolve_web_engine_matrix() {
-        use crate::media::{ImageType, MediaType, VideoType};
-        // W1 矩阵：GIF/APNG → ffmpeg-wasm；MP4/图片 → webcodecs（W2 占位）
-        assert_eq!(
-            resolve_web_engine(Some(&MediaType::Video(VideoType::Gif))),
-            "ffmpeg-wasm"
-        );
-        assert_eq!(
-            resolve_web_engine(Some(&MediaType::Video(VideoType::Apng))),
-            "ffmpeg-wasm"
-        );
-        assert_eq!(
-            resolve_web_engine(Some(&MediaType::Video(VideoType::Mp4))),
-            "webcodecs"
-        );
-        assert_eq!(
-            resolve_web_engine(Some(&MediaType::Image(ImageType::Png))),
-            "webcodecs"
-        );
-        // 未知类型（探测前）→ webcodecs 占位，Alert 文案明确
-        assert_eq!(resolve_web_engine(None), "webcodecs");
     }
 
     #[test]

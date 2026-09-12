@@ -101,6 +101,18 @@ impl Engine {
             Self::FfmpegWasm => "ffmpeg-wasm",
         }
     }
+
+    /// 网页端引擎矩阵（矩阵即策略，设置值不参与）：
+    /// Gif/Apng → ffmpeg-wasm（alpha 双轨）；Mp4/图片 → webcodecs。
+    /// 第二项为 JS glue 的 kind 参数。
+    pub fn for_web(media_type: &MediaType) -> (Engine, &'static str) {
+        use crate::media::{MediaType::*, VideoType::*};
+        match media_type {
+            Video(Gif | Apng) => (Engine::FfmpegWasm, "video"),
+            Video(Mp4) => (Engine::Webcodecs, "video"),
+            Image(_) => (Engine::Webcodecs, "image"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -310,5 +322,31 @@ mod tests {
         // 与旧行为逐字对应：factor / excess * 0.96
         assert!((shrunk_factor(0.9, 1.5, 0.96) - 0.576).abs() < 1e-12);
         assert!((shrunk_factor(1.0, 1.0, 0.96) - 0.96).abs() < 1e-12);
+    }
+
+    #[test]
+    fn for_web_matrix() {
+        use super::Engine;
+        use crate::media::{ImageType, MediaType, VideoType};
+        // GIF/APNG → ffmpeg-wasm（alpha 路径）
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Gif)),
+            (Engine::FfmpegWasm, "video")
+        );
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Apng)),
+            (Engine::FfmpegWasm, "video")
+        );
+        // MP4 → webcodecs video；图片 → webcodecs image
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Mp4)),
+            (Engine::Webcodecs, "video")
+        );
+        for img in [ImageType::Png, ImageType::Jpg, ImageType::Webp] {
+            assert_eq!(
+                Engine::for_web(&MediaType::Image(img)),
+                (Engine::Webcodecs, "image")
+            );
+        }
     }
 }

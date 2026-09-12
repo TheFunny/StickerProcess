@@ -106,11 +106,16 @@
 
 ## W5. 收尾与发布
 
-- [ ] **W5.1 部署**: 静态托管（`dx build --platform web` 产物）；COOP/COEP 不需要
-  （ST core 无 SharedArrayBuffer）；core 32MB 首载加 loading 态 + 可选 IndexedDB 缓存（v2）
-- [ ] **W5.2 文档**: AGENTS.md 增 web 架构段（引擎矩阵/桥接层/资产目录）；README 部署说明
-- [ ] **W5.3 测试**: 码率/系数纯函数已有；新增 resolve_engine 矩阵测试（media_type × caps 全组合）
-- [ ] **W5.4 里程碑**
+- [x] **W5.1 部署**（release 构建实测：产物纯静态、无 COOP/COEP 要求；
+  ⚠ dx release 不拷项目 assets/——部署前需手动补 7 个 glue/core 文件（已写进
+  README"网页端"节）；core 32MB 首载 loading 态 / IndexedDB 缓存留 v2）
+- [x] **W5.2 文档**（AGENTS.md：引擎矩阵/web.rs/assets/ 布局 + wasm 三坑 Gotchas；
+  README："网页端"节 + 构建/部署命令 + 架构图补 web.rs）
+- [x] **W5.3 测试**（矩阵抽成 `Engine::for_web` 纯函数 + `for_web_matrix` 桌面可跑，
+  取代 wasm-only 的 resolve_web_engine 记录面；码率/系数/时长补丁均已有）
+- [x] **W5.4 里程碑**：W1–W3+W5 完成 → 可发布网页端 v1（Chromium 系全类型；
+  GIF/APNG→ffmpeg.wasm alpha、MP4/图片→WebCodecs）。W4 自建 core 为可选增强，
+  解锁非 Chromium 的 MP4 与 10-bit，不阻塞发布。
 
 | 阶段 | 内容 | 预估 |
 |---|---|---|

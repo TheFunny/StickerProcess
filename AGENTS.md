@@ -50,7 +50,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
-| `assets/` | Static assets copied to the web build root by dx: `ffmpeg-engine.js` (glue `stickerFfmpeg*`), `webcodecs-engine.js` (glue `stickerWebcodecs*` + `stickerNativeProbe`), `webm-muxer.js` (webm-muxer@5 UMD), ffmpeg.wasm ST core bundle (`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored) |
+| `assets/` | Web glue + ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored） |
 
 ## Architecture
 
@@ -268,10 +268,13 @@ offline from the registry cache while `Cargo.lock` stays untouched.
      `writeFile` 会 transfer 所有权，glue 必须先 `new Uint8Array(data).slice()`。
 - **dragover 期间 `dataTransfer.files` 恒空**（规范保护模式，文件仅 drop 时可见）——
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
-- **ffmpeg.wasm 资产**：`assets/` 下四件套（wrapper `ffmpeg.js` + `814.ffmpeg.js`
-  classic worker + ST core js/wasm，32MB wasm gitignore）。dx 把 assets 目录复制到
-  **web 根**（不是 `/assets/` 前缀；SPA fallback 会让错误路径返回 HTML）。glue 自举
-  加载 wrapper（缺 `FFmpegWASM` 全局时注入 `/ffmpeg.js`）。
+- **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core 四件套
+  （`ffmpeg.js` wrapper、`814.ffmpeg.js` classic worker、`ffmpeg-core-st.{js,wasm}`
+  32MB gitignore、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`）。
+  **dx（serve 与 build 皆然）不会把项目 `assets/` 拷进 `target/dx/.../web/public/`**——
+  构建/跑起来前必须手动 cp 到该目录根，改过任一 JS 再 cp 一次（否则用的是旧副本）。
+  glue 加载路径是 web **根**（`/ffmpeg-engine.js`，非 `/assets/` 前缀；SPA fallback
+  会让缺失路径返回 HTML 伪装 200）。glue 自举：缺 `FFmpegWASM` 全局时注入 `/ffmpeg.js`。
 - **ffmpeg must be discoverable**: when updating ffmpeg, update BOTH `PATH` and
   `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `docs/notes.md`).
 - The ffmpeg binding crate is `ffmpeg-the-third` (see `Cargo.toml`, commented
