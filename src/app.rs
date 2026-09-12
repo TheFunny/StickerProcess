@@ -267,7 +267,7 @@ impl UiState {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                // web：probe() 恒 Ok；时长由 JS 元数据（ImageDecoder）回填
+                // web：probe() 恒 Ok；时长/APNG 由 JS 原生元数据回填
                 let (name, data) = {
                     let Ok(t) = task_arc.lock() else {
                         return;
@@ -277,12 +277,18 @@ impl UiState {
                         (name, None) => (name, Vec::new()),
                     }
                 };
-                let duration = crate::transcoder::web::probe_duration(&name, &data).await;
+                let probe = crate::transcoder::web::native_probe(&name, &data).await;
                 let result = (|| {
                     let Ok(mut t) = task_arc.lock() else {
                         return Err("transcoder lock poisoned".to_string());
                     };
-                    t.media_file.set_duration(duration);
+                    t.media_file.set_duration(probe.duration);
+                    // 扩展名 png 实为动画 PNG → 纠正为 APNG（走 ffmpeg-wasm 引擎）
+                    if probe.apng {
+                        t.media_file.set_type(crate::media::MediaType::Video(
+                            crate::media::VideoType::Apng,
+                        ));
+                    }
                     t.probe().map_err(|_: ()| "probe failed".to_string())
                 })();
                 Self::write_back_probe(&mut ctx, index, &entry, result);

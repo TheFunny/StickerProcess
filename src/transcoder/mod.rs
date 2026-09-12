@@ -199,11 +199,11 @@ impl Transcoder {
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
         if engine == "webcodecs" || engine == "ffmpeg-wasm" {
-            // W1 只接通 ffmpeg-wasm（GIF/APNG）；wasm 分发见 runner.rs 平台分支，
-            // 走到这里的 webcodecs/ffmpeg-wasm 均为 W2+ 占位。
+            // 网页端引擎（分发在 runner.rs wasm 两段式路径）；桌面设置这两个值
+            // → 明确 Alert（resolve_engine 只兜底 webcodecs，ffmpeg-wasm 漏到这）
             let _ = &mut on_progress;
             return Err(TranscodeError::UnsupportedEngine(
-                "mp4 & image web engine lands in W2",
+                "web engines (webcodecs / ffmpeg-wasm) require the web build",
             ));
         }
         #[cfg(feature = "desktop")]

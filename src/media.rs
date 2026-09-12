@@ -110,6 +110,11 @@ impl MediaFile {
         }
     }
 
+    /// 回填探测类型（网页端 APNG 检测：扩展名 png 但 ImageDecoder 报多帧）。
+    pub fn set_type(&mut self, media_type: MediaType) {
+        self.r#type = Some(media_type);
+    }
+
     pub fn output(&self) -> Option<&PathBuf> {
         self.output.as_ref()
     }

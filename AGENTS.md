@@ -33,7 +33,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
 | `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check), duration, output path; enums; unit tests |
-| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch via shared `patch_webm_bytes`, sidecar image stdout reader), `web.rs` (wasm32-only: ffmpeg.wasm bridge, two-phase `prepare_web_job`/`finish_web_job`, JS glue injection), `error.rs` (`TranscodeError`) |
+| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch via shared `patch_webm_bytes`, sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
@@ -50,7 +50,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
-| `assets/` | Static assets copied to the web build root by dx: `ffmpeg-engine.js` (glue contract `stickerFfmpeg*`), ffmpeg.wasm ST core bundle (`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored) |
+| `assets/` | Static assets copied to the web build root by dx: `ffmpeg-engine.js` (glue `stickerFfmpeg*`), `webcodecs-engine.js` (glue `stickerWebcodecs*` + `stickerNativeProbe`), `webm-muxer.js` (webm-muxer@5 UMD), ffmpeg.wasm ST core bundle (`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored) |
 
 ## Architecture
 
@@ -233,10 +233,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `inprocess.rs` libav / `web.rs` wasm 桥); shared bitrate logic lives in
   `command.rs` helpers so all engines stay behaviorally identical. The engine
   string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"` — dispatch
-  is `mod.rs::run_with_progress`, validated by `Settings::engine_valid()`.
-  Web (wasm32) runs `resolve_web_engine` (media-type matrix: GIF/APNG →
-  `ffmpeg-wasm`, MP4/image → `webcodecs` placeholder); desktop keeps
-  `resolve_engine`.
+  is `mod.rs::run_with_progress` (desktop), validated by `Settings::engine_valid()`.
+  Web (wasm32) ignores the setting: matrix = policy, decided in
+  `web.rs::prepare_web_job` (GIF/APNG → `ffmpeg-wasm` with alpha; MP4/image →
+  `webcodecs`, VP9 no-alpha; caps via `stickerWebcodecsProbeSupport`, watchdog
+  timeouts on all `<video>` awaits). `resolve_web_engine` is the test-only
+  record of that matrix; desktop keeps `resolve_engine`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
 - Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →

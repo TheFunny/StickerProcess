@@ -35,6 +35,10 @@ pub fn PreviewModal() -> Element {
     // 输出 data URL 缓存：以 (输出路径, 大小) 为键，键不变不重读盘/重编码
     // （hook 必须在早退之前调用；Rc<RefCell> 非信号，绝不触发重渲染）。
     let output_cache = use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, String)>)));
+    // wasm 输入侧 object URL 缓存：以 (输入名, 大小) 为键；键变时 revoke 旧 URL
+    // （Blob 已在构造时拷贝字节，revoke 不影响已渲染元素）。非信号，不触发重渲染。
+    #[cfg(target_arch = "wasm32")]
+    let input_cache = use_hook(|| Rc::new(RefCell::new(None::<((String, u64), String)>)));
 
     // ---- 渲染 ----
     let index = ctx.show_preview.cloned();
@@ -52,9 +56,10 @@ pub fn PreviewModal() -> Element {
     };
     let ratio = entry.size_excess_ratio(video_limit, image_limit);
 
-    // 输出侧 data URL：输出 ≤512KB，同步读盘+base64 仅需毫秒级；缓存键为
+    // 输出侧 data URL：输出 ≤512KB，编码仅需毫秒级；缓存键为
     // (输出路径, 大小)——转码期间 tasks 信号 10Hz 更新不会重复编码。
-    // 使用镜像里的输出路径，避免渲染期锁 Transcoder（转码中会阻塞整个 UI）。
+    // 桌面从镜像路径读盘（免锁）；wasm 锁内克隆 output_bytes（单线程，
+    // 锁从不跨 await 持有，渲染期同步取锁与 task_list 下载同一模式）。
     let output_url: Option<String> = {
         let key = match (&entry.output_path, &entry.output_size) {
             (Some(path), Some(size)) => Some((path.clone(), *size)),
@@ -64,17 +69,8 @@ pub fn PreviewModal() -> Element {
         match (&key, slot.as_ref()) {
             (Some((p, s)), Some((lp, ls, url))) if lp == p && ls == s => Some(url.clone()),
             _ => {
-                let url = key.as_ref().and_then(|(path, _)| {
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or_default()
-                        .to_ascii_lowercase();
-                    let mime = if ext == "png" {
-                        "image/png"
-                    } else {
-                        "video/webm"
-                    };
+                let url = key.as_ref().and_then(|(path, size)| {
+                    let mime = output_mime(path);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         std::fs::read(path)
@@ -83,8 +79,14 @@ pub fn PreviewModal() -> Element {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        // web：输出下一阶段从内存 output_bytes 生成 objectURL
-                        None::<String>
+                        entry
+                            .transcoder
+                            .lock()
+                            .ok()
+                            .and_then(|t| t.output_bytes.clone())
+                            // 镜像大小与内存不一致（竞态）→ None，走 Loading 兜底
+                            .filter(|b| b.len() as u64 == *size)
+                            .map(|bytes| crate::transcoder::web::data_url(mime, &bytes))
                     }
                 });
                 // 键为 None 时也清空缓存，避免复用上一个任务的 URL
@@ -97,7 +99,29 @@ pub fn PreviewModal() -> Element {
     #[cfg(not(target_arch = "wasm32"))]
     let input_url = preview::media_url(Path::new(&entry.input_path));
     #[cfg(target_arch = "wasm32")]
-    let input_url = String::new(); // web：preview:// 协议不可用，下一阶段换 fetch 流
+    let input_url: String = {
+        // web：输入字节 → Blob object URL（几 MB 转 data URL 太浪费）；
+        // (名字, 大小) 为键缓存，键变 revoke 旧 URL（Blob 构造时已拷贝字节）。
+        let key = (entry.input_path.clone(), entry.input_size);
+        let mut slot = input_cache.borrow_mut();
+        match slot.as_ref() {
+            Some((k, url)) if *k == key => url.clone(),
+            _ => {
+                let bytes = entry
+                    .transcoder
+                    .lock()
+                    .ok()
+                    .and_then(|t| t.media_file.bytes().map(|b| b.to_vec()))
+                    .unwrap_or_default();
+                let mime = input_mime(&key.0);
+                let url = object_url_for(mime, &bytes);
+                if let Some((_, old)) = slot.replace((key, url.clone())) {
+                    web_sys::Url::revoke_object_url(&old).ok();
+                }
+                url
+            }
+        }
+    };
     let input_video = input_is_video(&entry.input_path);
 
     let input_kb = kb(entry.input_size);
@@ -170,6 +194,50 @@ pub fn PreviewModal() -> Element {
 
 fn kb(bytes: u64) -> String {
     format!("{:.2} KB", bytes as f64 / 1024.0)
+}
+
+/// 输出文件扩展名（小写）。
+fn path_ext_str(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn output_mime(path: &Path) -> &'static str {
+    if path_ext_str(path) == "png" {
+        "image/png"
+    } else {
+        "video/webm"
+    }
+}
+
+/// 输入侧 MIME（按扩展名；与 src/preview.rs 的映射一致，wasm 无该模块）。
+fn input_mime(name: &str) -> &'static str {
+    match path_ext_str(Path::new(name)).as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" | "apng" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 字节 → Blob object URL（wasm 输入预览；Blob 构造即拷贝字节）。
+#[cfg(target_arch = "wasm32")]
+fn object_url_for(mime: &str, bytes: &[u8]) -> String {
+    let array = js_sys::Uint8Array::from(bytes);
+    let parts = js_sys::Array::of1(&array.into());
+    let opts = web_sys::BlobPropertyBag::new();
+    opts.set_type(mime);
+    let Ok(blob) = web_sys::Blob::new_with_buffer_source_sequence_and_options(&parts, &opts) else {
+        return String::new();
+    };
+    web_sys::Url::create_object_url_with_blob(&blob)
+        .map(String::from)
+        .unwrap_or_default()
 }
 
 /// 对比行文案：未转码 / 达标 / 超限。

@@ -15,6 +15,24 @@ const FACTOR_BANDS: [&str; 6] = ["<1s", "<2s", "<3s", "<5s", "<8s", "\u{2265}8s"
 #[component]
 pub fn SettingsPanel() -> Element {
     let mut ctx = use_context::<UiState>();
+    // wasm 引擎 caps：None=未知（探测中），Some(b)=WebCodecs VP9 是否可用。
+    // 面板首次打开时异步探测（只注入轻量 glue，不加载 ffmpeg core）；结果缓存。
+    // 仅 wasm 引用（engine_select 桌面/wasm 两支真 cfg 分离），故 wasm-only 声明。
+    #[cfg(target_arch = "wasm32")]
+    let mut webcodecs_ok = use_signal(|| None::<bool>);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let open = ctx.show_settings;
+        use_effect(move || {
+            if !open.cloned() || webcodecs_ok.peek().is_some() {
+                return;
+            }
+            spawn(async move {
+                let ok = crate::transcoder::web::webcodecs_supported().await;
+                webcodecs_ok.set(Some(ok));
+            });
+        });
+    }
     if !ctx.show_settings.cloned() {
         return rsx! {};
     }
@@ -36,37 +54,61 @@ pub fn SettingsPanel() -> Element {
         };
         (available, suffix)
     };
+    // 引擎下拉：桌面三项（sidecar 可用性置灰）；网页端 Auto + 两个真实引擎项，
+    // 按浏览器 caps 置灰（矩阵即策略：GIF/APNG→ffmpeg.wasm，MP4/图片→WebCodecs）。
     #[cfg(target_arch = "wasm32")]
-    let (sidecar_available, unavailable_suffix) = (false, " — web 平台不可用");
-    // 引擎下拉：桌面三项（sidecar 可用性置灰）；W1 网页端单项 Auto（矩阵即策略）
-    let engine_select = if cfg!(target_arch = "wasm32") {
+    let engine_select = {
+        let wc = *webcodecs_ok.read();
+        let wc_state = match wc {
+            Some(true) => "",
+            Some(false) => " — 浏览器不支持 VP9 编码",
+            None => "（检测中…）",
+        };
         rsx! {
             select {
                 class: "input",
                 value: "auto",
-                option { value: "auto", "Auto (GIF/APNG → ffmpeg.wasm)" }
-            }
-        }
-    } else {
-        rsx! {
-            select {
-                class: "input",
-                value: "{ctx.settings.read().engine}",
-                onchange: move |evt: Event<FormData>| {
-                    let engine = evt.data.value();
-                    ctx.update_settings(move |s| s.engine = engine);
+                onchange: move |_: Event<FormData>| {
+                    // 选项仅作能力展示；改选弹提示后弹回 Auto（value 恒定，
+                    // 重渲染即复位）——矩阵即策略，不假装手选生效
+                    ctx.push_toast(
+                        crate::components::toast::ToastKind::Info,
+                        "Web 端引擎按媒体类型自动选择",
+                    );
                 },
+                option { value: "auto", "Auto（按类型选引擎）" }
                 option {
-                    value: "sidecar",
-                    disabled: !sidecar_available,
-                    "Sidecar (ffmpeg.exe){unavailable_suffix}"
+                    value: "ffmpeg-wasm",
+                    disabled: true,
+                    "ffmpeg.wasm — GIF/APNG（alpha 双轨）"
                 }
-                option { value: "inprocess", "In-process (libav)" }
                 option {
                     value: "webcodecs",
-                    disabled: true,
-                    "WebCodecs (web only)"
+                    disabled: wc != Some(true),
+                    "WebCodecs — MP4/图片{wc_state}"
                 }
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let engine_select = rsx! {
+        select {
+            class: "input",
+            value: "{ctx.settings.read().engine}",
+            onchange: move |evt: Event<FormData>| {
+                let engine = evt.data.value();
+                ctx.update_settings(move |s| s.engine = engine);
+            },
+            option {
+                value: "sidecar",
+                disabled: !sidecar_available,
+                "Sidecar (ffmpeg.exe){unavailable_suffix}"
+            }
+            option { value: "inprocess", "In-process (libav)" }
+            option {
+                value: "webcodecs",
+                disabled: true,
+                "WebCodecs (web only)"
             }
         }
     };

@@ -1,7 +1,7 @@
 // StickerProcess web engine glue (Route A: ffmpeg.wasm ST core 0.12.10).
 // Loaded by src/transcoder/web.rs via injected <script>; all functions on window.
-// Contract: stickerFfmpegReady / stickerFfmpegTranscode / stickerFfmpegProbe /
-//           stickerFfmpegCancel / stickerDownload
+// Contract: stickerFfmpegReady / stickerFfmpegTranscode / stickerFfmpegCancel /
+//           stickerDownload（探测统一在 webcodecs-engine.js 的 stickerNativeProbe）
 (async function () {
   // 自举：确保 UMD wrapper（定义 FFmpegWASM 全局）已加载——桥接只注入本文件，
   // wrapper 必须由这里兜底加载（classic worker chunk 814.ffmpeg.js 需与其同目录）。
@@ -70,26 +70,6 @@
 
   window.stickerFfmpegCancel = () => {
     if (ffmpeg) { ffmpeg.terminate(); ffmpeg = null; }
-  };
-
-  // W1 探测：GIF/APNG 用 ImageDecoder 求总时长（Σ frame.duration/1e6）；其余返回 0。
-  // APNG 按 image/png 交给 ImageDecoder；frameCount 上限 500 防御异常文件。
-  window.stickerFfmpegProbe = async (name, data) => {
-    if (!/\.(gif|apng|png)$/i.test(name) || typeof ImageDecoder === "undefined") return 0;
-    const dec = new ImageDecoder({
-      data,
-      type: name.toLowerCase().endsWith(".gif") ? "image/gif" : "image/png",
-    });
-    await dec.tracks.ready;
-    await dec.completed;
-    let total = 0;
-    const track = dec.tracks.selectedTrack;
-    for (let i = 0; i < Math.min(track.frameCount, 500); i++) {
-      const { image } = await dec.decode({ frameIndex: i });
-      total += (image.duration || 0) / 1e6;
-      image.close();
-    }
-    return total;
   };
 
   window.stickerDownload = (data, filename) => {

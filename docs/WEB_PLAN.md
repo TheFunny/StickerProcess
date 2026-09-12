@@ -56,38 +56,44 @@
 
 **目标**: Chromium 系 MP4 → webm 走 B；契约与 W1 相同。
 
-- [ ] **W2.1 契约固定（两引擎共用，先写死再实现）**
+- [x] **W2.1 契约固定**（实际落地面：`stickerWebcodecsProbeSupport/Transcode/Cancel`
+  + `stickerNativeProbe`；`assets/webcodecs-engine.js`）
   ```js
   // web/engine.js（wasm-bindgen 桥接面）
   probeSupport() -> { webcodecs: bool, alphaKeep: bool, tenBit: bool }
   transcode(bytes, {name, duration, isGif, bitrate, fps, onProgress}) -> Promise<Uint8Array>
   ```
-- [ ] **W2.2 JS 模块 `web/webcodecs-engine.js`**
+- [x] **W2.2 JS 模块 `assets/webcodecs-engine.js`**（唯一新依赖 webm-muxer@5 入
+  `assets/`；MP4/图片路径全带看门狗超时：探测 10s、播放 30s+20s/秒——无 H.264
+  解码器的浏览器不报错而是永久挂起，缺它任务卡死）
   - 移植 `wasm-demo/webcodecs-demo/index.html` 管线:
     `ImageDecoder`(GIF/APNG) / `<video>`+rVFC(MP4) → OffscreenCanvas 512 fit →
     `VideoEncoder(vp09.00.10.08)` → `webm-muxer@5`（30KB，唯一依赖，需传 width/height）
   - MP4 时长/帧数: HTMLMediaElement metadata；GIF: `frames×Σdelay`
   - **v1 仅接 MP4**（alpha 不支持，GIF 归 A）`ponytail: B 引擎 v1 仅 MP4；双流 alpha 封装是后续项`
-- [ ] **W2.3 Rust 桥 `transcoder/web/webcodecs.rs`**: 同 W1.3 模式（wasm-bindgen + mpsc 进度）
-- [ ] **W2.4 图片 → png**（顺带）: Canvas 重绘 512 fit → `ImageEncoder` → oxipng wasm
-  （`oxipng` crate 有 wasm 构建；`store_output` 收优化后字节）
+- [x] **W2.3 Rust 桥**（并入 `transcoder/web.rs`：`exec_webcodecs` +
+  `prepare_web_job` 的 engine/kind 分发，两段式不跨 await 持锁）
+- [x] **W2.4 图片 → png**（Canvas 重绘 512 fit → `convertToBlob(png)`；
+  `ponytail:` oxipng 在 wasm 需 clang 工具链，浏览器 PNG 直出足够 <512KB，超限再接）
 - [ ] **W2.5 验收**: `dx serve` 拖 `input/1.mp4` → Run → Done ≤256KB
   （基线: demo 7.07s/102.5KB）；Firefox 打开 → MP4 任务提示"浏览器不支持"
 
 ## W3. 网页端 UI/IO 收尾（两引擎共用）
 
-- [ ] **W3.1 文件输入**: `add_files` wasm 分支接前端 `File` 字节 → `MediaFile::from_bytes`
+- [x] **W3.1 文件输入**（W1/W2 期间已完成：拖拽 + `<input type=file>` 双通道 →
+  `add_file_bytes`）
   （替换 `input_size: 0` 占位；拖拽 + `<input type=file>` 双通道）
-- [ ] **W3.2 探测**: wasm 分支 `spawn_probe` 改走 JS 元数据（duration/type 由前端给，
+- [x] **W3.2 探测**（W2 已完成：`stickerNativeProbe` 统一 GIF/PNG(APNG 纠正)/MP4 元数据）
   `probe()` Bytes 已直接 Ok）；显示逻辑复用现有 `Probing → Pending` 流
-- [ ] **W3.3 输出预览**: `components/preview.rs` wasm 分支从 `output_bytes` 生成
-  objectURL（替换 `None` 占位）；`input` 预览用 objectURL（替换空串占位）
-- [ ] **W3.4 输出获取**: 任务行输出大小点击 → 下载（`<a download>`，替换 explorer 占位）；
-  输出目录概念在网页端隐藏（`toolbar.rs` Select 按钮已 cfg）
-- [ ] **W3.5 设置面板**: 引擎下拉 wasm 侧显示实际可用引擎（sidecar/webcodecs 桌面项置灰逻辑已有，
-  wasm 反向：sidecar 置灰、inprocess 置灰、webcodecs/ffmpeg-wasm 按 caps）
-- [ ] **W3.6 验收**: 完整用户流——拖入混合队列（gif+mp4+png）→ Run → 逐个完成 →
-  预览/下载；设置持久化跨刷新（localStorage）
+- [x] **W3.3 输出预览**（输入=Blob objectURL（按 名字+大小 缓存/ revoke）、
+  输出=锁内克隆 `output_bytes` → data URL（复用 (路径,大小) 缓存键）；真机布局
+  无头实测：blob:http… + data:video/webm;base64… 双 pane 加载成功）
+- [x] **W3.4 输出获取**（W2 期间已完成：`stickerDownload` 点击输出大小下载）
+- [x] **W3.5 设置面板**（wasm 下拉列 ffmpeg-wasm / WebCodecs 两项，WebCodecs 按
+  caps（`isConfigSupported` vp9）置灰，探测在面板打开时做一次并缓存；矩阵即策略，
+  手选弹提示回弹 Auto。桌面反向维持原样）
+- [x] **W3.6 验收**（无头完成：混合队列逐个 Done/预期 Alert、APNG 纠正→webm、
+  预览双 pane 加载、主题跨刷新读回；MP4 真机项见 W2.5）
 
 ## W4. 自建 wasm core（解锁 A 的 MP4 + 10-bit）
 

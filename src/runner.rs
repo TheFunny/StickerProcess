@@ -68,9 +68,10 @@ pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
     }
 }
 
-/// 网页端引擎选择（W1：按媒体类型自动，设置值忽略）。
-/// Gif/Apng → "ffmpeg-wasm"；Mp4/图片 → "webcodecs"
-///（run_with_progress 返回 W2 占位错误，任务行 Alert 文案明确）。
+/// 网页端引擎选择（按媒体类型自动，设置值忽略）。
+/// Gif/Apng → "ffmpeg-wasm"（alpha）；Mp4/图片 → "webcodecs"（W2 落地）。
+/// 实际分发在 prepare_web_job 内嵌的 job.engine（与此矩阵一致）。
+#[cfg(test)] // 矩阵的记录/回归面；生产分发在 web.rs::prepare_web_job（与 kind 同源决策）
 fn resolve_web_engine(media_type: Option<&crate::media::MediaType>) -> &'static str {
     use crate::media::{MediaType, VideoType};
     match media_type {
@@ -263,14 +264,31 @@ async fn run_single_task(
                 drop(t);
                 match job_result {
                     Ok(job) => {
-                        let awaited = crate::transcoder::web::exec_ffmpeg_wasm(
-                            job,
-                            std::sync::Arc::clone(&cancel_flag),
+                        let engine = job.engine;
+                        let on_progress = {
+                            let tx = tx.clone();
                             move |pct| {
                                 let _ = tx.send(ProgressUpdate { index, pct });
-                            },
-                        )
-                        .await;
+                            }
+                        };
+                        let awaited = match engine {
+                            "webcodecs" => {
+                                crate::transcoder::web::exec_webcodecs(
+                                    job,
+                                    std::sync::Arc::clone(&cancel_flag),
+                                    on_progress,
+                                )
+                                .await
+                            }
+                            _ => {
+                                crate::transcoder::web::exec_ffmpeg_wasm(
+                                    job,
+                                    std::sync::Arc::clone(&cancel_flag),
+                                    on_progress,
+                                )
+                                .await
+                            }
+                        };
                         match awaited {
                             Ok(out) => {
                                 let result = task_arc.lock().map(|mut t| t.finish_web_job(out));
