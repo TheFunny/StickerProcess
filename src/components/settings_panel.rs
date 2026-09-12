@@ -54,38 +54,29 @@ pub fn SettingsPanel() -> Element {
         };
         (available, suffix)
     };
-    // 引擎下拉：桌面三项（sidecar 可用性置灰）；网页端 Auto + 两个真实引擎项，
-    // 按浏览器 caps 置灰（矩阵即策略：GIF/APNG→ffmpeg.wasm，MP4/图片→WebCodecs）。
+    // 引擎下拉：桌面三项（sidecar 可用性置灰）；网页端 Auto 唯一可选，
+    // 两个矩阵项恒灰、用后缀标状态（亮/灰≠可选；选中也不生效，故无 onchange）。
     #[cfg(target_arch = "wasm32")]
     let engine_select = {
-        let wc = *webcodecs_ok.read();
-        let wc_state = match wc {
-            Some(true) => "",
-            Some(false) => " — 浏览器不支持 VP9 编码",
-            None => "（检测中…）",
+        let wc_state = match *webcodecs_ok.read() {
+            Some(true) => "✓ 可用",
+            Some(false) => "✗ 浏览器不支持 VP9 编码",
+            None => "检测中…",
         };
         rsx! {
             select {
                 class: "input",
                 value: "auto",
-                onchange: move |_: Event<FormData>| {
-                    // 选项仅作能力展示；改选弹提示后弹回 Auto（value 恒定，
-                    // 重渲染即复位）——矩阵即策略，不假装手选生效
-                    ctx.push_toast(
-                        crate::components::toast::ToastKind::Info,
-                        "Web 端引擎按媒体类型自动选择",
-                    );
-                },
                 option { value: "auto", "Auto（按类型选引擎）" }
                 option {
                     value: "ffmpeg-wasm",
                     disabled: true,
-                    "ffmpeg.wasm — GIF/APNG（alpha 双轨）"
+                    "ffmpeg.wasm — GIF/APNG（alpha 双轨） ✓ 可用"
                 }
                 option {
                     value: "webcodecs",
-                    disabled: wc != Some(true),
-                    "WebCodecs — MP4/图片{wc_state}"
+                    disabled: true,
+                    "WebCodecs — MP4/图片 {wc_state}"
                 }
             }
         }
