@@ -10,6 +10,7 @@ mod components;
 mod config;
 mod media;
 mod runner;
+mod timers;
 mod transcoder;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,9 +50,24 @@ fn main() {
 // 网页入口：无 preview 协议 / sidecar；转码引擎下一阶段接 WebCodecs 桥
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use wasm_bindgen::JsCast;
     pretty_env_logger::formatted_builder()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .init();
+    // 启动即注册原生守卫（同步 preventDefault）：
+    // - dragover：浏览器只在 dragover 被取消时才派发 drop，否则拖文件直接导航打开；
+    // - drop：兜底阻止"打开文件"默认动作。
+    // dioxus 的 prevent_default 经事件管线异步生效，拦不住同步默认动作。
+    if let Some(window) = web_sys::window() {
+        for event in ["dragover", "drop"] {
+            let guard = wasm_bindgen::closure::Closure::wrap(Box::new(|e: web_sys::DragEvent| {
+                e.prevent_default()
+            })
+                as Box<dyn FnMut(web_sys::DragEvent)>);
+            let _ = window.add_event_listener_with_callback(event, guard.as_ref().unchecked_ref());
+            guard.forget(); // 与应用同生命周期
+        }
+    }
     dioxus::launch(app::App);
 }

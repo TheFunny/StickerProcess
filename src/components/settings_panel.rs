@@ -38,6 +38,38 @@ pub fn SettingsPanel() -> Element {
     };
     #[cfg(target_arch = "wasm32")]
     let (sidecar_available, unavailable_suffix) = (false, " — web 平台不可用");
+    // 引擎下拉：桌面三项（sidecar 可用性置灰）；W1 网页端单项 Auto（矩阵即策略）
+    let engine_select = if cfg!(target_arch = "wasm32") {
+        rsx! {
+            select {
+                class: "input",
+                value: "auto",
+                option { value: "auto", "Auto (GIF/APNG → ffmpeg.wasm)" }
+            }
+        }
+    } else {
+        rsx! {
+            select {
+                class: "input",
+                value: "{ctx.settings.read().engine}",
+                onchange: move |evt: Event<FormData>| {
+                    let engine = evt.data.value();
+                    ctx.update_settings(move |s| s.engine = engine);
+                },
+                option {
+                    value: "sidecar",
+                    disabled: !sidecar_available,
+                    "Sidecar (ffmpeg.exe){unavailable_suffix}"
+                }
+                option { value: "inprocess", "In-process (libav)" }
+                option {
+                    value: "webcodecs",
+                    disabled: true,
+                    "WebCodecs (web only)"
+                }
+            }
+        }
+    };
 
     rsx! {
         div {
@@ -157,28 +189,7 @@ pub fn SettingsPanel() -> Element {
                     }
                 }
 
-                div { class: "settings-row",
-                    span { class: "label", "Transcode engine" }
-                    select {
-                        class: "input",
-                        value: "{ctx.settings.read().engine}",
-                        onchange: move |evt: Event<FormData>| {
-                            let engine = evt.data.value();
-                            ctx.update_settings(move |s| s.engine = engine);
-                        },
-                        option {
-                            value: "sidecar",
-                            disabled: !sidecar_available,
-                            "Sidecar (ffmpeg.exe){unavailable_suffix}"
-                        }
-                        option { value: "inprocess", "In-process (libav)" }
-                        option {
-                            value: "webcodecs",
-                            disabled: true,
-                            "WebCodecs (web only)"
-                        }
-                    }
-                }
+                {engine_select}
                 div { class: "settings-row",
                     span { class: "label", "Theme" }
                     select {

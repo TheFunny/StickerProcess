@@ -8,3 +8,4 @@
 /docs/notes.md
 /.cargo/config.toml
 /wasm-demo
+/assets/ffmpeg-core-st.wasm

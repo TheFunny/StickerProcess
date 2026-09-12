@@ -4,6 +4,7 @@
 
 use super::{Factor, TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
+#[cfg(feature = "desktop")]
 use ffmpeg_sidecar::command::FfmpegCommand;
 
 /// 视频码率基准（bps）：256 KB 贴纸换算为比特 / 时长。
@@ -48,7 +49,6 @@ pub fn parse_progress_time(time: &str) -> f64 {
     }
     seconds
 }
-
 impl Transcoder {
     /// 实际参与码率计算的时长（秒）：APNG 固定 1.0（无可靠探测值），
     /// 其余视频用探测时长；<=0 视为无效。
@@ -81,7 +81,10 @@ impl Transcoder {
         }
         factor
     }
+}
 
+#[cfg(feature = "desktop")]
+impl Transcoder {
     pub(super) fn gen_command(&mut self) -> Result<FfmpegCommand, TranscodeError> {
         let mut command = FfmpegCommand::new();
         command
@@ -178,5 +181,18 @@ mod tests {
         assert!((parse_progress_time("00:00:01.00") - 1.0).abs() < 1e-9);
         assert!((parse_progress_time("00:03:29.04") - 209.04).abs() < 1e-9);
         assert_eq!(parse_progress_time("garbage"), 0.0);
+    }
+
+    #[test]
+    fn web_gif_bitrate_math() {
+        use crate::media::MediaFile;
+        let mut t = Transcoder::new(MediaFile::from_bytes(vec![1, 2, 3], "a.gif".into()));
+        t.media_file.set_duration(2.0);
+        let duration = t.effective_duration(&VideoType::Gif).unwrap();
+        let factor = t.resolve_factor(duration, &VideoType::Gif);
+        let bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
+        // duration=2.0 落 <3s 档（因子 1.0）→ 256KB*8/2s * 1.0 * 0.75(gif) = 786432
+        // 量化到 10 的倍数 → 786430
+        assert_eq!(bitrate, 786_430);
     }
 }

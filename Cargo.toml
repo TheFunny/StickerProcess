@@ -15,7 +15,10 @@ serde_json = "1"
 base64 = "0.23"
 thiserror = "2"
 toml = "1"
-web-sys = { version = "0.3", features = ["Window", "Storage"], optional = true }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "HtmlScriptElement", "Node", "FileReader", "DragEvent", "File", "FileList"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 # 桌面专属：ffmpeg 双引擎 / 文件对话框 / 资源管理器定位 / png 优化
 ffmpeg-the-third = { version = "6", optional = true }
@@ -39,6 +42,9 @@ desktop = [
 ]
 web = [
     "dep:web-sys",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
     "dioxus/web",
     "dioxus/document",
     "dioxus/devtools",

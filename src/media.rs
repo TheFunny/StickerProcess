@@ -87,6 +87,29 @@ impl MediaFile {
         self.duration
     }
 
+    /// Bytes 源的字节引用；Path 源 None。
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match &self.source {
+            Source::Bytes { data, .. } => Some(data),
+            Source::Path(_) => None,
+        }
+    }
+
+    /// Bytes 源输入长度（桌面 metadata 等价物）；Path 源 None。
+    pub fn input_len(&self) -> Option<u64> {
+        match &self.source {
+            Source::Bytes { data, .. } => Some(data.len() as u64),
+            Source::Path(p) => std::fs::metadata(p).ok().map(|m| m.len()),
+        }
+    }
+
+    /// 回填探测时长（网页端由 JS 元数据填充；桌面 probe_desktop 自动填）。
+    pub fn set_duration(&mut self, duration: f64) {
+        if duration > 0.0 {
+            self.duration = Some(duration);
+        }
+    }
+
     pub fn output(&self) -> Option<&PathBuf> {
         self.output.as_ref()
     }

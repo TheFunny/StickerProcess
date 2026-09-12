@@ -23,7 +23,8 @@
 
 **目标**: 网页端 GIF/APNG → 带 alpha 的 webm，端到端可用。
 
-- [ ] **W1.1 JS 模块 `web/ffmpeg-engine.js`**
+- [x] **W1.1 JS 模块 `assets/ffmpeg-engine.js`**（实际落地：自举加载 `ffmpeg.js`
+  UMD wrapper；导出 `stickerFfmpegReady/Transcode/Probe/Cancel` + `stickerDownload`）
   - ST core（`@ffmpeg/core 0.12.10`，32MB）加载器 + Promise 化封装；
     UMD core 必须 classic worker：wrapper UMD `ffmpeg.js` + 相邻 `814.ffmpeg.js` shim
     （见 FINDINGS.md 坑 1，worker 文件缺失时 load() 静默挂起）
@@ -34,20 +35,22 @@
     `-c:v libvpx-vp9 -pix_fmt yuva420p(GIF/APNG) -crf 26 -b:v <bitrate> -bufsize 1.5x -f webm`
   - 码率公式/系数表/GIF×0.75 patch 复用 Rust 侧计算结果（JS 只收 bitrate，不重复实现）
   - **v1 范围**: 仅 GIF/APNG（MP4 在预构建 core 上 OOB 崩溃，见 FINDINGS.md；MP4 由 B 承接）
-- [ ] **W1.2 core 资产进仓**
+- [x] **W1.2 core 资产进仓**（`assets/` 四件套；32MB `.wasm` gitignore，
+  其余入库；dx 把 asset 目录复制到 web 根，glue 从根路径加载）
   - `ffmpeg-core-st.{js,wasm}` + `ffmpeg.js` + `814.ffmpeg.js` 入 `web/vendor/`（或 dioxus asset 目录）
   - gitignore `wasm-demo/` 保持（spike 不入库）；core ~32MB 入库前与用户确认（或改 CDN+版本锁定）
-- [ ] **W1.3 Rust 桥 `transcoder/web/ffmpeg_wasm.rs`**（`#[cfg(target_arch = "wasm32")]`）
+- [x] **W1.3 Rust 桥 `transcoder/web.rs`**（`#[cfg(target_arch = "wasm32")]`）
   - wasm-bindgen 调 JS：`transcode()` 接 `MediaFile::from_bytes` 的字节；
     进度经 `Closure` 回调 → mpsc → 现有 10Hz UI 节流（`runner.rs` 接收端零改动）
   - 实现 `run_webcodecs` 同级的 `run_ffmpeg_wasm(on_progress)`，`run_with_progress` 分发接入
   - 完成字节走 `store_output()`（`output_bytes` 已就绪）
-- [ ] **W1.4 引擎选择接入 `resolve_engine`**
+- [x] **W1.4 引擎选择**（`resolve_web_engine(media_type)`：GIF/APNG → ffmpeg-wasm，
+  MP4/图片 → webcodecs 占位错误；wasm 两段式 prepare/finish 不跨 await 持锁）
   - 签名扩展: `resolve_engine(setting, media_type, caps)`；caps 来自 JS `probeSupport()`
   - 矩阵: GIF/APNG → ffmpeg-wasm；MP4 → webcodecs(支持时)/不支持则报错提示；
     图片 → webcodecs（见 W2.4）
-- [ ] **W1.5 验收**: `dx serve` 网页端拖 `input/2.gif` → Run → 预览播放、透明背景正确、
-  输出 ≤256KB（基线: demo 5.7s/35.4KB）；超限重试循环走通（runner 平台无关）
+- [x] **W1.5 验收**（真机通过：拖拽/覆盖层高亮/Run/进度/Done ≤256KB/透明输出/下载；
+  无头复验 glue 转码 36.1KB 双轨 VP9 alpha）
 
 ## W2. WebCodecs 引擎（B）— MP4 主路径
 

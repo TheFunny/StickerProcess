@@ -6,13 +6,13 @@
 //!
 //! 对外暴露 `Transcoder` / `Factor` / `FileSize` / `Status` / `shrunk_factor`。
 
-#[cfg(feature = "desktop")]
 mod command;
 mod error;
 #[cfg(feature = "desktop")]
 mod inprocess;
-#[cfg(feature = "desktop")]
 mod steps;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 
 pub use error::TranscodeError;
 
@@ -73,12 +73,13 @@ pub enum Status {
 }
 
 /// 转码引擎：sidecar（ffmpeg 子进程）/ inprocess（libav 进程内）为桌面双轨；
-/// webcodecs 为网页端浏览器原生编解码（仅 wasm target 可用）。
+/// webcodecs（浏览器原生编解码）与 ffmpeg-wasm（Route A）为网页端。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Engine {
     Sidecar,
     Inprocess,
     Webcodecs,
+    FfmpegWasm,
 }
 
 impl Engine {
@@ -87,6 +88,7 @@ impl Engine {
             "sidecar" => Some(Self::Sidecar),
             "inprocess" => Some(Self::Inprocess),
             "webcodecs" => Some(Self::Webcodecs),
+            "ffmpeg-wasm" => Some(Self::FfmpegWasm),
             _ => None,
         }
     }
@@ -96,6 +98,7 @@ impl Engine {
             Self::Sidecar => "sidecar",
             Self::Inprocess => "inprocess",
             Self::Webcodecs => "webcodecs",
+            Self::FfmpegWasm => "ffmpeg-wasm",
         }
     }
 }
@@ -165,11 +168,25 @@ impl Transcoder {
             MediaType::Video(_) => "webm",
             MediaType::Image(_) => "png",
         };
+        // chrono::Local 依赖 std::time（wasm 未实现）——网页端用 JS Date 的 ISO 时间戳
+        #[cfg(not(target_arch = "wasm32"))]
         let time = chrono::Local::now();
-        let output =
-            output_dir
-                .as_ref()
-                .join(format!("{}.{}", time.format("%Y-%m-%d-%H%M%S%.3f"), ext));
+        let output = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                output_dir
+                    .as_ref()
+                    .join(format!("{}.{}", time.format("%Y-%m-%d-%H%M%S%.3f"), ext))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // ISO: "2026-09-11T12:34:56.789Z" → "2026-09-11-123456.789"（唯一性即可）
+                let d = js_sys::Date::new(&js_sys::Date::now().into());
+                let s = d.to_iso_string().as_string().unwrap_or_default();
+                let s = s.replace(['T', ':', 'Z'], "-");
+                output_dir.as_ref().join(format!("{s}.{ext}"))
+            }
+        };
         self.set_output(&output);
         Ok(())
     }
@@ -181,13 +198,12 @@ impl Transcoder {
         engine: &str,
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
-        if engine == "webcodecs" {
-            // 网页端浏览器原生编解码（WebCodecs + webm-muxer）。桥接实现
-            // （wasm-bindgen 调 JS transcode()）在下一阶段落地；本阶段
-            // 所有平台统一返回 UnsupportedEngine 占位。
+        if engine == "webcodecs" || engine == "ffmpeg-wasm" {
+            // W1 只接通 ffmpeg-wasm（GIF/APNG）；wasm 分发见 runner.rs 平台分支，
+            // 走到这里的 webcodecs/ffmpeg-wasm 均为 W2+ 占位。
             let _ = &mut on_progress;
             return Err(TranscodeError::UnsupportedEngine(
-                "webcodecs bridge not yet implemented",
+                "mp4 & image web engine lands in W2",
             ));
         }
         #[cfg(feature = "desktop")]

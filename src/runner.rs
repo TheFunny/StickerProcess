@@ -68,6 +68,17 @@ pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
     }
 }
 
+/// 网页端引擎选择（W1：按媒体类型自动，设置值忽略）。
+/// Gif/Apng → "ffmpeg-wasm"；Mp4/图片 → "webcodecs"
+///（run_with_progress 返回 W2 占位错误，任务行 Alert 文案明确）。
+fn resolve_web_engine(media_type: Option<&crate::media::MediaType>) -> &'static str {
+    use crate::media::{MediaType, VideoType};
+    match media_type {
+        Some(MediaType::Video(VideoType::Gif | VideoType::Apng)) => "ffmpeg-wasm",
+        _ => "webcodecs",
+    }
+}
+
 /// sidecar 可用性：桌面查探测缓存；wasm 恒 false（无子进程）。
 #[cfg(feature = "desktop")]
 fn sidecar_vp9_available() -> bool {
@@ -171,14 +182,16 @@ async fn run_single_task(
     let Some(cancel_flag) = task_arc.lock().ok().map(|t| Arc::clone(&t.cancel_flag)) else {
         return TaskOutcome::Advanced;
     };
+    // watcher 闭包 move 一份；转码分支再 clone 一份
+    let cancel_flag_watcher = Arc::clone(&cancel_flag);
     let cancel_signal = ctx.cancel; // Signal<bool> is Copy
     let mut watcher = Some(dioxus::prelude::spawn(async move {
         loop {
             if *cancel_signal.read() {
-                cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                cancel_flag_watcher.store(true, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(100)).await;
         }
     }));
     let max_retry = settings.max_retry;
@@ -207,119 +220,162 @@ async fn run_single_task(
         });
 
         // 后台线程执行转码；不跨 await 持有锁
+        // （std::time::Instant 在 wasm 未实现——桌面才有计时）
+        #[cfg(not(target_arch = "wasm32"))]
         let started = Instant::now();
+        #[cfg(target_arch = "wasm32")]
+        let started = ();
         let result = {
-            let task_arc = Arc::clone(&task_arc);
-            let tx = progress_tx.clone();
-            // 引擎解析：设置值 + 可用性兜底（详见 resolve_engine）。
-            // 桌面端 web_supported 恒 false；wasm 化时改为传 JS 探测结果。
-            let engine = resolve_engine(&settings.engine, false);
-            let awaited = run_blocking(move || {
-                let mut t = task_arc
-                    .lock()
-                    .map_err(|e| TranscodeError::Join(e.to_string()))?;
-                t.run_with_progress(&engine, move |pct| {
-                    // 发送失败仅意味着接收端已关闭，忽略即可
-                    let _ = tx.send(ProgressUpdate { index, pct });
-                })
-            })
-            .await;
-            // 扁平化 run_blocking 的 JoinError 包装：内层就是转码结果
-            match awaited {
-                Ok(inner) => inner,
-                Err(e) => Err(TranscodeError::Join(e)),
-            }
-        };
-
-        match result {
-            Ok(()) => {
-                let elapsed_ms = started.elapsed().as_millis() as u64;
-                ctx.touch_entry(index, |e| {
-                    e.progress = None;
-                });
-                // 与 iced NextProcess(Ok) 一致：查尺寸 → 调系数 → 决定重试/前进
-                let decision = ctx
-                    .with_task(index, |t| match t.check_size() {
-                        Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
-                            Some(excess) if excess > 1.0 => {
-                                if let Some(factor) = t.size_factor.as_mut() {
-                                    let old = factor.get();
-                                    let new = shrunk_factor(old, excess, retry_shrink);
-                                    factor.set(new);
-                                    log::warn!(
-                                        "{name}: output {:.2} KB over limit ({excess:.2}x), \
-                                         factor {old:.3} -> {new:.3}",
-                                        t.output_size
-                                            .as_ref()
-                                            .map_or(0.0, |s| s.size as f64 / 1024.0),
-                                    );
-                                }
-                                t.status = Status::SizeExcess;
-                                if retry < max_retry && t.size_factor.is_some() {
-                                    Decision::Retry
-                                } else {
-                                    Decision::Advance
-                                }
-                            }
-                            Some(_) => {
-                                t.status = Status::Done;
-                                Decision::Advance
-                            }
-                            None => {
-                                t.status = Status::Alert;
-                                Decision::Advance
-                            }
-                        },
-                        Err(e) => {
-                            log::error!("Error check size: {e}");
-                            t.status = Status::Alert;
-                            Decision::Advance
-                        }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let task_arc = Arc::clone(&task_arc);
+                let tx = progress_tx.clone();
+                // 引擎解析：设置值 + 可用性兜底（详见 resolve_engine）。
+                // 桌面端 web_supported 恒 false；wasm 化时改为传 JS 探测结果。
+                let engine = resolve_engine(&settings.engine, false);
+                let awaited = run_blocking(move || {
+                    let mut t = task_arc
+                        .lock()
+                        .map_err(|e| TranscodeError::Join(e.to_string()))?;
+                    t.run_with_progress(&engine, move |pct| {
+                        // 发送失败仅意味着接收端已关闭，忽略即可
+                        let _ = tx.send(ProgressUpdate { index, pct });
                     })
-                    .unwrap_or(Decision::Advance);
-
-                match decision {
-                    Decision::Retry => {
-                        retry += 1;
-                        log::info!("{name}: retrying ({retry}/{max_retry})");
-                        ctx.push_toast(
-                            ToastKind::Warn,
-                            format!("Output over size limit, retrying ({retry}/{max_retry})"),
-                        );
-                        continue 'attempt;
-                    }
-                    Decision::Advance => {
-                        let total = ctx.tasks.peek().len().max(1);
-                        ctx.overall_progress.set((index + 1) as f32 / total as f32);
-                        if let Some(done) = ctx
-                            .tasks
-                            .cloned()
-                            .get(index)
-                            .filter(|e| e.status == Status::Done)
-                        {
-                            let kb = done.output_size.map_or_else(
-                                || "?".into(),
-                                |s| format!("{:.2}KB", s as f64 / 1024.0),
-                            );
-                            log::info!("{name} -> {kb} in {:.1}s", elapsed_ms as f64 / 1000.0);
-                            ctx.push_toast(ToastKind::Success, format!("{name} -> {kb}"));
-                        }
-                        break 'attempt;
-                    }
+                })
+                .await;
+                // 扁平化 run_blocking 的 JoinError 包装：内层就是转码结果
+                match awaited {
+                    Ok(inner) => inner,
+                    Err(e) => Err(TranscodeError::Join(e)),
                 }
             }
-            Err(err) => {
-                if *ctx.cancel.peek() || matches!(err, TranscodeError::Cancelled) {
-                    // 取消：不标 Alert，错误详情也不写，状态由下方复位
-                    cancelled = true;
-                    log::info!("{name}: cancelled");
-                    ctx.push_toast(ToastKind::Info, format!("Task cancelled: {name}"));
-                } else {
-                    // 与 iced NextProcess(Err) 一致：标记 Alert 后跳到下一个任务
-                    log::error!("Failed to process {name}: {err}");
-                    ctx.touch_entry(index, |e| e.error = Some(err.to_string()));
-                    ctx.with_task(index, |t| t.status = Status::Alert);
-                    ctx.push_toast(ToastKind::Error, err.to_string());
+            #[cfg(target_arch = "wasm32")]
+            {
+                // wasm：两段式（锁内 prepare → await JS 引擎 → 锁内 finish），
+                // 锁均不跨 await。重试时 prepare_web_job 以收缩后的因子重算 bitrate。
+                let tx = progress_tx.clone();
+                let Ok(mut t) = task_arc.lock() else {
+                    return TaskOutcome::Advanced; // 锁中毒：跳过
+                };
+                t.cancel_flag
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                let job_result = t.prepare_web_job();
+                drop(t);
+                match job_result {
+                    Ok(job) => {
+                        let awaited = crate::transcoder::web::exec_ffmpeg_wasm(
+                            job,
+                            std::sync::Arc::clone(&cancel_flag),
+                            move |pct| {
+                                let _ = tx.send(ProgressUpdate { index, pct });
+                            },
+                        )
+                        .await;
+                        match awaited {
+                            Ok(out) => {
+                                let result = task_arc.lock().map(|mut t| t.finish_web_job(out));
+                                match result {
+                                    Ok(inner) => inner,
+                                    Err(e) => Err(TranscodeError::Join(e.to_string())),
+                                }
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        };
+        ctx.touch_entry(index, |e| {
+            e.progress = None;
+        });
+        let Ok(()) = result else {
+            let err = result.unwrap_err();
+            if *ctx.cancel.peek() || matches!(err, TranscodeError::Cancelled) {
+                // 取消：不标 Alert，错误详情也不写，状态由下方复位
+                cancelled = true;
+                log::info!("{name}: cancelled");
+                ctx.push_toast(ToastKind::Info, format!("Task cancelled: {name}"));
+            } else {
+                // 与 iced NextProcess(Err) 一致：标记 Alert 后跳到下一个任务
+                log::error!("Failed to process {name}: {err}");
+                ctx.touch_entry(index, |e| e.error = Some(err.to_string()));
+                ctx.with_task(index, |t| t.status = Status::Alert);
+                ctx.push_toast(ToastKind::Error, err.to_string());
+            }
+            break 'attempt;
+        };
+        // 与 iced NextProcess(Ok) 一致：查尺寸 → 调系数 → 决定重试/前进
+        let decision = ctx
+            .with_task(index, |t| match t.check_size() {
+                Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
+                    Some(excess) if excess > 1.0 => {
+                        if let Some(factor) = t.size_factor.as_mut() {
+                            let old = factor.get();
+                            let new = shrunk_factor(old, excess, retry_shrink);
+                            factor.set(new);
+                            log::warn!(
+                                "{name}: output {:.2} KB over limit ({excess:.2}x), \
+                                 factor {old:.3} -> {new:.3}",
+                                t.output_size
+                                    .as_ref()
+                                    .map_or(0.0, |s| s.size as f64 / 1024.0),
+                            );
+                        }
+                        t.status = Status::SizeExcess;
+                        if retry < max_retry && t.size_factor.is_some() {
+                            Decision::Retry
+                        } else {
+                            Decision::Advance
+                        }
+                    }
+                    Some(_) => {
+                        t.status = Status::Done;
+                        Decision::Advance
+                    }
+                    None => {
+                        t.status = Status::Alert;
+                        Decision::Advance
+                    }
+                },
+                Err(e) => {
+                    log::error!("Error check size: {e}");
+                    t.status = Status::Alert;
+                    Decision::Advance
+                }
+            })
+            .unwrap_or(Decision::Advance);
+
+        match decision {
+            Decision::Retry => {
+                retry += 1;
+                log::info!("{name}: retrying ({retry}/{max_retry})");
+                ctx.push_toast(
+                    ToastKind::Warn,
+                    format!("Output over size limit, retrying ({retry}/{max_retry})"),
+                );
+                continue 'attempt;
+            }
+            Decision::Advance => {
+                let total = ctx.tasks.peek().len().max(1);
+                ctx.overall_progress.set((index + 1) as f32 / total as f32);
+                if let Some(done) = ctx
+                    .tasks
+                    .cloned()
+                    .get(index)
+                    .filter(|e| e.status == Status::Done)
+                {
+                    let kb = done
+                        .output_size
+                        .map_or_else(|| "?".into(), |s| format!("{:.2}KB", s as f64 / 1024.0));
+                    #[cfg(not(target_arch = "wasm32"))]
+                    log::info!(
+                        "{name} -> {kb} in {:.1}s",
+                        started.elapsed().as_millis() as f64 / 1000.0
+                    );
+                    #[cfg(target_arch = "wasm32")]
+                    log::info!("{name} -> {kb}");
+                    ctx.push_toast(ToastKind::Success, format!("{name} -> {kb}"));
                 }
                 break 'attempt;
             }
@@ -346,7 +402,7 @@ async fn run_single_task(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_engine;
+    use super::{resolve_engine, resolve_web_engine};
 
     #[test]
     fn resolve_engine_passthrough_valid() {
@@ -366,5 +422,38 @@ mod tests {
     fn resolve_engine_invalid_falls_back() {
         assert_eq!(resolve_engine("gpu", false), "inprocess");
         assert_eq!(resolve_engine("", false), "inprocess");
+    }
+
+    #[test]
+    fn resolve_web_engine_matrix() {
+        use crate::media::{ImageType, MediaType, VideoType};
+        // W1 矩阵：GIF/APNG → ffmpeg-wasm；MP4/图片 → webcodecs（W2 占位）
+        assert_eq!(
+            resolve_web_engine(Some(&MediaType::Video(VideoType::Gif))),
+            "ffmpeg-wasm"
+        );
+        assert_eq!(
+            resolve_web_engine(Some(&MediaType::Video(VideoType::Apng))),
+            "ffmpeg-wasm"
+        );
+        assert_eq!(
+            resolve_web_engine(Some(&MediaType::Video(VideoType::Mp4))),
+            "webcodecs"
+        );
+        assert_eq!(
+            resolve_web_engine(Some(&MediaType::Image(ImageType::Png))),
+            "webcodecs"
+        );
+        // 未知类型（探测前）→ webcodecs 占位，Alert 文案明确
+        assert_eq!(resolve_web_engine(None), "webcodecs");
+    }
+
+    #[test]
+    fn engine_parse_ffmpeg_wasm_roundtrip() {
+        use crate::transcoder::Engine;
+
+        let engine = Engine::parse("ffmpeg-wasm").expect("ffmpeg-wasm must parse");
+        assert_eq!(engine.as_str(), "ffmpeg-wasm");
+        assert_eq!(Engine::parse(engine.as_str()), Some(Engine::FfmpegWasm));
     }
 }

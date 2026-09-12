@@ -33,7 +33,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
 | `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check), duration, output path; enums; unit tests |
-| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch, sidecar image stdout reader), `error.rs` (`TranscodeError`) |
+| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch via shared `patch_webm_bytes`, sidecar image stdout reader), `web.rs` (wasm32-only: ffmpeg.wasm bridge, two-phase `prepare_web_job`/`finish_web_job`, JS glue injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
@@ -50,6 +50,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
+| `assets/` | Static assets copied to the web build root by dx: `ffmpeg-engine.js` (glue contract `stickerFfmpeg*`), ffmpeg.wasm ST core bundle (`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored) |
 
 ## Architecture
 
@@ -175,12 +176,16 @@ run lazily initializes it.
 ```bash
 cargo run            # debug
 cargo build --release
-cargo test           # 26 unit tests + 3 #[ignore] libav smoke tests
+cargo test           # 40 unit tests + 3 #[ignore] libav smoke tests
 cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
+
+# web (wasm32): engine matrix runs in browser; core assets in assets/ (32MB wasm gitignored)
+cargo check --target wasm32-unknown-unknown --no-default-features --features web
+dx serve --platform web
 ```
 
-Test count: 26 unit tests across media/config/command/preview/app/steps/
-inprocess, plus 3 integration smoke tests (`inprocess_video_smoke`,
+Test count: 40 unit tests across media/config/command/preview/app/steps/
+inprocess/runner, plus 3 integration smoke tests (`inprocess_video_smoke`,
 `inprocess_gif_smoke`, `inprocess_image_smoke`) that require the static
 ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
 `SMOKE_INPUT` env var to transcode an arbitrary input.
@@ -225,10 +230,13 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `UiState::touch_entry` (UI-only fields); direct `tasks.with_mut` on mirror
   fields elsewhere will desynchronize the UI.
 - Engine-specific changes go in their own file (`command.rs` sidecar /
-  `inprocess.rs` libav); shared bitrate logic lives in `command.rs`
-  helpers so both engines stay behaviorally identical. The engine string
-  is `"sidecar" | "inprocess"` — dispatch is `mod.rs::run_with_progress`,
-  validated by `Settings::engine_valid()`.
+  `inprocess.rs` libav / `web.rs` wasm 桥); shared bitrate logic lives in
+  `command.rs` helpers so all engines stay behaviorally identical. The engine
+  string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"` — dispatch
+  is `mod.rs::run_with_progress`, validated by `Settings::engine_valid()`.
+  Web (wasm32) runs `resolve_web_engine` (media-type matrix: GIF/APNG →
+  `ffmpeg-wasm`, MP4/image → `webcodecs` placeholder); desktop keeps
+  `resolve_engine`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
 - Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →
@@ -247,6 +255,21 @@ offline from the registry cache while `Cargo.lock` stays untouched.
      `MediaFile::probe` codec correction in `src/media.rs`
 
 ## Gotchas
+- **wasm 平台三坑**（W1 实测，全部静默崩上下文/死锁，报错无栈）：
+  1. `tokio::time`、`std::time::Instant`、`chrono::Local` 在 wasm32 一律 panic
+     （"time not implemented"）——用 `timers::sleep`（cfg 双实现）与 `js_sys::Date`。
+  2. dioxus 事件管线的 `prevent_default`/信号写入是异步的：拦不住浏览器同步默认动作
+     （拖文件→导航打开），`dioxus::spawn` 在 wasm-bindgen Closure 里永不被轮询，
+     `spawn_local` 上下文直接写 Signal 死锁。拖拽方案：原生 window 监听同步
+     preventDefault（dragover+drop）+ thread_local 队列 + dioxus 排空任务。
+  3. 经 wasm-bindgen 传出的 `&[u8]` 背靠 wasm 内存、**不可 detach**——ffmpeg.wasm
+     `writeFile` 会 transfer 所有权，glue 必须先 `new Uint8Array(data).slice()`。
+- **dragover 期间 `dataTransfer.files` 恒空**（规范保护模式，文件仅 drop 时可见）——
+  判断“文件拖拽”看 `types` 是否含 `"Files"`。
+- **ffmpeg.wasm 资产**：`assets/` 下四件套（wrapper `ffmpeg.js` + `814.ffmpeg.js`
+  classic worker + ST core js/wasm，32MB wasm gitignore）。dx 把 assets 目录复制到
+  **web 根**（不是 `/assets/` 前缀；SPA fallback 会让错误路径返回 HTML）。glue 自举
+  加载 wrapper（缺 `FFmpegWASM` 全局时注入 `/ffmpeg.js`）。
 - **ffmpeg must be discoverable**: when updating ffmpeg, update BOTH `PATH` and
   `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `docs/notes.md`).
 - The ffmpeg binding crate is `ffmpeg-the-third` (see `Cargo.toml`, commented

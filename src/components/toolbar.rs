@@ -48,9 +48,24 @@ pub fn Toolbar() -> Element {
                     multiple: true,
                     accept: "{file_accept()}",
                     onchange: move |evt: Event<FormData>| {
-                        let files: Vec<PathBuf> = evt.data.files().iter().map(|f| f.path()).collect();
-                        if !files.is_empty() {
-                            ctx.add_files(files);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let files: Vec<PathBuf> =
+                                evt.data.files().iter().map(|f| f.path()).collect();
+                            if !files.is_empty() {
+                                ctx.add_files(files);
+                            }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            for f in evt.data.files() {
+                                spawn(async move {
+                                    let name = f.name();
+                                    if let Ok(bytes) = f.read_bytes().await {
+                                        ctx.add_file_bytes(name, bytes.to_vec());
+                                    }
+                                });
+                            }
                         }
                     },
                 }

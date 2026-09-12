@@ -1,36 +1,48 @@
 //! 转码的两个收尾步骤：webm 时长补丁与图片管道（oxipng）。
 
 use super::{TranscodeError, Transcoder};
+#[cfg(feature = "desktop")]
 use ffmpeg_sidecar::child::FfmpegChild;
+#[cfg(feature = "desktop")]
 use std::io::BufReader;
+#[cfg(feature = "desktop")]
 use std::io::Read;
 
 impl Transcoder {
-    /// webm 时长补丁：定位二进制标记 `44 89 88`，其后 8 字节覆写为
-    /// `100f64`（大端）强制贴纸时长。
+    /// webm 时长补丁：读盘 → patch_webm_bytes → store_output。
     pub(super) fn run_video(&mut self) -> Result<(), TranscodeError> {
         let path = self
             .get_output()
             .ok_or(TranscodeError::OutputNotSet)?
             .clone();
-        let mut data = std::fs::read(&path)
+        let data = std::fs::read(&path)
             .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
-        let position = data
-            .windows(3)
-            .position(|w| w == [0x44, 0x89, 0x88])
-            .ok_or(TranscodeError::DurationPatch("binary sequence not found"))?;
-        let end = position + 3 + 8;
-        if end > data.len() {
-            return Err(TranscodeError::DurationPatch(
-                "binary sequence too close to EOF",
-            ));
-        }
-        data[position + 3..end].copy_from_slice(&100f64.to_be_bytes());
-        self.store_output(data)
+        let patched = patch_webm_bytes(data)?;
+        self.store_output(patched)
             .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
         Ok(())
     }
+}
 
+/// 定位二进制标记 `44 89 88`，其后 8 字节覆写为 `100f64`（大端）强制贴纸时长。
+/// 纯函数：桌面 run_video 与网页端 finish_web_job 共用。
+pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
+    let position = data
+        .windows(3)
+        .position(|w| w == [0x44, 0x89, 0x88])
+        .ok_or(TranscodeError::DurationPatch("binary sequence not found"))?;
+    let end = position + 3 + 8;
+    if end > data.len() {
+        return Err(TranscodeError::DurationPatch(
+            "binary sequence too close to EOF",
+        ));
+    }
+    data[position + 3..end].copy_from_slice(&100f64.to_be_bytes());
+    Ok(data)
+}
+
+#[cfg(feature = "desktop")]
+impl Transcoder {
     /// 图片管道（sidecar）：ffmpeg stdout PNG → 共享 oxipng 管道写盘。
     /// oxipng 优化逻辑在 inprocess.rs::write_optimized_png（两引擎共用）。
     pub(super) fn run_image(&mut self, process: &mut FfmpegChild) -> Result<(), TranscodeError> {
@@ -49,25 +61,30 @@ impl Transcoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::MediaFile;
-    use std::path::Path;
 
-    /// 回归：标记跨 1024 字节块边界时旧实现偏移多算 last_bytes 长度。
+    /// 回归：标记跨块边界时 patch_webm_bytes 的偏移正确（原 run_video 回归用例改指纯函数）。
     #[test]
     fn duration_patch_writes_at_marker_offset() {
-        let dir = std::env::temp_dir().join(format!("stp-patch-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("out.webm");
         let mut data = vec![0u8; 5000];
-        data[2046..2049].copy_from_slice(&[0x44, 0x89, 0x88]); // 跨块边界
-        std::fs::write(&path, &data).unwrap();
-
-        let mut t = Transcoder::new(MediaFile::new(Path::new("dummy.mp4")));
-        t.set_output(&path);
-        t.run_video().unwrap();
-
-        let patched = std::fs::read(&path).unwrap();
+        data[2046..2049].copy_from_slice(&[0x44, 0x89, 0x88]); // 跨 1024 块边界
+        let patched = patch_webm_bytes(data).unwrap();
         assert_eq!(&patched[2049..2057], &100f64.to_be_bytes());
-        std::fs::remove_dir_all(&dir).unwrap();
+        // 前置内容不受影响
+        assert_eq!(&patched[..3], &[0u8, 0, 0]);
+    }
+
+    #[test]
+    fn duration_patch_rejects_marker_near_eof() {
+        let mut data = vec![0u8; 10];
+        data[7..10].copy_from_slice(&[0x44, 0x89, 0x88]); // 3+8 字节超出 EOF
+        let err = patch_webm_bytes(data).unwrap_err();
+        assert!(err.to_string().contains("too close to EOF"));
+    }
+
+    #[test]
+    fn duration_patch_rejects_missing_marker() {
+        let data = vec![0u8; 64];
+        let err = patch_webm_bytes(data).unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 }

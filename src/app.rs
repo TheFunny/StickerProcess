@@ -82,23 +82,15 @@ impl PartialEq for TaskEntry {
 }
 
 impl TaskEntry {
-    pub fn new(path: &PathBuf) -> Self {
-        // 不做同步探测（拖入大目录不卡 UI），check_input 延后到后台线程
-        let transcoder = Transcoder::new(MediaFile::new(path));
-        let input_path = transcoder.media_file.display_name();
-        let is_video = matches!(
-            transcoder.media_file.r#type(),
-            Some(crate::media::MediaType::Video(_))
-        );
+    pub fn new(media: MediaFile) -> Self {
+        let input_path = media.display_name();
+        let is_video = matches!(media.r#type(), Some(crate::media::MediaType::Video(_)));
+        let input_size = media.input_len().unwrap_or(0);
         log::info!("Added task: {input_path}");
         Self {
-            transcoder: Arc::new(Mutex::new(transcoder)),
+            transcoder: Arc::new(Mutex::new(Transcoder::new(media))),
             input_path,
-            // wasm：无文件系统，input_size 下一阶段由前端文件对象填充
-            #[cfg(not(target_arch = "wasm32"))]
-            input_size: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
-            #[cfg(target_arch = "wasm32")]
-            input_size: 0,
+            input_size,
             is_video,
             status: Status::Probing,
             output_size: None,
@@ -200,13 +192,13 @@ impl UiState {
         self.toasts.push(toast);
         let mut toasts = self.toasts;
         spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(3600)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(3600)).await;
             toasts.with_mut(|list| {
                 if let Some(t) = list.iter_mut().find(|t| t.id == id) {
                     t.leaving = true;
                 }
             });
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(400)).await;
             toasts.with_mut(|list| list.retain(|t| t.id != id));
         });
     }
@@ -222,12 +214,29 @@ impl UiState {
                     .map(|s| s.to_ascii_lowercase());
                 match ext.as_deref() {
                     Some(ext) if SUPPORTED.contains(&ext) => {
-                        list.push(TaskEntry::new(&path));
+                        list.push(TaskEntry::new(MediaFile::new(&path)));
                         added.push(list.len() - 1);
                     }
                     _ => log::warn!("Skipped unsupported file: {}", path.display()),
                 }
             }
+        });
+        for index in added {
+            self.spawn_probe(index);
+        }
+    }
+
+    /// 网页端：前端文件字节直接入队（扩展名过滤与 add_files 一致）。
+    pub fn add_file_bytes(&mut self, name: String, data: Vec<u8>) {
+        let ext = name.rsplit('.').next().map(|s| s.to_ascii_lowercase());
+        if !ext.as_deref().is_some_and(|e| SUPPORTED.contains(&e)) {
+            log::warn!("Skipped unsupported file: {name}");
+            return;
+        };
+        let mut added = Vec::new();
+        self.tasks.with_mut(|list| {
+            list.push(TaskEntry::new(MediaFile::from_bytes(data, name)));
+            added.push(list.len() - 1);
         });
         for index in added {
             self.spawn_probe(index);
@@ -242,40 +251,71 @@ impl UiState {
         let task_arc = Arc::clone(&entry.transcoder);
         let mut ctx = *self;
         spawn(async move {
-            let awaited = crate::runner::run_blocking(move || {
-                let mut t = task_arc.lock().map_err(|e| e.to_string())?;
-                #[cfg(not(target_arch = "wasm32"))]
-                let probe_result = t.probe().map_err(|e| e.to_string());
-                #[cfg(target_arch = "wasm32")]
-                let probe_result = t.probe().map_err(|_: ()| "probe failed".to_string());
-                probe_result
-            })
-            .await;
-            // 扁平化 JoinError 包装（与 runner 同一模式）
-            let result = match awaited {
-                Ok(inner) => inner,
-                Err(e) => Err(format!("join error: {e}")),
-            };
-            // 先校验仍是同一任务（队列可能已被清空/重排），再写入：
-            // probe 不写 Transcoder.status，需在闭包内赋值由 with_task 同步镜像
-            // （含 probe 纠正类型后的 is_video，避免用错大小上限/预览渲染元素）。
-            if !ctx
-                .tasks
-                .cloned()
-                .get(index)
-                .is_some_and(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
+            #[cfg(not(target_arch = "wasm32"))]
             {
-                return;
+                let awaited = crate::runner::run_blocking(move || {
+                    let mut t = task_arc.lock().map_err(|e| e.to_string())?;
+                    t.probe().map_err(|e| e.to_string())
+                })
+                .await;
+                // 扁平化 JoinError 包装（与 runner 同一模式）
+                let result = match awaited {
+                    Ok(inner) => inner,
+                    Err(e) => Err(format!("join error: {e}")),
+                };
+                Self::write_back_probe(&mut ctx, index, &entry, result);
             }
-            let status = match &result {
-                Ok(()) => Status::Pending,
-                Err(_) => Status::Alert,
-            };
-            ctx.with_task(index, |t| t.status = status);
-            if let Err(err) = &result {
-                ctx.touch_entry(index, |e| e.error = Some(err.clone()));
+            #[cfg(target_arch = "wasm32")]
+            {
+                // web：probe() 恒 Ok；时长由 JS 元数据（ImageDecoder）回填
+                let (name, data) = {
+                    let Ok(t) = task_arc.lock() else {
+                        return;
+                    };
+                    match (t.media_file.display_name(), t.media_file.bytes()) {
+                        (name, Some(bytes)) => (name, bytes.to_vec()),
+                        (name, None) => (name, Vec::new()),
+                    }
+                };
+                let duration = crate::transcoder::web::probe_duration(&name, &data).await;
+                let result = (|| {
+                    let Ok(mut t) = task_arc.lock() else {
+                        return Err("transcoder lock poisoned".to_string());
+                    };
+                    t.media_file.set_duration(duration);
+                    t.probe().map_err(|_: ()| "probe failed".to_string())
+                })();
+                Self::write_back_probe(&mut ctx, index, &entry, result);
             }
         });
+    }
+
+    /// 探测结果回写（状态翻转 + 错误镜像），含 Arc::ptr_eq 任务校验。
+    fn write_back_probe(
+        ctx: &mut UiState,
+        index: usize,
+        entry: &TaskEntry,
+        result: Result<(), String>,
+    ) {
+        // 先校验仍是同一任务（队列可能已被清空/重排），再写入：
+        // probe 不写 Transcoder.status，需在闭包内赋值由 with_task 同步镜像
+        // （含 probe 纠正类型后的 is_video，避免用错大小上限/预览渲染元素）。
+        if !ctx
+            .tasks
+            .cloned()
+            .get(index)
+            .is_some_and(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
+        {
+            return;
+        }
+        let status = match &result {
+            Ok(()) => Status::Pending,
+            Err(_) => Status::Alert,
+        };
+        ctx.with_task(index, |t| t.status = status);
+        if let Err(err) = &result {
+            ctx.touch_entry(index, |e| e.error = Some(err.clone()));
+        }
     }
 
     /// 移除已完成（Done）的任务。
@@ -337,43 +377,64 @@ impl UiState {
         let mut tasks = self.tasks;
         spawn(async move {
             use std::collections::HashMap;
-            use tokio::time::MissedTickBehavior;
 
             const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
             let mut pending: HashMap<usize, f32> = HashMap::new();
-            let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-            loop {
-                let closed = tokio::select! {
-                    _ = ticker.tick() => false,
-                    msg = progress_rx.recv() => match msg {
-                        Some(update) => {
-                            pending.insert(update.index, update.pct.clamp(0.0, 1.0));
-                            continue;
-                        }
-                        None => true,
-                    }
-                };
-
-                if !pending.is_empty() {
-                    let latest: Vec<_> = pending.drain().collect();
-                    tasks.with_mut(|list| {
-                        for (index, pct) in latest {
-                            if let Some(entry) = list.get_mut(index) {
-                                // 仅 Processing 期间写进度：worker 退出后残留的
-                                // 100% 更新不得覆盖 runner 清掉的 progress（否则
-                                // Done 任务显示进度条而非文件大小）
-                                if matches!(entry.status, Status::Processing) {
-                                    entry.progress = Some(pct);
-                                }
+            let mut flush = |pending: &mut HashMap<usize, f32>| {
+                if pending.is_empty() {
+                    return;
+                }
+                let latest: Vec<_> = pending.drain().collect();
+                tasks.with_mut(|list| {
+                    for (index, pct) in latest {
+                        if let Some(entry) = list.get_mut(index) {
+                            // 仅 Processing 期间写进度：worker 退出后残留的
+                            // 100% 更新不得覆盖 runner 清掉的 progress（否则
+                            // Done 任务显示进度条而非文件大小）
+                            if matches!(entry.status, Status::Processing) {
+                                entry.progress = Some(pct);
                             }
                         }
-                    });
+                    }
+                });
+            };
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                use tokio::time::MissedTickBehavior;
+                let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
+                ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                loop {
+                    let closed = tokio::select! {
+                        _ = ticker.tick() => false,
+                        msg = progress_rx.recv() => match msg {
+                            Some(update) => {
+                                pending.insert(update.index, update.pct.clamp(0.0, 1.0));
+                                continue;
+                            }
+                            None => true,
+                        }
+                    };
+                    flush(&mut pending);
+                    if closed {
+                        break;
+                    }
                 }
-                if closed {
-                    break;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // wasm：tokio time/select 不可用——轮询收件箱 + setTimeout 步进
+                loop {
+                    crate::timers::sleep(FLUSH_INTERVAL).await;
+                    while let Ok(update) = progress_rx.try_recv() {
+                        pending.insert(update.index, update.pct.clamp(0.0, 1.0));
+                    }
+                    let closed = progress_rx.is_closed();
+                    flush(&mut pending);
+                    if closed {
+                        break;
+                    }
                 }
             }
         });
@@ -460,7 +521,7 @@ mod tests {
     /// AGENTS 契约：eq 必须覆盖组件依赖的每个镜像字段——漏字段会 memo 跳过重渲染。
     #[test]
     fn task_entry_eq_covers_status_and_error() {
-        let mut a = TaskEntry::new(&PathBuf::from("x.mp4"));
+        let mut a = TaskEntry::new(MediaFile::new(&PathBuf::from("x.mp4")));
         let b = a.clone();
         assert_eq!(a, b);
         a.status = Status::Alert;

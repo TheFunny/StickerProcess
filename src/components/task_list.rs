@@ -66,12 +66,15 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
             format!("{}  {:.2}KB", name, size as f64 / 1024.0)
         }
     });
-    // 选中输出文件用（onclick 闭包捕获）
+    // wasm 下载用：锁内克隆输出字节（仅 Done/SizeExcess 任务有）
+    #[cfg(target_arch = "wasm32")]
+    let entry_bytes: Option<Vec<u8>> = {
+        let t = entry.transcoder.lock().ok();
+        t.and_then(|t| t.output_bytes.clone())
+    };
+    // 选中输出文件用（onclick 闭包捕获，桌面专属）
     #[cfg(not(target_arch = "wasm32"))]
     let select_path = entry.output_path.clone();
-    #[cfg(target_arch = "wasm32")]
-    let select_path = Option::<std::path::PathBuf>::None;
-
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
     let factor_value = entry.factor;
     // 转码耗时（成功后保留展示）
@@ -122,7 +125,18 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                             }
                             #[cfg(target_arch = "wasm32")]
                             {
-                                // web：下载链接，下一阶段
+                                // web：从内存 output_bytes 触发浏览器下载
+                                if let Some(bytes) = entry_bytes.clone() {
+                                    let name = entry
+                                        .output_file_name
+                                        .clone()
+                                        .unwrap_or_else(|| "sticker.webm".into());
+                                    spawn(async move {
+                                        crate::transcoder::web::sticker_download(
+                                            &bytes, &name,
+                                        );
+                                    });
+                                }
                             }
                         },
                         "{size}"
