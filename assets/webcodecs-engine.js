@@ -1,7 +1,7 @@
 // StickerProcess web engine glue (Route B: WebCodecs + webm-muxer).
 // Loaded by src/transcoder/web.rs via injected <script>; all functions on window.
 // Contract: stickerWebcodecsProbeSupport / stickerWebcodecsTranscode /
-//           stickerWebcodecsCancel / stickerNativeProbe
+//           stickerWebcodecsCancel / stickerNativeProbe / stickerDownload
 // 管线移植自 wasm-demo/webcodecs-demo：解码（<video>+rVFC / ImageDecoder）→
 // OffscreenCanvas 512 fit → VideoEncoder(vp9 8-bit) → webm-muxer。
 // 码率/factor 全由 Rust 侧算好传入（与桌面 command.rs 一致，JS 不重复实现）。
@@ -217,4 +217,16 @@
   };
 
   window.stickerWebcodecsCancel = () => { cancelRequested = true; };
+
+  // 通用下载（task_list 输出大小点击）。放本文件而非 ffmpeg-engine.js：
+  // 每个任务探测必经本 glue（native_probe 注入），ffmpeg glue 只有 GIF/APNG
+  // 才加载；且本文件顶层无条件执行（ffmpeg glue 是 async IIFE，core 失败即断）
+  window.stickerDownload = (data, filename) => {
+    const url = URL.createObjectURL(new Blob([data]));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
 })();

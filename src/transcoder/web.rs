@@ -40,9 +40,10 @@ extern "C" {
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerNativeProbe)]
     fn sticker_native_probe(name: &str, data: &[u8]) -> Result<js_sys::Promise, JsValue>;
-    /// 公开给组件层（task_list 下载）。终止引擎用 sticker*Cancel。
-    #[wasm_bindgen(js_name = stickerDownload)]
-    pub fn sticker_download(data: &[u8], filename: &str);
+    /// 公开给组件层（task_list 下载）；定义在 webcodecs-engine.js（每任务探测
+    /// 必经）。`catch`：glue 缺失/JS 异常转 Err 而非 trap 炸应用上下文。
+    #[wasm_bindgen(catch, js_name = stickerDownload)]
+    pub fn sticker_download(data: &[u8], filename: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = stickerFfmpegCancel)]
     fn sticker_ffmpeg_cancel();
     #[wasm_bindgen(js_name = stickerWebcodecsCancel)]

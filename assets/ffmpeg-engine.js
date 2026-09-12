@@ -1,7 +1,7 @@
 // StickerProcess web engine glue (Route A: ffmpeg.wasm ST core 0.12.10).
 // Loaded by src/transcoder/web.rs via injected <script>; all functions on window.
-// Contract: stickerFfmpegReady / stickerFfmpegTranscode / stickerFfmpegCancel /
-//           stickerDownload（探测统一在 webcodecs-engine.js 的 stickerNativeProbe）
+// Contract: stickerFfmpegReady / stickerFfmpegTranscode / stickerFfmpegCancel
+//（探测与下载统一在 webcodecs-engine.js：stickerNativeProbe / stickerDownload）
 (async function () {
   // 自举：确保 UMD wrapper（定义 FFmpegWASM 全局）已加载——桥接只注入本文件，
   // wrapper 必须由这里兜底加载（classic worker chunk 814.ffmpeg.js 需与其同目录）。
@@ -70,14 +70,5 @@
 
   window.stickerFfmpegCancel = () => {
     if (ffmpeg) { ffmpeg.terminate(); ffmpeg = null; }
-  };
-
-  window.stickerDownload = (data, filename) => {
-    const url = URL.createObjectURL(new Blob([data]));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 })();

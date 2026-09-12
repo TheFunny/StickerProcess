@@ -132,9 +132,11 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                                         .clone()
                                         .unwrap_or_else(|| "sticker.webm".into());
                                     spawn(async move {
-                                        crate::transcoder::web::sticker_download(
+                                        if crate::transcoder::web::sticker_download(
                                             &bytes, &name,
-                                        );
+                                        ).is_err() {
+                                            log::error!("download failed: glue missing");
+                                        }
                                     });
                                 }
                             }
