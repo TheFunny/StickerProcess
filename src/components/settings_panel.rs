@@ -48,8 +48,8 @@ pub fn SettingsPanel() -> Element {
             ""
         } else {
             match probe {
-                Some(_) => " — 缺少 libvpx-vp9 编码器",
-                None => " — 未检测到 ffmpeg",
+                Some(_) => " — missing libvpx-vp9 encoder",
+                None => " — ffmpeg not detected",
             }
         };
         (available, suffix)
@@ -59,24 +59,24 @@ pub fn SettingsPanel() -> Element {
     #[cfg(target_arch = "wasm32")]
     let engine_select = {
         let wc_state = match *webcodecs_ok.read() {
-            Some(true) => "✓ 可用",
-            Some(false) => "✗ 浏览器不支持 VP9 编码",
-            None => "检测中…",
+            Some(true) => "✓ available",
+            Some(false) => "✗ VP9 encoding unsupported in this browser",
+            None => "detecting…",
         };
         rsx! {
             select {
                 class: "input",
                 value: "auto",
-                option { value: "auto", "Auto（按类型选引擎）" }
+                option { value: "auto", "Auto (pick engine by media type)" }
                 option {
                     value: "ffmpeg-wasm",
                     disabled: true,
-                    "ffmpeg.wasm — GIF/APNG（alpha 双轨） ✓ 可用"
+                    "ffmpeg.wasm — GIF/APNG (alpha dual-track) ✓ available"
                 }
                 option {
                     value: "webcodecs",
                     disabled: true,
-                    "WebCodecs — MP4/图片 {wc_state}"
+                    "WebCodecs — MP4/images {wc_state}"
                 }
             }
         }
