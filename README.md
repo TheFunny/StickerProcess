@@ -90,27 +90,31 @@ immutable`（首载 32 MB，回访秒开）。托管平台改不了头（如 Git
 core 后改文件名（如 `ffmpeg-core-st-v2.wasm`）并同步 `ffmpeg-engine.js` 里的
 `loadCore` URL + 本 README cp 清单，防止用户吃到旧缓存 core 配新 glue。
 
-### GitHub Pages（已部署）
+### GitHub Pages（自动部署）
 
-线上地址 https://thefunny.github.io/StickerProcess/ （`gh-pages` 分支，纯静态）。
-发布流程：
+线上地址 https://thefunny.github.io/StickerProcess/ 。push 到 `master`（改动命中
+`src/` `assets/` `Cargo.*` `Dioxus.toml`）即由 `.github/workflows/deploy-web.yml`
+自动构建并发布，无需手动操作。Pages 源设为 **GitHub Actions**（非 gh-pages 分支）。
 
-```bash
-dx build --platform web --release --base-path /StickerProcess/   # 子路径必须带
-rm -rf gh-pages-stage && mkdir gh-pages-stage
-cp -r target/dx/StickerProcess/release/web/public/. gh-pages-stage/
-cp assets/ffmpeg.js assets/814.ffmpeg.js assets/ffmpeg-core-st.js \
-   assets/ffmpeg-core-st.wasm assets/ffmpeg-engine.js \
-   assets/webcodecs-engine.js assets/webm-muxer.js assets/favicon.png gh-pages-stage/
-cp gh-pages-stage/index.html gh-pages-stage/404.html   # Pages 无 SPA fallback，404 兜底
-bash build-ghpages.sh                                   # gh-pages-stage → gh-pages 孤儿分支
-git push -f origin gh-pages
-```
+workflow 关键点（踩过的坑都在此固化）：
 
-`--base-path` 只存在于命令行（Dioxus.toml 无 base_url 键，0.7.10 实测）；产物
-index 引用绝对子路径，而 Rust 注入的 glue 与 core 是**相对**路径——两种托管
-（根域/子路径）都能解析。漏掉 `--base-path` 的表现：本地正常、Pages 白屏
-（`/assets/*.js` 404）。
+- **core 来源**：32 MB `ffmpeg-core-st.wasm` 不入库（`.gitignore`），CI 从
+  `wasm-core` 孤儿分支 `git show` 取回。该分支由 `build-wasmcore-branch.sh` 在本地
+  重建（改了自建 core 后跑一遍再 `git push -f origin wasm-core`）——这是 core 在
+  远端的唯一出处，配方本体见 `docs/W4_CORE_BUILD.md`。
+- **子路径**：`dx build --platform web --release --base-path /StickerProcess/`
+  必须带 `--base-path`（Dioxus.toml 无 base_url 键，0.7.10 实测只认命令行）。
+  漏掉的表现：本地正常、Pages 白屏（`/assets/*.js` 404）。Rust 注入的 glue 与
+  core 用**相对**路径，根域/子路径托管都能解析。
+- **assets 手动补齐**：dx 不把项目 `assets/` 拷进产物目录，workflow 里显式 cp
+  七个 JS + core wasm + favicon.png，并复制 `index.html` 为 `404.html`（Pages 无
+  SPA fallback，避免刷新 404）。
+- **免装 wasm-bindgen**：dx 自带桥接版本；CI 只装 stable 工具链 + `wasm32-unknown-unknown`
+  target + dx 预编译二进制。build.rs 对 web（非 desktop feature）提前 return，
+  CI 无 `FFMPEG_DIR` 也不 panic。
+
+手动部署（调试用，正常不必）：`build-ghpages.sh` 把 `gh-pages-stage/` 灌成
+`gh-pages` 孤儿分支；但 Pages 源当前是 Actions，推 gh-pages 分支不再生效。
 
 ## 构建
 
