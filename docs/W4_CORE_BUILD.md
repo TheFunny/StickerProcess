@@ -1,7 +1,9 @@
 # W4：自建 ffmpeg.wasm ST core 配方（highbitdepth）
 
 `assets/ffmpeg-core-st.{js,wasm}` 是**自建 core**，不是 npm 预构建件。32MB wasm 不入库
-（.gitignore），本文件是其唯一出处记录。预构建 `@ffmpeg/core@0.12.10` 有两缺陷，
+（.gitignore），构建配方记录在本文件；产物的远端出处 = `wasm-core` 孤儿分支（CI
+从此取；本地重建后用仓库根 `build-wasmcore-branch.sh` 刷新再 `push -f`）。预构建
+`@ffmpeg/core@0.12.10` 有两缺陷，
 均已在本 core 修复/验证：
 
 | 缺陷 | 预构建 | 本 core 实测 |
