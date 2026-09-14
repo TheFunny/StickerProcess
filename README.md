@@ -81,9 +81,14 @@ ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js} \
 改过 assets/ 下任何 JS 后同样要重新 cp（构建目录里的副本不会自动同步）。
 
 `ffmpeg-core-st.wasm`（32 MB）不入库（`.gitignore`），构建网页端前需本地存在
-（获取方式见 docs/WEB_DEMO_FINDINGS.md）。glue 加载路径全部是 web **根路径**
+（获取方式见 docs/W4_CORE_BUILD.md）。glue 加载路径全部是 web **根路径**
 （`/ffmpeg-engine.js` 等），所以托管时产物目录必须挂在域名根，且静态服务器
 不要对未知路径做 SPA fallback 返回 HTML（会伪装成 200 导致加载失败）。
+
+**缓存**：托管给 `ffmpeg-core-st.*` 配 `Cache-Control: public, max-age=31536000,
+immutable`（首载 32 MB，回访秒开）。托管平台改不了头（如 GitHub Pages）时，重建
+core 后改文件名（如 `ffmpeg-core-st-v2.wasm`）并同步 `ffmpeg-engine.js` 里的
+`loadCore` URL + 本 README cp 清单，防止用户吃到旧缓存 core 配新 glue。
 
 ## 构建
 

@@ -16,27 +16,63 @@
   }
   const { FFmpeg } = FFmpegWASM;
 
-  // 单例：core abort 会毒化实例，cancel/abort 后置 null 由下次调用重载
+  // 单例：core abort 会毒化实例，cancel/abort 后置 null 由下次调用重载。
+  // ffmpeg 只在 load 成功后赋值——load 失败不毒化单例，下次调用可重试。
   let ffmpeg = null;
+  let loading = null;
 
   async function toBlobURL(url, mime) {
     const b = await (await fetch(url)).blob();
     return URL.createObjectURL(new Blob([b], { type: mime }));
   }
 
-  async function loadCore() {
-    if (ffmpeg) return ffmpeg;
-    const base = location.href.replace(/\/[^/]*$/, "");
-    ffmpeg = new FFmpeg();
-    await ffmpeg.load({
-      // ST core (no pthreads): no COOP/COEP required.
-      coreURL: await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${base}/ffmpeg-core-st.wasm`, "application/wasm"),
-    });
-    return ffmpeg;
+  // 流式下载并回报 0..1 进度：32MB core 首载要几秒，进度条不该死在 0。
+  // 无 Content-Length/无 ReadableStream 时退化为整块 blob + 一次 100%。
+  async function fetchBlobProgress(url, onProgress) {
+    const res = await fetch(url);
+    const total = Number(res.headers.get("Content-Length")) || 0;
+    if (!res.body || !total) {
+      const b = await res.blob();
+      onProgress(1);
+      return b;
+    }
+    const reader = res.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      onProgress(Math.min(got / total, 1));
+    }
+    return new Blob(chunks, { type: "application/wasm" });
   }
 
-  window.stickerFfmpegReady = async () => { await loadCore(); return true; };
+  function loadCore(onCoreProgress) {
+    if (ffmpeg) return Promise.resolve(ffmpeg);
+    if (!loading) {
+      loading = (async () => {
+        const base = location.href.replace(/\/[^/]*$/, "");
+        const noop = () => {};
+        const progress = onCoreProgress || noop;
+        const [coreURL, wasmURL] = await Promise.all([
+          toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript"),
+          fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress)
+            .then((b) => URL.createObjectURL(b)),
+        ]);
+        const ff = new FFmpeg();
+        // ST core (no pthreads): no COOP/COEP required.
+        await ff.load({ coreURL, wasmURL });
+        ffmpeg = ff;
+        return ff;
+      })();
+      loading.catch(() => { loading = null; }); // 失败后允许重试
+    }
+    return loading;
+  }
+
+  window.stickerFfmpegReady = async (onCoreProgress) => { await loadCore(onCoreProgress); return true; };
 
   window.stickerFfmpegTranscode = async (data, name, bitrate, fps, pixFmt, onProgress) => {
     const ff = await loadCore();

@@ -18,7 +18,9 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     // `catch`：JS 侧异常转 Result 而非 wasm trap（glue 未就绪时调用不炸上下文）
     #[wasm_bindgen(catch, js_name = stickerFfmpegReady)]
-    fn sticker_ffmpeg_ready() -> Result<js_sys::Promise, JsValue>;
+    fn sticker_ffmpeg_ready(
+        on_core_progress: &Closure<dyn FnMut(f32)>,
+    ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerFfmpegTranscode)]
     fn sticker_ffmpeg_transcode(
         data: &[u8],
@@ -121,7 +123,8 @@ impl Transcoder {
 }
 
 /// 注入 ffmpeg.wasm glue（含 UMD wrapper），await core ready → transcode。
-/// 进度闭包 → on_progress；回调内轮询 cancel_flag，置位即 terminate 并提前返回。
+/// 进度两段拼接：core 首载（32MB 流式下载）映射 0–30%，转码映射 30–100%；
+/// 回调内轮询 cancel_flag，置位即 terminate 并提前返回。
 pub(crate) async fn exec_ffmpeg_wasm(
     job: WebJob,
     cancel_flag: Arc<AtomicBool>,
@@ -132,14 +135,29 @@ pub(crate) async fn exec_ffmpeg_wasm(
     if cancel_flag.load(Ordering::Relaxed) {
         return Err(TranscodeError::Cancelled);
     }
-    let ready = sticker_ffmpeg_ready().map_err(|e| js_error(e, &cancel_flag))?;
+    // 两段闭包共享同一 on_progress（wasm 单线程，Rc<RefCell> 足够）。
+    // core 下载进度（0–30%）：闭包被 JS 侧在 load 期间持有，await 返回后
+    // 不再被调用，随作用域 drop。
+    let on_progress = std::rc::Rc::new(std::cell::RefCell::new(on_progress));
+    let cancel_core = Arc::clone(&cancel_flag);
+    let op_core = std::rc::Rc::clone(&on_progress);
+    let core_closure = Closure::new(move |pct: f32| {
+        (*op_core.borrow_mut())(pct * 0.3);
+        let _ = &cancel_core; // cancel 在下载期只置位：ready 返回后统一检查
+    });
+    let ready = sticker_ffmpeg_ready(&core_closure).map_err(|e| js_error(e, &cancel_flag))?;
     js_sys::Promise::from(ready)
         .await
         .map_err(|e| js_error(e, &cancel_flag))?;
+    drop(core_closure); // JS 已 resolve，闭包不再可达
 
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Err(TranscodeError::Cancelled);
+    }
     let cancel_flag_probe = Arc::clone(&cancel_flag);
+    let op_xfer = std::rc::Rc::clone(&on_progress);
     let closure = Closure::new(move |pct: f32| {
-        on_progress(pct);
+        (*op_xfer.borrow_mut())(0.3 + pct * 0.7);
         if cancel_flag_probe.load(Ordering::Relaxed) {
             sticker_ffmpeg_cancel();
         }
