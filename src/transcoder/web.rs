@@ -130,7 +130,7 @@ pub(crate) async fn exec_ffmpeg_wasm(
     cancel_flag: Arc<AtomicBool>,
     mut on_progress: impl FnMut(f32) + 'static,
 ) -> Result<Vec<u8>, TranscodeError> {
-    inject_scripts(&["/ffmpeg.js", "/ffmpeg-engine.js"], "stickerFfmpegReady").await?;
+    inject_scripts(&["ffmpeg.js", "ffmpeg-engine.js"], "stickerFfmpegReady").await?;
 
     if cancel_flag.load(Ordering::Relaxed) {
         return Err(TranscodeError::Cancelled);
@@ -193,7 +193,7 @@ pub(crate) async fn exec_webcodecs(
     mut on_progress: impl FnMut(f32) + 'static,
 ) -> Result<Vec<u8>, TranscodeError> {
     inject_scripts(
-        &["/webm-muxer.js", "/webcodecs-engine.js"],
+        &["webm-muxer.js", "webcodecs-engine.js"],
         "stickerNativeProbe",
     )
     .await?;
@@ -232,7 +232,7 @@ pub(crate) async fn exec_webcodecs(
 /// UI 置灰与 exec_webcodecs 视频路径共用。失败/不支持 → false。
 pub async fn webcodecs_supported() -> bool {
     if inject_scripts(
-        &["/webm-muxer.js", "/webcodecs-engine.js"],
+        &["webm-muxer.js", "webcodecs-engine.js"],
         "stickerNativeProbe",
     )
     .await
@@ -262,7 +262,7 @@ pub(crate) async fn native_probe(name: &str, data: &[u8]) -> NativeProbe {
         apng: false,
     };
     if inject_scripts(
-        &["/webm-muxer.js", "/webcodecs-engine.js"],
+        &["webm-muxer.js", "webcodecs-engine.js"],
         "stickerNativeProbe",
     )
     .await

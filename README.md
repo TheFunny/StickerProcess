@@ -90,6 +90,28 @@ immutable`（首载 32 MB，回访秒开）。托管平台改不了头（如 Git
 core 后改文件名（如 `ffmpeg-core-st-v2.wasm`）并同步 `ffmpeg-engine.js` 里的
 `loadCore` URL + 本 README cp 清单，防止用户吃到旧缓存 core 配新 glue。
 
+### GitHub Pages（已部署）
+
+线上地址 https://thefunny.github.io/StickerProcess/ （`gh-pages` 分支，纯静态）。
+发布流程：
+
+```bash
+dx build --platform web --release --base-path /StickerProcess/   # 子路径必须带
+rm -rf gh-pages-stage && mkdir gh-pages-stage
+cp -r target/dx/StickerProcess/release/web/public/. gh-pages-stage/
+cp assets/ffmpeg.js assets/814.ffmpeg.js assets/ffmpeg-core-st.js \
+   assets/ffmpeg-core-st.wasm assets/ffmpeg-engine.js \
+   assets/webcodecs-engine.js assets/webm-muxer.js gh-pages-stage/
+cp gh-pages-stage/index.html gh-pages-stage/404.html   # Pages 无 SPA fallback，404 兜底
+bash build-ghpages.sh                                   # gh-pages-stage → gh-pages 孤儿分支
+git push -f origin gh-pages
+```
+
+`--base-path` 只存在于命令行（Dioxus.toml 无 base_url 键，0.7.10 实测）；产物
+index 引用绝对子路径，而 Rust 注入的 glue 与 core 是**相对**路径——两种托管
+（根域/子路径）都能解析。漏掉 `--base-path` 的表现：本地正常、Pages 白屏
+（`/assets/*.js` 404）。
+
 ## 构建
 
 ```bash

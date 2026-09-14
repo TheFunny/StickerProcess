@@ -8,7 +8,7 @@
   if (typeof FFmpegWASM === "undefined") {
     await new Promise((resolve, reject) => {
       const s = document.createElement("script");
-      s.src = "/ffmpeg.js";
+      s.src = "ffmpeg.js";
       s.onload = resolve;
       s.onerror = () => reject(new Error("failed to load /ffmpeg.js"));
       document.head.appendChild(s);
