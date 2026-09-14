@@ -80,9 +80,10 @@
     // transfer 所有权，必须先拷到独立 ArrayBuffer
     await ff.writeFile(name, new Uint8Array(data).slice());
     ff.on("progress", ({ progress }) => onProgress(Math.min(progress, 1)));
-    // 参数镜像 src/transcoder/command.rs::gen_command 视频分支：
-    // ST core 无 pthreads，-row-mt 无意义；pix_fmt 由 Rust 矩阵传入
-    // （GIF/APNG→yuva420p，MP4 兜底→yuv420p10，自建 core 已验证真 10-bit）
+    // 参数镜像 src/transcoder/command.rs::gen_command 视频分支（码率/crf/pix_fmt
+    // 由 Rust 传入）；两处 web 专属偏离：ST core 无 pthreads 省 -row-mt；
+    // deadline/cpu-used 提速——wasm 单线程 VP9 默认 good 档太慢（GIF exec ~10s），
+    // realtime+4 约 3×，b:v 约束下画质损失有限（超 256KB 有 runner 收缩重试兜底）。
     const args = [
       "-i", name,
       "-vf", "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
@@ -91,6 +92,8 @@
     args.push(
       "-an",
       "-c:v", "libvpx-vp9",
+      "-deadline", "realtime",
+      "-cpu-used", "4",
       "-pix_fmt", pixFmt,
       "-crf", "26",
       "-b:v", String(bitrate),
