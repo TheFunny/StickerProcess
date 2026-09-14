@@ -42,7 +42,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/E6_INPROCESS_RESEARCH.md` | In-process transcoding: E6 phase-1 design, API verification, and the static-build record (§7) |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
-| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 七件套+core+favicon，index→404）→ `push -f gh-pages`（Pages 源=分支；PAT 无 Pages 环境权限，故不走 deploy-pages 组件）|
+| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 七件套+core+favicon，index→404）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
@@ -280,11 +280,15 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `ffmpeg.js`、`loadCore` 的 `location.href` 拼接、`document::Link href`）——
   根域与 Pages 子路径（`/StickerProcess/`）都能解析；SPA fallback 会让缺失路径
   返回 HTML 伪装 200，警惕。
-- **GitHub Pages 部署**：Pages 源 = `gh-pages` 分支（legacy），CI 直推；仓库 PAT
-  无 Pages 环境写权限，`actions/deploy-pages` 会 403（"not allowed to deploy due
-  to environment protection rules"）——保持分支方案。32MB core 的 CI 来源 =
-  `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑 `build-wasmcore-branch.sh`
-  再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
+- **GitHub Pages 部署**：Pages 源 = GitHub Actions（workflow），三件套
+  `configure-pages`→`upload-pages-artifact`→`deploy-pages`；push master 即发布，
+  勿手动推 `gh-pages` 分支（已不被读取）。首次切换坑：第一次 deploy 必报
+  `environment protection rules`（源被 configure-pages 同运行内才切成 workflow，
+  自动建的 `github-pages` environment 带残留分支限制），**再跑一次即绿**（Run #1
+  失败 → #3 成功实证；#2 是临时的分支直推变体，已废弃）。用户 PAT 对
+  Pages/env 设置 API 是 404——但 workflow 的 `pages: write` 权限够用。32MB core
+  的 CI 来源 = `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑
+  `build-wasmcore-branch.sh` 再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
 - **python http.server 无 Cache-Control → 浏览器启发式缓存 wasm/loader JS**：改过 Rust
   重 `dx build` 后页面仍"不挂载"（`#main` 空、无 console 错误——`__wbg_init` 的 Promise
   reject 无人 catch），实为吃到旧 `StickerProcess.js` 与新 `StickerProcess_bg.wasm`

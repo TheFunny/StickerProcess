@@ -94,8 +94,8 @@ core 后改文件名（如 `ffmpeg-core-st-v2.wasm`）并同步 `ffmpeg-engine.j
 
 线上地址 https://thefunny.github.io/StickerProcess/ 。push 到 `master`（改动命中
 `src/` `assets/` `Cargo.*` `Dioxus.toml`）即由 `.github/workflows/deploy-web.yml`
-自动构建并 `git push -f` 到 `gh-pages`（Pages 源 = gh-pages 分支）。勿手动推
-gh-pages——会被下次 CI 覆盖。
+构建，官方三件套 `configure-pages` → `upload-pages-artifact` → `deploy-pages`
+发布（Pages 源 = GitHub Actions）。
 
 workflow 关键点（踩过的坑都在此固化）：
 
@@ -114,9 +114,11 @@ workflow 关键点（踩过的坑都在此固化）：
   target + dx 预编译二进制。build.rs 对 web（非 desktop feature）提前 return，
   CI 无 `FFMPEG_DIR` 也不 panic。
 
-本地调试构建（非部署）：`build-ghpages.sh` 演示如何把 `gh-pages-stage/` 灌成分支；
-日常发布请只走 push master → CI。注：Pages 源保持 gh-pages 分支（legacy）——
-仓库自带 PAT 无 Pages 环境写权限，`deploy-pages` 组件的 workflow 源会 403。
+**首次迁移坑（已踩实）**：Pages 源从 gh-pages 分支切到 Actions 的那一次运行，
+deploy 必报 `Branch "master" is not allowed to deploy to github-pages due to
+environment protection rules`——`configure-pages` 同一次运行内才把源切成 workflow，
+自动建的 `github-pages` environment 初始带分支限制，**重跑一次即通过**（#1 失败、
+#3 成功实证）。旧的 `gh-pages` 分支不再被部署读取（留着无害，别手动推）。
 
 ## 构建
 
