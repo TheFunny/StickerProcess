@@ -29,8 +29,12 @@ MP4 路径直接可用（Chrome 原生 h264 解码）——恰是 Route A 预构
    这是 Route B 的主要产品风险。
 3. **缩放质量**：Canvas `imageSmoothingQuality='high'`（近似 bilinear/lanczos 级别可调），
    不是 ffmpeg lanczos，但肉眼差别小。
-4. **浏览器兼容**：VideoEncoder VP9 需要 Chrome/Edge 94+；Safari 不支持 VP9 编码；
-   Firefox 支持有限。**实际覆盖 = Chromium 系**。
+4. **浏览器兼容**（2026-09 按 MDN BCD 修正）：WebCodecs VideoEncoder Chrome/Edge 94+、
+   **Firefox 130+、Safari 16.4+**；rVFC Chrome 83+/Firefox 132+/Safari 15.4+；
+   ImageDecoder Chrome 94+/Firefox 133+/Safari 仅 preview。即 Firefox 133+ 三件齐、
+   理论上 MP4 可走 B 快路径（真机验证中）；VP9 编码 isConfigSupported 在老 Firefox
+   130/131（无 rVFC）会虚报可用——caps 探针已加 rVFC 门控，该窗口回落 A 引擎。
+   原"实际覆盖 = Chromium 系"结论过时。
 5. MP4 解码走 `requestVideoFrameCallback` 抓帧，时长/帧率来自页面探测（demo 硬编码 30fps 槽），
    正式版用 WebCodecs `VideoDecoder` + demuxer（或保持 rVFC）更精确。
 

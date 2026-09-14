@@ -38,14 +38,15 @@
 
   window.stickerFfmpegReady = async () => { await loadCore(); return true; };
 
-  window.stickerFfmpegTranscode = async (data, name, bitrate, fps, onProgress) => {
+  window.stickerFfmpegTranscode = async (data, name, bitrate, fps, pixFmt, onProgress) => {
     const ff = await loadCore();
     // wasm 传入的 data 背靠 wasm 内存，不可 detach——ffmpeg.wasm writeFile 要
     // transfer 所有权，必须先拷到独立 ArrayBuffer
     await ff.writeFile(name, new Uint8Array(data).slice());
     ff.on("progress", ({ progress }) => onProgress(Math.min(progress, 1)));
     // 参数镜像 src/transcoder/command.rs::gen_command 视频分支：
-    // ST core 无 pthreads，-row-mt 无意义；GIF/APNG 恒 yuva420p（W1 仅接这两类）
+    // ST core 无 pthreads，-row-mt 无意义；pix_fmt 由 Rust 矩阵传入
+    // （GIF/APNG→yuva420p，MP4 兜底→yuv420p10，自建 core 已验证真 10-bit）
     const args = [
       "-i", name,
       "-vf", "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
@@ -54,7 +55,7 @@
     args.push(
       "-an",
       "-c:v", "libvpx-vp9",
-      "-pix_fmt", "yuva420p",
+      "-pix_fmt", pixFmt,
       "-crf", "26",
       "-b:v", String(bitrate),
       "-bufsize", String(Math.floor(bitrate * 1.5)),

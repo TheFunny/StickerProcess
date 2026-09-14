@@ -78,9 +78,18 @@
     }
   };
 
-  // ---- capability probe：B 引擎是否可用（Chromium 系 vp9 软编）----
+  // ---- capability probe：B 引擎 MP4 路径是否可用 ----
+  // rVFC 是抓帧循环的硬依赖（MP4 路径必用）。Firefox 版本窗口：WebCodecs=130+、
+  // rVFC=132+、ImageDecoder=133+——Firefox 130/131 有 VP9 isConfigSupported=true
+  // 却无 rVFC，caps 必须拦（否则 MP4 误路由本引擎、Run 必炸）；Firefox 133+
+  // 三件齐 → caps 真、MP4 走 B 快路径属预期。图片路径（kind=image）不查 caps。
   window.stickerWebcodecsProbeSupport = async () => {
     if (typeof VideoEncoder === "undefined" || typeof WebMMuxer === "undefined")
+      return false;
+    if (
+      typeof HTMLVideoElement === "undefined" ||
+      !("requestVideoFrameCallback" in HTMLVideoElement.prototype)
+    )
       return false;
     const r = await VideoEncoder.isConfigSupported({
       codec: "vp09.00.10.08", width: 512, height: 512, bitrate: 500000,

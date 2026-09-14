@@ -69,7 +69,7 @@ pub fn PreviewModal() -> Element {
         match (&key, slot.as_ref()) {
             (Some((p, s)), Some((lp, ls, url))) if lp == p && ls == s => Some(url.clone()),
             _ => {
-                let url = key.as_ref().and_then(|(path, size)| {
+                let url = key.as_ref().and_then(|(path, _size)| {
                     let mime = output_mime(path);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -85,7 +85,7 @@ pub fn PreviewModal() -> Element {
                             .ok()
                             .and_then(|t| t.output_bytes.clone())
                             // 镜像大小与内存不一致（竞态）→ None，走 Loading 兜底
-                            .filter(|b| b.len() as u64 == *size)
+                            .filter(|b| b.len() as u64 == *_size)
                             .map(|bytes| crate::transcoder::web::data_url(mime, &bytes))
                     }
                 });

@@ -25,6 +25,7 @@ extern "C" {
         name: &str,
         bitrate: u32,
         fps: f64,
+        pix_fmt: &str,
         on_progress: &Closure<dyn FnMut(f32)>,
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerWebcodecsProbeSupport)]
@@ -50,7 +51,8 @@ extern "C" {
     fn sticker_webcodecs_cancel();
 }
 
-/// 已解出锁的任务参数（锁不跨 await）。engine/kind 决定运行期分发。
+/// 已解出锁的任务参数（锁不跨 await）。engine/kind 决定运行期分发，
+/// pix_fmt 仅 ffmpeg-wasm 分支消费（MP4=10-bit，GIF/APNG=alpha）。
 pub struct WebJob {
     pub data: Vec<u8>,
     pub name: String,
@@ -58,20 +60,21 @@ pub struct WebJob {
     pub fps: f64,
     pub engine: &'static str,
     pub kind: &'static str,
+    pub pix_fmt: &'static str,
 }
 
 impl Transcoder {
-    /// 阶段 1（锁内，同步）：校验类型、按媒体类型选引擎、求 duration/因子/bitrate
-    /// （复用 effective_duration + resolve_factor——因子惰性初始化与 GIF×0.75 patch
+    /// 阶段 1（锁内，同步）：校验类型、按媒体类型 + WebCodecs caps 选引擎
+    /// （矩阵见 `Engine::for_web`）、求 duration/因子/bitrate（复用
+    /// effective_duration + resolve_factor——因子惰性初始化与 GIF×0.75 patch
     /// 与桌面完全一致）、克隆输入字节。
-    /// 矩阵：GIF/APNG → ffmpeg-wasm（alpha 双流）；MP4/图片 → webcodecs。
     // ponytail: 克隆一次输入字节（典型 ≤5MB）换锁不跨 await；内存实测吃紧改 Rc/Bytes 共享
-    pub fn prepare_web_job(&mut self) -> Result<WebJob, TranscodeError> {
+    pub fn prepare_web_job(&mut self, webcodecs_ok: bool) -> Result<WebJob, TranscodeError> {
         let media_type = self
             .media_file
             .r#type()
             .ok_or(TranscodeError::InvalidMediaType)?;
-        let (engine, kind) = super::Engine::for_web(&media_type);
+        let (engine, kind, pix_fmt) = super::Engine::for_web(&media_type, webcodecs_ok);
         let engine = engine.as_str();
         let bitrate = match media_type {
             MediaType::Video(v) => self.video_bitrate(&v)?,
@@ -89,6 +92,7 @@ impl Transcoder {
             fps: self.target_fps,
             engine,
             kind,
+            pix_fmt,
         })
     }
 
@@ -145,7 +149,8 @@ pub(crate) async fn exec_ffmpeg_wasm(
     let name = job.name.as_str();
     let bitrate = job.bitrate;
     let fps = job.fps;
-    let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, &closure)
+    let pix_fmt = job.pix_fmt;
+    let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, &closure)
         .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
     closure.forget(); // JS 侧仍持有引用（onProgress），实例重建前不再泄漏增长

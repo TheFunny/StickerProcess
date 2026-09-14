@@ -123,7 +123,12 @@ pub async fn run_all(
 ) {
     let settings = ctx.settings.peek().clone();
     let mut index = 0usize;
-
+    // WebCodecs VP9 caps：每次 Run 探一次（glue 已由探测阶段加载，毫秒级）；
+    // 桌面恒 true（wasm 分发不执行，值无消费方）
+    #[cfg(target_arch = "wasm32")]
+    let webcodecs_ok = crate::transcoder::web::webcodecs_supported().await;
+    #[cfg(not(target_arch = "wasm32"))]
+    let webcodecs_ok = true;
     loop {
         // 动态读取队列长度：允许运行中拖入新文件
         let Some(entry) = ctx.tasks.cloned().get(index).cloned() else {
@@ -140,7 +145,16 @@ pub async fn run_all(
             break;
         }
 
-        match run_single_task(&mut ctx, &entry, index, &settings, progress_tx.clone()).await {
+        match run_single_task(
+            &mut ctx,
+            &entry,
+            index,
+            &settings,
+            progress_tx.clone(),
+            webcodecs_ok,
+        )
+        .await
+        {
             TaskOutcome::Advanced => index += 1,
             TaskOutcome::Cancelled => {
                 // 被取消的任务回到 Pending，可再次 Run（cancel_flag 在
@@ -163,7 +177,11 @@ async fn run_single_task(
     index: usize,
     settings: &Settings,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
+    webcodecs_ok: bool,
 ) -> TaskOutcome {
+    // 桌面：caps 仅 wasm 分发消费，此处无引用（bool 是 Copy，不影响 wasm 分支使用）
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = webcodecs_ok;
     let task_arc = Arc::clone(&entry.transcoder);
     let name = file_name(&entry.input_path);
 
@@ -248,7 +266,7 @@ async fn run_single_task(
                 };
                 t.cancel_flag
                     .store(false, std::sync::atomic::Ordering::Relaxed);
-                let job_result = t.prepare_web_job();
+                let job_result = t.prepare_web_job(webcodecs_ok);
                 drop(t);
                 match job_result {
                     Ok(job) => {

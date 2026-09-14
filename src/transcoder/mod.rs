@@ -103,14 +103,19 @@ impl Engine {
     }
 
     /// 网页端引擎矩阵（矩阵即策略，设置值不参与）：
-    /// Gif/Apng → ffmpeg-wasm（alpha 双轨）；Mp4/图片 → webcodecs。
-    /// 第二项为 JS glue 的 kind 参数。
-    pub fn for_web(media_type: &MediaType) -> (Engine, &'static str) {
+    /// Gif/Apng → ffmpeg-wasm（alpha 双轨）；Mp4 → WebCodecs，其 VP9 caps
+    /// 不可用时兜底 ffmpeg-wasm（W4 自建 core，10-bit 已验证）；图片 → webcodecs。
+    /// 返回 (engine, glue kind, ffmpeg-wasm 分支的 pix_fmt)。
+    pub fn for_web(
+        media_type: &MediaType,
+        webcodecs_ok: bool,
+    ) -> (Engine, &'static str, &'static str) {
         use crate::media::{MediaType::*, VideoType::*};
         match media_type {
-            Video(Gif | Apng) => (Engine::FfmpegWasm, "video"),
-            Video(Mp4) => (Engine::Webcodecs, "video"),
-            Image(_) => (Engine::Webcodecs, "image"),
+            Video(Gif | Apng) => (Engine::FfmpegWasm, "video", "yuva420p"),
+            Video(Mp4) if webcodecs_ok => (Engine::Webcodecs, "video", "yuv420p10"),
+            Video(Mp4) => (Engine::FfmpegWasm, "video", "yuv420p10"),
+            Image(_) => (Engine::Webcodecs, "image", "yuva420p"),
         }
     }
 }
@@ -328,24 +333,29 @@ mod tests {
     fn for_web_matrix() {
         use super::Engine;
         use crate::media::{ImageType, MediaType, VideoType};
-        // GIF/APNG → ffmpeg-wasm（alpha 路径）
+        // GIF/APNG → ffmpeg-wasm（alpha 路径），pix_fmt 恒 yuva420p
         assert_eq!(
-            Engine::for_web(&MediaType::Video(VideoType::Gif)),
-            (Engine::FfmpegWasm, "video")
+            Engine::for_web(&MediaType::Video(VideoType::Gif), true),
+            (Engine::FfmpegWasm, "video", "yuva420p")
         );
         assert_eq!(
-            Engine::for_web(&MediaType::Video(VideoType::Apng)),
-            (Engine::FfmpegWasm, "video")
+            Engine::for_web(&MediaType::Video(VideoType::Apng), false),
+            (Engine::FfmpegWasm, "video", "yuva420p")
         );
-        // MP4 → webcodecs video；图片 → webcodecs image
+        // MP4：WebCodecs caps 可用走 webcodecs，否则兜底 ffmpeg-wasm（10-bit）
         assert_eq!(
-            Engine::for_web(&MediaType::Video(VideoType::Mp4)),
-            (Engine::Webcodecs, "video")
+            Engine::for_web(&MediaType::Video(VideoType::Mp4), true),
+            (Engine::Webcodecs, "video", "yuv420p10")
         );
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Mp4), false),
+            (Engine::FfmpegWasm, "video", "yuv420p10")
+        );
+        // 图片 → webcodecs image
         for img in [ImageType::Png, ImageType::Jpg, ImageType::Webp] {
             assert_eq!(
-                Engine::for_web(&MediaType::Image(img)),
-                (Engine::Webcodecs, "image")
+                Engine::for_web(&MediaType::Image(img), true),
+                (Engine::Webcodecs, "image", "yuva420p")
             );
         }
     }

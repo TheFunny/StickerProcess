@@ -9,11 +9,11 @@
 **`alpha:'keep'` 不受支持** → GIF/APNG 透明通道在 B 上被拍扁黑底，而透明是贴纸核心诉求。
 因此矩阵修正为（A 先行，见 W1）：
 
-| 任务类型 | Chrome/Edge 系 | Firefox/Safari |
-|---|---|---|
-| GIF / APNG → webm（需 alpha） | **A**（yuva420p，已验证带透明） | A |
-| MP4 → webm | **B**（~1s 级，demo 7.07s/6s 视频） | ❌ v1 不支持（见 W4） |
-| 图片 → png | B 路径直接可行（Canvas + oxipng wasm），v1 顺带 | 同左 |
+| 任务类型 | Chrome/Edge 系 | Firefox | Safari |
+|---|---|---|---|
+| GIF / APNG → webm（需 alpha） | **A**（yuva420p，已验证带透明） | A | A |
+| MP4 → webm | **B**（~1s 级，demo 7.07s/6s 视频）；B caps（VP9 isConfigSupported + rVFC）不可用时 → A 兜底（W4：yuv420p10 已验证） | 133+ 三件齐，**真机实测走 B Done（2026-09-14）**；130/131 无 rVFC → A | 由 caps 探针判定（VP9 编码支持不稳定，A 兜底恒可用） |
+| 图片 → png | B（Canvas convertToBlob，无 oxipng——见 W2.4 ponytail） | 同左 | 同左 |
 
 非引擎层双端契约（阶段 1 已就绪，无需再动）：
 `MediaFile::from_bytes` / `Transcoder::output_bytes` / `store_output` / `Engine::parse` /
@@ -99,10 +99,14 @@
 
 **目标**: 解决预构建 core 两缺陷（MP4 OOB、无 highbitdepth）。独立工作项，不阻塞 W1–W3。
 
-- [ ] ffmpeg 6/7 emscripten 构建: `--enable-vp9-highbitdepth` + `-sALLOW_MEMORY_GROWTH`
-  + `-sEXPORTED_FUNCTIONS` 对齐 wrapper 期望（参照 E6 静态构建记录 §7 的 vcpkg 配方映射）
-- [ ] 产出替换 `web/vendor/` core；A 引擎范围扩到 MP4（yuv420p10le 桌面对齐）
-- [ ] 回归: A 的 GIF 基线不退化；MP4 端到端通过
+- [x] 自建 core 构建（上游 `f876f90` main，FFmpeg **n5.1.4**——上游有意钉死，n6
+  仅 MT 可行；emsdk 3.1.40 自带 `-sALLOW_MEMORY_GROWTH`、bind.js 导出 ABI，两项无需改动；
+  唯一功能编辑 = libvpx.sh 加 `--enable-vp9-highbitdepth`）
+- [x] 产出替换 core；MP4 接入 ffmpeg-wasm 兜底（WebCodecs caps 不可用时，
+  `Engine::for_web` 三元组 + WebJob.pix_fmt → glue）；桌面 yuv420p10 对齐实测：
+  产物 `vp9 (Profile 2), yuv420p10le`（真 10-bit，预构建回退 8-bit 的缺陷已修）
+- [x] 回归：GIF 基线 35.51KB/10s 无退化；MP4 端到端通过（无头模拟 Firefox：caps→false
+  + 时长 stub 6.0s → Run → Done 208.44KB；OOB 崩溃修复，同实例二次 exec 正常）
 
 ## W5. 收尾与发布
 
@@ -135,8 +139,9 @@ W1/W2 内部：JS 模块先行（demo 已验证，纯搬运），Rust 桥随后�
 
 - **alpha**: B 引擎所有 Chrome 均不支持 `alpha:'keep'`（真机 2026-09-09 实测）——v1 靠矩阵规避；
   双流封装（color+alpha 第二轨，WhatsApp 网页同款）列为 v2 候选
-- **10-bit**: 预构建 core 无 highbitdepth（静默回退 8-bit）——W4 解决
+- **10-bit**: ✅ W4 已解决——自建 core（libvpx highbitdepth）实测 `yuv420p10le`
 - **core 体积**: 32MB 首载（demo 实测本地 ~2s）；CDN/缓存策略 W5 定
-- **MP4 OOB（预构建 core）**: A 引擎 v1 不接 MP4，W4 后放开
+- **MP4 OOB（预构建 core）**: ✅ W4 已解决——自建 core 上 h264→VP9 code=0，
+  同实例二次 exec 不挂；MP4 经 `Engine::for_web` 在 WebCodecs caps 不可用时兜底 ffmpeg-wasm
 - **run_blocking wasm 分支**: 当前直接执行阻塞 UI；W1 接桥时转 Web Worker 或保持
   （转码在 JS worker 内，Rust 侧只是 await Promise，实际不阻塞——实现时确认）

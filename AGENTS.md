@@ -50,7 +50,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
-| `assets/` | Web glue + ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm — the 32MB `.wasm` is gitignored） |
+| `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；32MB `.wasm` gitignore，配方与实测数据见 docs/W4_CORE_BUILD.md |
 
 ## Architecture
 
@@ -234,11 +234,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `command.rs` helpers so all engines stay behaviorally identical. The engine
   string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"` — dispatch
   is `mod.rs::run_with_progress` (desktop), validated by `Settings::engine_valid()`.
-  Web (wasm32) ignores the setting: matrix = policy, decided in
-  `web.rs::prepare_web_job` (GIF/APNG → `ffmpeg-wasm` with alpha; MP4/image →
-  `webcodecs`, VP9 no-alpha; caps via `stickerWebcodecsProbeSupport`, watchdog
-  timeouts on all `<video>` awaits). `resolve_web_engine` is the test-only
-  record of that matrix; desktop keeps `resolve_engine`.
+  Web (wasm32) ignores the setting: matrix = policy, `Engine::for_web(&media_type,
+  webcodecs_ok)` (`mod.rs`) → GIF/APNG = ffmpeg-wasm (yuva420p alpha); MP4 =
+  webcodecs, **fallback ffmpeg-wasm (yuv420p10)** when VP9 caps unavailable (W4
+  self-built core, real 10-bit verified); image = webcodecs. `webcodecs_ok` is
+  probed once per Run in `runner::run_all` (wasm); the tuple's pix_fmt rides on
+  `WebJob` through `stickerFfmpegTranscode`. Desktop keeps `resolve_engine`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
 - Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →
@@ -275,6 +276,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   构建/跑起来前必须手动 cp 到该目录根，改过任一 JS 再 cp 一次（否则用的是旧副本）。
   glue 加载路径是 web **根**（`/ffmpeg-engine.js`，非 `/assets/` 前缀；SPA fallback
   会让缺失路径返回 HTML 伪装 200）。glue 自举：缺 `FFmpegWASM` 全局时注入 `/ffmpeg.js`。
+- **python http.server 无 Cache-Control → 浏览器启发式缓存 wasm/loader JS**：改过 Rust
+  重 `dx build` 后页面仍"不挂载"（`#main` 空、无 console 错误——`__wbg_init` 的 Promise
+  reject 无人 catch），实为吃到旧 `StickerProcess.js` 与新 `StickerProcess_bg.wasm`
+  混搭（wasm-bindgen 符号 hash 撕裂，报 `function import requires a callable`）。
+  排查：对比磁盘 loader 与 wasm 的 `__wbg_*` hash 是否成对；处置：硬刷新/禁缓存重载，
+  不要怀疑构建产物本身。
 - **ffmpeg must be discoverable**: when updating ffmpeg, update BOTH `PATH` and
   `FFMPEG_DIR`, otherwise "ffmpeg not found" errors occur (see `docs/notes.md`).
 - The ffmpeg binding crate is `ffmpeg-the-third` (see `Cargo.toml`, commented
