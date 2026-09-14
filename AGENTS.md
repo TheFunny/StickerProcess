@@ -282,13 +282,13 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   返回 HTML 伪装 200，警惕。
 - **GitHub Pages 部署**：Pages 源 = GitHub Actions（workflow），三件套
   `configure-pages`→`upload-pages-artifact`→`deploy-pages`；push master 即发布，
-  勿手动推 `gh-pages` 分支（已不被读取）。首次切换坑：第一次 deploy 必报
-  `environment protection rules`（源被 configure-pages 同运行内才切成 workflow，
-  自动建的 `github-pages` environment 带残留分支限制），**再跑一次即绿**（Run #1
-  失败 → #3 成功实证；#2 是临时的分支直推变体，已废弃）。用户 PAT 对
-  Pages/env 设置 API 是 404——但 workflow 的 `pages: write` 权限够用。32MB core
-  的 CI 来源 = `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑
-  `build-wasmcore-branch.sh` 再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
+  无手动发布路径（旧 gh-pages 分支 + build-ghpages.sh 已删）。首次从分支源迁到
+  Actions 那次 deploy 报 `environment protection rules`（源被 configure-pages 同
+  运行内才切成 workflow，自动建的 `github-pages` environment 带残留分支限制），
+  **再跑一次即绿**（Run #1 失败 → #3 成功实证）。用户 PAT 对 Pages/env 设置 API
+  是 404——但 workflow 的 `pages: write` 权限够用。32MB core 的 CI 来源 =
+  `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑 `build-wasmcore-branch.sh`
+  再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
 - **python http.server 无 Cache-Control → 浏览器启发式缓存 wasm/loader JS**：改过 Rust
   重 `dx build` 后页面仍"不挂载"（`#main` 空、无 console 错误——`__wbg_init` 的 Promise
   reject 无人 catch），实为吃到旧 `StickerProcess.js` 与新 `StickerProcess_bg.wasm`

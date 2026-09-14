@@ -81,9 +81,9 @@ ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js,favicon.png} \
 改过 assets/ 下任何 JS 后同样要重新 cp（构建目录里的副本不会自动同步）。
 
 `ffmpeg-core-st.wasm`（32 MB）不入库（`.gitignore`），构建网页端前需本地存在
-（获取方式见 docs/W4_CORE_BUILD.md）。glue 加载路径全部是 web **根路径**
-（`/ffmpeg-engine.js` 等），所以托管时产物目录必须挂在域名根，且静态服务器
-不要对未知路径做 SPA fallback 返回 HTML（会伪装成 200 导致加载失败）。
+（获取方式见 docs/W4_CORE_BUILD.md）。glue 加载路径是**相对**页面的（随页面
+base 解析，根域/子路径托管皆可），静态服务器仍不要对未知路径做 SPA fallback
+返回 HTML（会伪装成 200 导致加载失败）。
 
 **缓存**：托管给 `ffmpeg-core-st.*` 配 `Cache-Control: public, max-age=31536000,
 immutable`（首载 32 MB，回访秒开）。托管平台改不了头（如 GitHub Pages）时，重建
@@ -114,11 +114,11 @@ workflow 关键点（踩过的坑都在此固化）：
   target + dx 预编译二进制。build.rs 对 web（非 desktop feature）提前 return，
   CI 无 `FFMPEG_DIR` 也不 panic。
 
-**首次迁移坑（已踩实）**：Pages 源从 gh-pages 分支切到 Actions 的那一次运行，
-deploy 必报 `Branch "master" is not allowed to deploy to github-pages due to
+**首次迁移坑（已踩实）**：Pages 源从旧的 gh-pages 分支切到 Actions 的那一次运行，
+deploy 报 `Branch "master" is not allowed to deploy to github-pages due to
 environment protection rules`——`configure-pages` 同一次运行内才把源切成 workflow，
 自动建的 `github-pages` environment 初始带分支限制，**重跑一次即通过**（#1 失败、
-#3 成功实证）。旧的 `gh-pages` 分支不再被部署读取（留着无害，别手动推）。
+#3 成功实证）。gh-pages 分支与 `build-ghpages.sh` 脚本现已删除，发布只走 push。
 
 ## 构建
 
