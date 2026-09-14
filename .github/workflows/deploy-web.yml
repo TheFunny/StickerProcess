@@ -70,8 +70,29 @@ jobs:
           cp -r target/dx/StickerProcess/release/web/public/. "$out/"
           cp assets/ffmpeg.js assets/814.ffmpeg.js assets/ffmpeg-core-st.js \
              assets/ffmpeg-core-st.wasm assets/ffmpeg-engine.js \
-             assets/webcodecs-engine.js assets/webm-muxer.js assets/favicon.png "$out/"
+             assets/webcodecs-engine.js assets/webm-muxer.js assets/favicon.png \
+             assets/og-image.png "$out/"
           cp "$out/index.html" "$out/404.html"   # Pages 无 SPA fallback，404 兜底
+
+      # 分享爬虫（Discord/Telegram）不执行 JS——dx 0.7.10 不支持自定义 index
+      # 模板，构建后注入静态 description/OG 到 head（App rsx 的 document::Meta
+      # 管运行时/桌面，静态这份管爬虫；og:url/og:image 需绝对 URL 故放 CI）。
+      - name: Inject static head meta
+        run: |
+          python3 - web-dist/index.html web-dist/404.html <<'PY'
+          import sys, pathlib
+          meta = (
+            '<meta name="description" content="Convert images and videos into Telegram stickers — right in your browser, nothing uploaded.">\n'
+            '    <meta property="og:title" content="Sticker Process">\n'
+            '    <meta property="og:description" content="Image/video to Telegram sticker converter running fully client-side (WASM).">\n'
+            '    <meta property="og:type" content="website">\n'
+            '    <meta property="og:url" content="https://thefunny.github.io/StickerProcess/">\n'
+            '    <meta property="og:image" content="https://thefunny.github.io/StickerProcess/og-image.png">'
+          )
+          for p in map(pathlib.Path, sys.argv[1:]):
+              s = p.read_text(encoding="utf-8")
+              p.write_text(s.replace("</head>", meta + "\n    </head>", 1), encoding="utf-8")
+          PY
 
       - uses: actions/configure-pages@v5
 

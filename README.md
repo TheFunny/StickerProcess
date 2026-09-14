@@ -74,7 +74,7 @@ dx build --platform web --release
 
 # ⚠ dx（serve 与 build 皆然）不会把项目 assets/ 拷进产物目录，跑起来/部署前手动补齐：
 cp assets/{ffmpeg.js,814.ffmpeg.js,ffmpeg-core-st.js,ffmpeg-core-st.wasm,\
-ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js,favicon.png} \
+ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js,favicon.png,og-image.png} \
    target/dx/StickerProcess/debug/web/public/    # release 换 release/
 ```
 
@@ -113,6 +113,11 @@ workflow 关键点（踩过的坑都在此固化）：
 - **免装 wasm-bindgen**：dx 自带桥接版本；CI 只装 stable 工具链 + `wasm32-unknown-unknown`
   target + dx 预编译二进制。build.rs 对 web（非 desktop feature）提前 return，
   CI 无 `FFMPEG_DIR` 也不 panic。
+- **分享卡片（OG）**：App rsx 的 `document::Meta` 管运行时，但 Discord/Telegram
+  爬虫不执行 JS——dx 0.7.10 无自定义 index 模板，CI 在组装后跑一步 python 把静态
+  description/OG 注入 `index.html`/`404.html` 的 head（含绝对 `og:url`/`og:image`，
+  图 = `assets/og-image.png`）。本地 `dx build` 不含这步，只有静态 title（来自
+  Dioxus.toml `[web.app] title`）。
 
 **首次迁移坑（已踩实）**：Pages 源从旧的 gh-pages 分支切到 Actions 的那一次运行，
 deploy 报 `Branch "master" is not allowed to deploy to github-pages due to

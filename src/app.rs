@@ -508,9 +508,14 @@ pub fn App() -> Element {
     use_context_provider(move || ctx);
 
     rsx! {
-        // 浏览器标签页：标题 + favicon（href 相对路径——根域/子路径部署都解析
-        // 正确，同 glue 注入套路；favicon.png 随 assets 手动 cp 到 web 根）。
+        // 浏览器标签页 + 分享卡片（OG）：资源路径全部相对页面 base（同 glue
+        // 注入套路；favicon.png/og-image.png 随 assets 手动 cp 到 web 根）。
         document::Title { "Sticker Process" }
+        document::Meta { name: "description", content: "Convert images and videos into Telegram stickers — right in your browser, nothing uploaded." }
+        document::Meta { property: "og:title", content: "Sticker Process" }
+        document::Meta { property: "og:description", content: "Image/video → Telegram sticker converter running fully client-side (WASM)." }
+        document::Meta { property: "og:type", content: "website" }
+        document::Meta { property: "og:image", content: "og-image.png" }
         document::Link { rel: "icon", r#type: "image/png", href: "favicon.png" }
         style { {include_str!("app.css")} }
         DropZone {

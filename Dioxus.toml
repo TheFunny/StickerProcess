@@ -12,8 +12,10 @@ short_description = "图片/短视频转 Telegram 贴纸工具"
 # 文件；inprocess（静态 libav）始终可用。构建矩阵规划见 docs/REFACTOR_PLAN.md P5。
 
 [web]
-# 子路径部署用 `dx build --web --base-path /<repo>/`（TOML 无 base_url 键，
-# 0.7.10 实测只有命令行参数生效）。glue 注入路径为相对路径，随页面 base 解析。
+# 子路径部署用 `dx build --web --release --base-path /StickerProcess/`（命令行参数）。
+[web.app]
+# dx 模板里的静态标题（爬虫读这份；App rsx 的 document::Title 管运行时）。
+title = "Sticker Process"
 
 [bundle.windows]
 # WebView2 安装策略（文档 Bundle.windows）：
