@@ -74,7 +74,7 @@ dx build --platform web --release
 
 # ⚠ dx（serve 与 build 皆然）不会把项目 assets/ 拷进产物目录，跑起来/部署前手动补齐：
 cp assets/{ffmpeg.js,814.ffmpeg.js,ffmpeg-core-st.js,ffmpeg-core-st.wasm,\
-ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js} \
+ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js,favicon.png} \
    target/dx/StickerProcess/debug/web/public/    # release 换 release/
 ```
 
@@ -101,7 +101,7 @@ rm -rf gh-pages-stage && mkdir gh-pages-stage
 cp -r target/dx/StickerProcess/release/web/public/. gh-pages-stage/
 cp assets/ffmpeg.js assets/814.ffmpeg.js assets/ffmpeg-core-st.js \
    assets/ffmpeg-core-st.wasm assets/ffmpeg-engine.js \
-   assets/webcodecs-engine.js assets/webm-muxer.js gh-pages-stage/
+   assets/webcodecs-engine.js assets/webm-muxer.js assets/favicon.png gh-pages-stage/
 cp gh-pages-stage/index.html gh-pages-stage/404.html   # Pages 无 SPA fallback，404 兜底
 bash build-ghpages.sh                                   # gh-pages-stage → gh-pages 孤儿分支
 git push -f origin gh-pages
