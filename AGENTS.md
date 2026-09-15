@@ -154,8 +154,10 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     `cancel_flag` each frame and returns `Cancelled` (Drop chain releases
     libav handles; no orphan processes possible).
 - **Duration inference**: `ffmpeg-the-third` opens the input to read codec id
-  and duration; APNG is assigned a fixed duration of 1 s (no probe). Output
-  filenames are timestamps `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
+  and duration; APNG is assigned a fixed duration of 1 s (no probe); animated
+  webp (codec id `WEBP_ANIM`, container duration N/A) sums packet
+  pts+duration in `probe_desktop`. Output filenames are timestamps
+  `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
 - **Webm duration patch** (`transcoder::steps`): after encoding, the output file
   is read fully into memory, scanned for the binary marker `44 89 88`, and the
   8 bytes after it are overwritten with `100f64` (big-endian) to force a

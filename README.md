@@ -2,8 +2,9 @@
 
 桌面工具：把图片和短视频转换为 **Telegram 贴纸**格式。
 
-- 视频（mp4 / gif / apng）→ 动态贴纸 **webm**（VP9，目标 ≤ 256 KB）
-- 图片（jpg / jpeg / png / webp）→ 静态贴纸 **png**（≤ 512 KB）
+- 视频（mp4 / gif / apng / **动画 webp**）→ 动态贴纸 **webm**（VP9，目标 ≤ 256 KB；
+  webp 按内容识别：容器声明动画才走视频管线）
+- 图片（jpg / jpeg / png / webp 静态）→ 静态贴纸 **png**（≤ 512 KB）
 - 所有媒体等比缩放到 **512×512**（lanczos）
 - 每任务实时进度、超限自动缩系数重试、随时取消、原/成品对比预览
 - 双转码引擎：Sidecar（ffmpeg 子进程，默认）/ In-process（libav，零子进程）
@@ -60,6 +61,8 @@ WebView2 运行时安装策略可在 `Dioxus.toml` 的
 - **GIF/APNG** → ffmpeg.wasm（ST core，透明双轨 VP9）
 - **MP4 / 图片** → WebCodecs（浏览器原生解码 + VP9 编码 + webm-muxer；图片走
   Canvas→PNG）。引擎按媒体类型自动选择（矩阵即策略），无 ffmpeg 下载。
+- **动画 webp**：仅**桌面**识别（probe 转 alpha webm，见"使用"）；网页端暂输出
+  首帧 PNG，动画支持将随双流 alpha 引擎与 GIF 一并落地。
 - 拖拽/选择文件、进度、超限重试、预览、下载、设置持久化（localStorage）全通。
 
 ### 本地运行 / 部署
