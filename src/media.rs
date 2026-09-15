@@ -145,7 +145,7 @@ impl MediaFile {
     #[cfg(feature = "desktop")]
     fn probe_desktop(&mut self) -> Result<(), ffmpeg::Error> {
         let path = self.path().expect("probe on Bytes guarded above");
-        let ictx = ffmpeg::format::input(path)?;
+        let mut ictx = ffmpeg::format::input(path)?;
 
         let duration = ictx.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
@@ -159,12 +159,12 @@ impl MediaFile {
             .video()?;
 
         let id = decoder.id();
+        let anim_webp = id == ffmpeg::codec::id::Id::WEBP_ANIM;
 
         match id {
             ffmpeg::codec::id::Id::PNG
             | ffmpeg::codec::id::Id::MJPEG
             | ffmpeg::codec::id::Id::WEBP => {
-                // implement animated webp?
                 match self.r#type().ok_or(ffmpeg::Error::InvalidData)? {
                     MediaType::Image(_) => {}
                     MediaType::Video(_) => {
@@ -190,6 +190,9 @@ impl MediaFile {
                     self.r#type = Some(match id {
                         ffmpeg::codec::id::Id::GIF => MediaType::Video(VideoType::Gif),
                         ffmpeg::codec::id::Id::APNG => MediaType::Video(VideoType::Apng),
+                        ffmpeg::codec::id::Id::WEBP_ANIM => {
+                            MediaType::Video(VideoType::AnimatedWebP)
+                        }
                         _ => MediaType::Video(VideoType::Mp4),
                     });
                 }
@@ -198,6 +201,18 @@ impl MediaFile {
         };
         if duration > 0f64 {
             self.duration = Some(duration);
+        } else if anim_webp {
+            // webp_anim 容器无 duration（ffprobe N/A）；累加 packet pts+duration
+            // （stream tb 实测 1/1000），取末包上界即总时长。
+            let mut end = 0f64;
+            for (s, p) in ictx.packets().flatten() {
+                let tb = f64::from(s.time_base());
+                let d = (p.duration().max(0) as f64) * tb;
+                end = end.max(p.pts().unwrap_or(0) as f64 * tb + d);
+            }
+            if end > 0.0 {
+                self.duration = Some(end);
+            }
         }
         Ok(())
     }
@@ -214,6 +229,9 @@ pub enum VideoType {
     Mp4,
     Gif,
     Apng,
+    /// 动画 webp（仅桌面：probe 把扩展名阶段的 Image(Webp) 纠正至此；
+    /// 网页端无 probe 纠正路径，恒 Image(Webp) 输出首帧 PNG）。
+    AnimatedWebP,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -250,6 +268,14 @@ mod tests {
     fn test_new_media_file_apng() {
         let media_file = MediaFile::new(Path::new("test.apng"));
         assert_eq!(media_file.r#type, Some(MediaType::Video(VideoType::Apng)));
+    }
+
+    /// 扩展名阶段 webp 恒为静态图：动画 webp 的识别发生在桌面 probe
+    /// （codec id WEBP_ANIM → Video(AnimatedWebP)），此处锁住不误判。
+    #[test]
+    fn anim_webp_extension_stays_image_until_probe() {
+        let media_file = MediaFile::new(Path::new("x.webp"));
+        assert_eq!(media_file.r#type, Some(MediaType::Image(ImageType::Webp)));
     }
 
     #[test]

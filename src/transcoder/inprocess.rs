@@ -69,7 +69,7 @@ impl Transcoder {
         let target_bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
         let out_pix = match v_type {
             VideoType::Mp4 => Pixel::YUV420P10LE,
-            VideoType::Gif | VideoType::Apng => Pixel::YUVA420P,
+            VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => Pixel::YUVA420P,
         };
 
         let input_path = self

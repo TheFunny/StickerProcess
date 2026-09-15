@@ -114,7 +114,7 @@ impl Transcoder {
                 .codec_video("libvpx-vp9")
                 .pix_fmt(match v_type {
                     VideoType::Mp4 => "yuv420p10",
-                    VideoType::Gif | VideoType::Apng => "yuva420p",
+                    VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => "yuva420p",
                 })
                 .crf(VP9_CRF)
                 .args(["-b:v", &target_bitrate.to_string()])

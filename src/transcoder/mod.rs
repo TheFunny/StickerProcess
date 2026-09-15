@@ -106,6 +106,8 @@ impl Engine {
     /// Gif/Apng → ffmpeg-wasm（alpha 双轨）；Mp4 → WebCodecs，其 VP9 caps
     /// 不可用时兜底 ffmpeg-wasm（W4 自建 core，10-bit 已验证）；图片 → webcodecs。
     /// 返回 (engine, glue kind, ffmpeg-wasm 分支的 pix_fmt)。
+    /// `Video(AnimatedWebP)` 仅桌面存在（probe 纠正产物）；web 端动画 webp
+    /// 恒为 Image(Webp)（输出首帧 PNG），兜底臂纯防编译期不穷尽。
     pub fn for_web(
         media_type: &MediaType,
         webcodecs_ok: bool,
@@ -114,7 +116,7 @@ impl Engine {
         match media_type {
             Video(Gif | Apng) => (Engine::FfmpegWasm, "video", "yuva420p"),
             Video(Mp4) if webcodecs_ok => (Engine::Webcodecs, "video", "yuv420p10"),
-            Video(Mp4) => (Engine::FfmpegWasm, "video", "yuv420p10"),
+            Video(_) => (Engine::FfmpegWasm, "video", "yuv420p10"),
             Image(_) => (Engine::Webcodecs, "image", "yuva420p"),
         }
     }
@@ -358,5 +360,10 @@ mod tests {
                 (Engine::Webcodecs, "image", "yuva420p")
             );
         }
+        // AnimatedWebP 仅桌面出现；若真到 web 侧，兜底 ffmpeg-wasm 无害（web 恒 Image(Webp)）
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::AnimatedWebP), true),
+            (Engine::FfmpegWasm, "video", "yuv420p10")
+        );
     }
 }
