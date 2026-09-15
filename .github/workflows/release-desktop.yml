@@ -49,11 +49,29 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      - name: Bundle NSIS installer
-        run: dx bundle --platform windows --package-types nsis --release
+      # 两个安装包变体：Dioxus.toml 的 webview_install_mode 无命令行覆盖，
+      # 只能 sed 改 TOML 换装两次（本地实测 Skip 模式出包正常）。
+      # OfflineInstaller 内嵌 WebView2（大而稳），Skip 依赖系统已装 WebView2
+      # （小，Win11 自带）。shell: bash —— runner 默认 pwsh 不认 sed/ls。
+      - name: Bundle NSIS installer (offline webview)
+        shell: bash
+        run: |
+          dx bundle --platform windows --package-types nsis --release
+          f=$(ls target/dx/StickerProcess/bundle/windows/nsis/StickerProcess_*-setup.exe)
+          mv "$f" "${f%-setup.exe}-setup-webview.exe"
+
+      - name: Bundle NSIS installer (skip webview)
+        shell: bash
+        run: |
+          sed -i 's/webview_install_mode = { OfflineInstaller = { silent = true } }/webview_install_mode = { Skip = { } }/' Dioxus.toml
+          dx bundle --platform windows --package-types nsis --release
+          f=$(ls target/dx/StickerProcess/bundle/windows/nsis/StickerProcess_*-setup.exe)
+          mv "$f" "${f%-setup.exe}-setup-no-webview.exe"
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: target/dx/StickerProcess/bundle/windows/nsis/*.exe
+          files: |
+            target/dx/StickerProcess/bundle/windows/nsis/*-setup-webview.exe
+            target/dx/StickerProcess/bundle/windows/nsis/*-setup-no-webview.exe
