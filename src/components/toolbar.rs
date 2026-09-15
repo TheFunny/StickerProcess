@@ -1,6 +1,7 @@
 //! 工具栏：添加文件、清空完成、设置入口、主题切换、取消、运行按钮。
 //!
 //! Phase B：输出目录直接读写 `Settings`（即时同步落盘）；重试次数移入设置面板。
+//! web：输出目录行整体不渲染（产物驻内存走下载）；新增 Download All。
 
 use crate::app::{SUPPORTED, UiState};
 use dioxus::prelude::*;
@@ -35,6 +36,57 @@ pub fn Toolbar() -> Element {
         }
         .into()
     }
+
+    // web：产物驻内存，逐个点下载太累——一键顺序下载全部 Done（400ms 间隔
+    // 防浏览器多文件拦截，首次弹"允许"）。rsx 元素级 #[cfg] 不被解析，
+    // 按 settings_panel engine_select 的 let 双分支先例处理。
+    #[cfg(target_arch = "wasm32")]
+    let extra_btn = rsx! {
+        button {
+            class: "btn",
+            disabled: running
+                || !ctx
+                    .tasks
+                    .cloned()
+                    .iter()
+                    .any(|e| e.status == crate::transcoder::Status::Done),
+            onclick: move |_| ctx.download_all(),
+            "Download All"
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let extra_btn = rsx! {};
+
+    // 输出目录仅桌面有意义（web 无文件系统），整行 let 双分支。
+    #[cfg(not(target_arch = "wasm32"))]
+    let output_row = rsx! {
+        div { class: "row",
+            span { class: "label", "Output Dir:" }
+            input {
+                class: if ctx.settings.read().output_dir_valid() {
+                    "input grow"
+                } else {
+                    "input grow invalid-dir"
+                },
+                r#type: "text",
+                placeholder: "Type output directory here",
+                value: "{ctx.settings.read().output_dir}",
+                disabled: running,
+                oninput: move |evt: Event<FormData>| {
+                    let value = evt.data.value();
+                    ctx.update_settings(move |s| s.output_dir = value);
+                },
+            }
+            button {
+                class: "btn",
+                disabled: running,
+                onclick: move |_| ctx.pick_output_dir(),
+                "Select"
+            }
+        }
+    };
+    #[cfg(target_arch = "wasm32")]
+    let output_row = rsx! {};
 
     rsx! {
         div { class: "row",
@@ -76,6 +128,7 @@ pub fn Toolbar() -> Element {
                 onclick: move |_| ctx.clear_done(),
                 "Clear Done"
             }
+            {extra_btn}
             button {
                 class: "btn",
                 disabled: running,
@@ -103,30 +156,6 @@ pub fn Toolbar() -> Element {
                 "Run"
             }
         }
-
-        div { class: "row",
-            span { class: "label", "Output Dir:" }
-            input {
-                class: if ctx.settings.read().output_dir_valid() {
-                    "input grow"
-                } else {
-                    "input grow invalid-dir"
-                },
-                r#type: "text",
-                placeholder: "Type output directory here",
-                value: "{ctx.settings.read().output_dir}",
-                disabled: running,
-                oninput: move |evt: Event<FormData>| {
-                    let value = evt.data.value();
-                    ctx.update_settings(move |s| s.output_dir = value);
-                },
-            }
-            button {
-                class: "btn",
-                disabled: running,
-                onclick: move |_| ctx.pick_output_dir(),
-                "Select"
-            }
-        }
+        {output_row}
     }
 }

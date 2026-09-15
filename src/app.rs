@@ -330,6 +330,34 @@ impl UiState {
             .with_mut(|list| list.retain(|task| task.status != Status::Done));
     }
 
+    /// 一键下载全部 Done 任务的产物（web：字节驻内存，顺序触发浏览器下载，
+    /// 400ms 间隔防多文件拦截）。无锁镜像名 + 锁内克隆字节（单线程 wasm，
+    /// 与 task_list 行内下载同法）。
+    #[cfg(target_arch = "wasm32")]
+    pub fn download_all(&mut self) {
+        let items: Vec<(Vec<u8>, String)> = self
+            .tasks
+            .cloned()
+            .iter()
+            .filter(|e| e.status == Status::Done)
+            .filter_map(|e| {
+                let bytes = e.transcoder.lock().ok()?.output_bytes.clone()?;
+                let name = e
+                    .output_file_name
+                    .clone()
+                    .unwrap_or_else(|| "sticker.webm".into());
+                Some((bytes, name))
+            })
+            .collect();
+        spawn(async move {
+            for (bytes, name) in items {
+                if crate::transcoder::web::sticker_download(&bytes, &name).is_err() {
+                    log::error!("download failed: glue missing");
+                }
+                crate::timers::sleep(std::time::Duration::from_millis(400)).await;
+            }
+        });
+    }
     /// 重试单个任务：Alert/SizeExcess → Pending（保留用户系数，重跑由 Run 触发）。
     pub fn retry_task(&mut self, index: usize) {
         self.with_task(index, |t| t.status = Status::Pending);

@@ -104,6 +104,35 @@ pub fn SettingsPanel() -> Element {
         }
     };
 
+    // 输出目录仅桌面有意义（web 产物驻内存走下载）；rsx 元素级 #[cfg] 不被
+    // 解析，按 engine_select 的 let 双分支先例处理。
+    #[cfg(not(target_arch = "wasm32"))]
+    let output_dir_row = rsx! {
+        div { class: "settings-row",
+            span { class: "label", "Output Dir" }
+            input {
+                class: if ctx.settings.read().output_dir_valid() {
+                    "input grow"
+                } else {
+                    "input grow invalid-dir"
+                },
+                r#type: "text",
+                value: "{ctx.settings.read().output_dir}",
+                oninput: move |evt: Event<FormData>| {
+                    let value = evt.data.value();
+                    ctx.update_settings(move |s| s.output_dir = value);
+                },
+            }
+            button {
+                class: "btn",
+                onclick: move |_| ctx.pick_output_dir(),
+                "Select"
+            }
+        }
+    };
+    #[cfg(target_arch = "wasm32")]
+    let output_dir_row = rsx! {};
+
     rsx! {
         div {
             class: "modal-backdrop",
@@ -124,27 +153,7 @@ pub fn SettingsPanel() -> Element {
                 onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                 h2 { class: "modal-title", "Settings" }
 
-                div { class: "settings-row",
-                    span { class: "label", "Output Dir" }
-                    input {
-                        class: if ctx.settings.read().output_dir_valid() {
-                            "input grow"
-                        } else {
-                            "input grow invalid-dir"
-                        },
-                        r#type: "text",
-                        value: "{ctx.settings.read().output_dir}",
-                        oninput: move |evt: Event<FormData>| {
-                            let value = evt.data.value();
-                            ctx.update_settings(move |s| s.output_dir = value);
-                        },
-                    }
-                    button {
-                        class: "btn",
-                        onclick: move |_| ctx.pick_output_dir(),
-                        "Select"
-                    }
-                }
+                {output_dir_row}
 
                 div { class: "settings-row",
                     span { class: "label", "Max retry" }
