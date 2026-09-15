@@ -3,7 +3,8 @@
 /input
 /out
 /output
-/ico
+/ico/*
+!/ico/icon.ico
 /archive
 /docs/notes.md
 /.cargo/config.toml
