@@ -10,9 +10,10 @@
 ## 获取
 
 - **网页版**：<https://thefunny.github.io/StickerProcess/>（拖入文件 → Run → 下载）
-- **桌面版**：<https://github.com/TheFunny/StickerProcess/releases/latest>，两个安装包：
-  `*-setup-webview.exe`（内嵌 WebView2 离线安装器，任何 Win10/11 可装）或
-  `*-setup-no-webview.exe`（体积小，要求系统已装 WebView2 运行时——Win11 自带）
+- **桌面版**：<https://github.com/TheFunny/StickerProcess/releases/latest>：
+  `*-setup-webview.exe`（安装版，内嵌 WebView2 离线安装器，任何 Win10/11 可装）、
+  `*-setup-no-webview.exe`（安装版，体积小，要求系统已装 WebView2 运行时——Win11 自带）、
+  `*-portable.exe`（免安装便携版，解压即跑，零 DLL 依赖）
 
 ## 使用（桌面版）
 

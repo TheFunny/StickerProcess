@@ -72,6 +72,16 @@ jobs:
           b=$(basename "$f")
           cp "$f" "dist/${b%-setup.exe}-setup-no-webview.exe"
 
+      # 便携版：静态构建 exe 零 DLL 依赖（FFMPEG_DIR 树只链 .lib），解压即跑。
+      # 显式 cargo build --release 保证 target/release/ 产物存在（不赌 dx bundle
+      # 的内部输出路径；缓存热时该步近乎秒过）。
+      - name: Build portable exe
+        shell: bash
+        run: |
+          cargo build --release
+          v=${GITHUB_REF_NAME#v}
+          cp target/release/StickerProcess.exe "dist/StickerProcess_${v}_x64-portable.exe"
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
