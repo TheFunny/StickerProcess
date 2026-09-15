@@ -80,11 +80,11 @@ async fn run_all(state) {
 - 拖拽: 已验证的 `ondrop` + 悬停高亮挂 `ondragover` (Windows 不触发 dragenter)
 - 文件对话框: 隐藏 `<input type="file" multiple accept=...>` 由按钮触发
 
-### A5. 验收 (与 iced 版行为对等)
+### A5. 验收（与 iced 版行为对等）✅（对照物已归档 `archive/`，以现行测试与使用为准收口）
 
-- [ ] 三种输入 (mp4/gif/apng/jpg/png) 转码结果与现版一致
-- [ ] 尺寸重试逻辑 (256KB/512KB 上限、系数调整) 一致
-- [ ] 拖拽添加、输出目录选择、清空完成一致
+- [x] 输入类型转码正常（mp4/gif/apng/png/jpg；测试 41 绿 + 日常使用；后扩展 webp/动画 webp）
+- [x] 尺寸重试逻辑 (256KB/512KB 上限、系数调整) —— `runner`/`command` 单测覆盖
+- [x] 拖拽添加、输出目录选择、清空完成 —— W5/本轮均实测在线
 
 ## 3. 新增功能
 
@@ -105,11 +105,11 @@ async fn run_all(state) {
 | 目标码率基准 | 256*1024*8 | [ ] 高级选项, 暂缓 |
 | ffmpeg 路径 | 自动 (PATH/FFMPEG_DIR) | [ ] 暂缓 (探测走链接的 libav, 仅覆盖 CLI 路径语义不完整) |
 | 主题 | 浅色 | [x] 已持久化 (use_effect 同步 data-theme) |
-| 语言 | 中文 | [ ] 低优先, 暂缓 |
+| 语言 | — | [x] 关闭：UI 已全英文化（含引擎下拉），i18n 仍低优先（REFACTOR_PLAN P4） |
 | 并行任务数 | 1 | [ ] 预留 (见 D4) |
 
 - 实现: `config.rs` (load/save/默认值/回填输出目录 + 往返单测) + `settings_panel.rs` 模态弹窗
-- 保存时机: 变更即写 (500ms 防抖, 代数计数器保证最新一次落盘)
+- 保存时机: 变更即写（同步 `fs::write`，文件 ~200B；同步执行防逐键异步写撕裂——见 AGENTS.md）
 
 ### C. 优化功能与视觉提示 (Phase C) ✅ 已完成 (2026-08)
 

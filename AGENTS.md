@@ -4,18 +4,23 @@ Guidance for AI agents working in this repository.
 
 ## Project Overview
 
-**StickerProcess** is a desktop tool that converts images and short videos into
-**Telegram-style stickers**, implemented in **Rust** with the **Dioxus 0.7** desktop
-GUI (wry/WebView2):
+**StickerProcess** is a desktop **and web** tool that converts images and short
+videos into **Telegram-style stickers**, implemented in **Rust** with the
+**Dioxus 0.7** GUI (wry/WebView2 desktop, wasm/web feature in-browser):
 
-- Video (mp4 / gif / apng) → animated sticker in **webm** (libvpx-vp9), target ≤ **256 KB**
+- Video (mp4 / gif / apng / animated webp) → animated sticker in **webm**
+  (libvpx-vp9), target ≤ **256 KB**
 - Image (jpg / jpeg / png / webp) → static sticker in **png**, target ≤ **512 KB**
 - All media is scaled to fit **512×512** with aspect ratio preserved
   (`scale=512:512:force_original_aspect_ratio=decrease`, lanczos)
+- Web build is live at <https://thefunny.github.io/StickerProcess/> (W series,
+  see `docs/WEB_PLAN.md`; dual engine = ffmpeg.wasm + WebCodecs, matrix = policy).
+  Animated webp is desktop-only (web outputs first-frame png until dual-stream
+  alpha lands — spike verdict: WebCodecs can't, see `docs/WEB_DEMO_FINDINGS_C.md`).
 
 E6 Phase 1 added an in-process transcoding engine (libav via `ffmpeg-the-third`),
-selected by the `engine` setting (`"inprocess"` is always available and is
-the practical default; `"sidecar"` requires a detected ffmpeg.exe). Sidecar
+selected by the `engine` setting (default `"sidecar"` in `config.rs`;
+`"inprocess"` is always available and is the runtime fallback; `"sidecar"` requires a detected ffmpeg.exe). Sidecar
 availability is probed once at startup (`src/sidecar_probe.rs`: exe adjacent
 to the app, else PATH, plus a `libvpx-vp9` encoder check); the settings
 dropdown disables sidecar when unavailable, and the runner falls back to
@@ -32,19 +37,22 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/runner.rs` | Async transcode loop: `run_all` → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
-| `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check), duration, output path; enums; unit tests |
+| `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check incl. animated-webp → `Video(AnimatedWebP)` correction + packet-summed duration), duration, output path; enums; unit tests |
 | `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch via shared `patch_webm_bytes`, sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
+| `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）；另有 `poll_step()` 200ms 步进 |
+| `build-wasmcore-branch.sh` | 把 `assets/ffmpeg-core-st.wasm` 灌成 `wasm-core` 孤儿分支并推送（core 的远端唯一出处，CI 取件处） |
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
-| `docs/E6_INPROCESS_RESEARCH.md` | In-process transcoding: E6 phase-1 design, API verification, and the static-build record (§7) |
+| `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
+| `docs/WEB_DEMO_FINDINGS_C.md` | Route C spike: WebCodecs in-block alpha webm **not feasible** (encoder accepts I420A but emits no alpha bitstream) — kills dual-track plan |
+| `docs/W4_CORE_BUILD.md` | Self-built ffmpeg.wasm core recipe (Docker/WSL), rollback record; the built wasm lives ONLY on the `wasm-core` orphan branch |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
 | `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
-| `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `docs/notes.md` | Developer notes, gitignored (see Gotchas) |
@@ -64,8 +72,9 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `UiState::update_settings(…)` — it applies the closure, then **synchronously**
   saves to `%APPDATA%/StickerProcess/settings.toml` (file is ~200 B, sub-ms write;
   sync execution prevents torn/out-of-order writes from per-keystroke async saves).
-  Invalid output dirs (nonexistent, uncreatable parent) render both toolbar and
-  settings inputs with a red border via `Settings::output_dir_valid()`.
+  Invalid output dirs (nonexistent, uncreatable parent) render the toolbar and
+  settings inputs with a red border via `Settings::output_dir_valid()`
+  (desktop only — on web both rows are not rendered at all).
   Missing/corrupt file falls back to defaults at load. Size limits,
   the duration-factor table and the forced FPS are synced onto each `Transcoder`
   by the runner before every attempt; the retry shrink factor is applied by the
@@ -113,8 +122,13 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   cached per (output_path, output_size) in the component (no re-encode on
   10Hz progress updates). Esc closes modals (backdrop autofocuses via
   `onmounted` + `set_focus`, so no input click needed first).
-- **Row output link**: clicking the output size text runs
-  `explorer /select,<path>` to reveal the file in Explorer.
+- **Row output link**: desktop — clicking the output size text runs
+  `explorer /select,<path>` to reveal the file in Explorer. Web — the same click
+  triggers a browser download of `output_bytes` via `stickerDownload`; the
+  toolbar additionally has **Download All** (`UiState::download_all`, sequential
+  with 400 ms spacing) and the Output Dir row is not rendered at all on wasm
+  (components use the `let`-binding dual-branch pattern; rsx element-level
+  `#[cfg]` is NOT parsed).
 - **Status**: `Probing` (async probe in flight), `Pending`, `Processing`,
   `Done`, `Alert` (error), `SizeExcess` (retry-able); badge colors map to CSS
   classes in `app.css`.
@@ -124,8 +138,8 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 - **Transcoding**:
   - Video bitrate (both engines): `-b:v` computed from target size and
     duration (`256 * 1024 * 8 bits / duration_seconds`), `-bufsize = b:v * 1.5`,
-    `-row-mt 1`, `crf 26`, pix_fmt yuv420p10le (mp4) / yuva420p (gif, apng),
-    no audio.
+    `-row-mt 1`, `crf 26`, pix_fmt yuv420p10le (mp4) / yuva420p (gif, apng,
+    animated webp), no audio.
   - Image → png: sidecar pipes PNG over stdout; inprocess png-encodes the
     filtered frame in memory; both then run the shared oxipng helper
     (`write_optimized_png`: preset 4, safe strip, alpha optimize).
@@ -179,7 +193,7 @@ run lazily initializes it.
 ```bash
 cargo run            # debug
 cargo build --release
-cargo test           # 40 unit tests + 3 #[ignore] libav smoke tests
+cargo test           # 41 unit tests + 5 #[ignore] libav smoke tests
 cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
 
 # web (wasm32): engine matrix runs in browser; core assets in assets/ (32MB wasm gitignored)
@@ -187,9 +201,11 @@ cargo check --target wasm32-unknown-unknown --no-default-features --features web
 dx serve --platform web
 ```
 
-Test count: 40 unit tests across media/config/command/preview/app/steps/
-inprocess/runner, plus 3 integration smoke tests (`inprocess_video_smoke`,
-`inprocess_gif_smoke`, `inprocess_image_smoke`) that require the static
+Test count: 41 unit tests across media/config/command/preview/app/steps/
+inprocess/runner, plus 5 integration smoke tests (`inprocess_video_smoke`,
+`inprocess_gif_smoke`, `inprocess_image_smoke`,
+`image_has_no_size_factor_after_transcode`,
+`force_fps_frame_count_matches_sidecar`) that require the static
 ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
 `SMOKE_INPUT` env var to transcode an arbitrary input.
 
@@ -240,9 +256,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   Web (wasm32) ignores the setting: matrix = policy, `Engine::for_web(&media_type,
   webcodecs_ok)` (`mod.rs`) → GIF/APNG = ffmpeg-wasm (yuva420p alpha); MP4 =
   webcodecs, **fallback ffmpeg-wasm (yuv420p10)** when VP9 caps unavailable (W4
-  self-built core, real 10-bit verified); image = webcodecs. `webcodecs_ok` is
-  probed once per Run in `runner::run_all` (wasm); the tuple's pix_fmt rides on
-  `WebJob` through `stickerFfmpegTranscode`. Desktop keeps `resolve_engine`.
+  self-built core, real 10-bit verified); image = webcodecs. Animated webp is
+  desktop-only (`Video(AnimatedWebP)` never reaches `for_web`; catch-all arm
+  pins it to ffmpeg-wasm harmlessly — web side keeps it as Image(Webp) →
+  first-frame png). `webcodecs_ok` is probed once per Run in `runner::run_all`
+  (wasm); the tuple's pix_fmt rides on `WebJob` through
+  `stickerFfmpegTranscode`. Desktop keeps `resolve_engine`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
 - Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →
@@ -259,6 +278,8 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   3. `src/media.rs` — extension match + enum variant + a unit test
   4. `src/transcoder/command.rs` — pix_fmt / codec handling, plus
      `MediaFile::probe` codec correction in `src/media.rs`
+  Same-extension dual type (animated webp) skips 1–2 (extension exists) and adds
+  a `VideoType` variant + probe detection instead; `for_web` gets a catch-all.
 
 ## Gotchas
 - **wasm 平台三坑**（W1 实测，全部静默崩上下文/死锁，报错无栈）：
@@ -272,7 +293,7 @@ offline from the registry cache while `Cargo.lock` stays untouched.
      `writeFile` 会 transfer 所有权，glue 必须先 `new Uint8Array(data).slice()`。
 - **dragover 期间 `dataTransfer.files` 恒空**（规范保护模式，文件仅 drop 时可见）——
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
-- **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core 七件套
+- **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core + 图标全套
   （`ffmpeg.js` wrapper、`814.ffmpeg.js` classic worker、`ffmpeg-core-st.{js,wasm}`
   32MB gitignore、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`、
   `favicon.png`、`og-image.png`）。

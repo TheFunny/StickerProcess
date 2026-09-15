@@ -75,8 +75,11 @@
   `prepare_web_job` 的 engine/kind 分发，两段式不跨 await 持锁）
 - [x] **W2.4 图片 → png**（Canvas 重绘 512 fit → `convertToBlob(png)`；
   `ponytail:` oxipng 在 wasm 需 clang 工具链，浏览器 PNG 直出足够 <512KB，超限再接）
-- [ ] **W2.5 验收**: `dx serve` 拖 `input/1.mp4` → Run → Done ≤256KB
-  （基线: demo 7.07s/102.5KB）；Firefox 打开 → MP4 任务提示"浏览器不支持"
+- [x] **W2.5 验收**：拖 `input/1.mp4` → Run → Done ≤256KB（真机 Firefox 实测通过，
+  走 B 快路径）。原预期"Firefox → 提示浏览器不支持"已被证伪——Firefox 133+ 三件齐
+  （WebCodecs/rVFC/ImageDecoder），caps 探针返真、MP4 走 WebCodecs 正常；非 Chromium
+  的 MP4 兜底 ffmpeg-wasm 仅对 caps 不可用的浏览器（Firefox 130/131 无 rVFC、
+  Safari VP9 preview）生效（见 W4 与 WEB_DEMO_FINDINGS_B 修正）
 
 ## W3. 网页端 UI/IO 收尾（两引擎共用）
 
@@ -138,9 +141,11 @@ W1/W2 内部：JS 模块先行（demo 已验证，纯搬运），Rust 桥随后�
 ## 风险与既知限制
 
 - **alpha**: B 引擎所有 Chrome 均不支持 `alpha:'keep'`（真机 2026-09-09 实测）——v1 靠矩阵规避；
-  双流封装（color+alpha 第二轨，WhatsApp 网页同款）列为 v2 候选
+  双流 in-block 封装已 spike 判死（WebCodecs 收下 I420A 但不产 alpha 位流，产物是
+  骗过探测的坏文件，见 WEB_DEMO_FINDINGS_C）
 - **10-bit**: ✅ W4 已解决——自建 core（libvpx highbitdepth）实测 `yuv420p10le`
-- **core 体积**: 32MB 首载（demo 实测本地 ~2s）；CDN/缓存策略 W5 定
+- **core 体积**: 32MB 首载（本地 ~3s，CI/CDN 视网络）；✅ v2 已做流式进度映射 +
+  immutable 缓存头配方（README）；IndexedDB 判定不做（HTTP 缓存等价）
 - **MP4 OOB（预构建 core）**: ✅ W4 已解决——自建 core 上 h264→VP9 code=0，
   同实例二次 exec 不挂；MP4 经 `Engine::for_web` 在 WebCodecs caps 不可用时兜底 ffmpeg-wasm
 - **run_blocking wasm 分支**: 当前直接执行阻塞 UI；W1 接桥时转 Web Worker 或保持
