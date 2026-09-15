@@ -52,13 +52,14 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
 | `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
+| `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）→ 产物改名 `-setup-webview.exe`/`-setup-no-webview.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
 | `docs/notes.md` | Developer notes, gitignored (see Gotchas) |
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
-| `ico/`, `input/`, `out/`, `output/`, `target/` | App icon, media IO, build/cache dirs (gitignored) |
+| `ico/` | App icon：`icon.ico`（5-image PNG-in-ICO，tracked——CI 打包需要）；其余尺寸 png gitignored。`input/`/`out/`/`output/`/`target/` 全 gitignored |
 | `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm）、`favicon.png`（tab 图标）与 `og-image.png`（分享卡片图；两者 App rsx `document::Link`/`Meta` 相对路径引用）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；32MB `.wasm` gitignore，远端唯一出处 = `wasm-core` 孤儿分支（`build-wasmcore-branch.sh` 重建后 push -f，CI 从此取），配方与实测数据见 docs/W4_CORE_BUILD.md |
 
 ## Architecture
