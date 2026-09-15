@@ -1,0 +1,59 @@
+name: Build desktop release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install dx CLI
+        shell: bash
+        run: |
+          curl -sSL -o dx.zip \
+            https://github.com/dioxuslabs/dioxus/releases/download/v0.7.10/dx-x86_64-pc-windows-msvc.zip
+          unzip -o dx.zip -d "$CARGO_HOME/bin"
+          dx --version
+
+      # 预构建静态 ffmpeg（过渡：手工 vcpkg 构建存于 ffmpeg-static-win Releases；
+      # 阶段2：该仓库 CI 自建后替换此处 tag 即可）。
+      - name: Fetch prebuilt ffmpeg static libs
+        shell: bash
+        run: |
+          mkdir -p ffmpeg-dist
+          curl -sSL -o ff.tar.xz \
+            https://github.com/TheFunny/ffmpeg-static-win/releases/download/ffmpeg-static-v1/ffmpeg-static-x64-win.tar.xz
+          tar xJf ff.tar.xz -C ffmpeg-dist
+          test -f ffmpeg-dist/lib/avcodec.lib
+          echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Bundle NSIS installer
+        run: dx bundle --platform windows --package-types nsis --release
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/dx/StickerProcess/bundle/windows/nsis/*.exe
