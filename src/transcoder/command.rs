@@ -3,7 +3,9 @@
 //! 纯函数独立出来以便脱离 ffmpeg 进程单测（E6）。
 
 use super::{TranscodeError, Transcoder};
-use crate::media::{MediaType, VideoType};
+#[cfg(feature = "desktop")]
+use crate::media::MediaType;
+use crate::media::VideoType;
 #[cfg(feature = "desktop")]
 use ffmpeg_sidecar::command::FfmpegCommand;
 

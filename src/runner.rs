@@ -15,6 +15,7 @@ use crate::media::MediaType;
 use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, shrunk_factor};
 use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 /// 单个任务的实时进度更新（进度接收循环消费）。
@@ -224,8 +225,6 @@ async fn run_single_task(
         // （std::time::Instant 在 wasm 未实现——桌面才有计时）
         #[cfg(not(target_arch = "wasm32"))]
         let started = Instant::now();
-        #[cfg(target_arch = "wasm32")]
-        let started = ();
         let result = {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -255,18 +254,21 @@ async fn run_single_task(
                 // wasm：两段式（锁内 prepare → await JS 引擎 → 锁内 finish），
                 // 锁均不跨 await。重试时 prepare_web_job 以收缩后的因子重算 bitrate。
                 let tx = progress_tx.clone();
-                let Ok(mut t) = task_arc.lock() else {
-                    // 锁中毒跳过前先收 watcher：否则轮询任务与其 clone 的
-                    // cancel_flag 泄漏，该任务下次 Run 秒"取消"
-                    if let Some(w) = watcher.take() {
-                        w.cancel();
-                    }
-                    return TaskOutcome::Advanced;
+                // 块作用域收锁：guard 在块尾释放（显式 drop(t) 会让 clippy
+                // 误报 await_holding_lock，形状也像真有锁跨 await 的 bug）
+                let job_result = {
+                    let Ok(mut t) = task_arc.lock() else {
+                        // 锁中毒跳过前先收 watcher：否则轮询任务与其 clone 的
+                        // cancel_flag 泄漏，该任务下次 Run 秒"取消"
+                        if let Some(w) = watcher.take() {
+                            w.cancel();
+                        }
+                        return TaskOutcome::Advanced;
+                    };
+                    t.cancel_flag
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    t.prepare_web_job(webcodecs_ok)
                 };
-                t.cancel_flag
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                let job_result = t.prepare_web_job(webcodecs_ok);
-                drop(t);
                 match job_result {
                     Ok(job) => {
                         let engine = job.engine;

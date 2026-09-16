@@ -25,7 +25,9 @@ use ffmpeg_sidecar::event::FfmpegEvent;
 use crate::media::{MediaFile, MediaType};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(feature = "desktop")]
+use std::sync::atomic::Ordering;
 
 /// 内存字节 → base64 data URL（预览输出轨，两平台共用；≤512KB 编码毫秒级）。
 pub fn data_url(mime: &str, bytes: &[u8]) -> String {

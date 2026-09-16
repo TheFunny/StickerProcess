@@ -5,6 +5,7 @@
 
 use crate::app::{SUPPORTED, UiState};
 use dioxus::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 /// 文件选择器 accept 属性，从 SUPPORTED 常量派生（避免手写漂移）。

@@ -136,9 +136,7 @@ pub(crate) async fn exec_ffmpeg_wasm(
         (*op_core.borrow_mut())(pct * 0.3);
     }); // ponytail: core 下载期不可取消，ready resolve 后统一查 cancel_flag
     let ready = sticker_ffmpeg_ready(&core_closure).map_err(|e| js_error(e, &cancel_flag))?;
-    js_sys::Promise::from(ready)
-        .await
-        .map_err(|e| js_error(e, &cancel_flag))?;
+    ready.await.map_err(|e| js_error(e, &cancel_flag))?;
     drop(core_closure); // JS 已 resolve，闭包不再可达
 
     if cancel_flag.load(Ordering::Relaxed) {
@@ -224,7 +222,7 @@ pub async fn webcodecs_supported() -> bool {
     let Ok(promise) = sticker_webcodecs_probe_support() else {
         return false;
     };
-    js_sys::Promise::from(promise)
+    promise
         .await
         .ok()
         .and_then(|v| v.as_bool())
@@ -254,7 +252,7 @@ pub(crate) async fn native_probe(name: &str, data: &[u8]) -> NativeProbe {
     let Ok(promise) = sticker_native_probe(name, data) else {
         return unknown();
     };
-    let Ok(v) = js_sys::Promise::from(promise).await else {
+    let Ok(v) = promise.await else {
         return unknown();
     };
     NativeProbe {

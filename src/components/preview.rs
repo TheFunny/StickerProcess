@@ -235,9 +235,7 @@ fn object_url_for(mime: &str, bytes: &[u8]) -> String {
     let Ok(blob) = web_sys::Blob::new_with_buffer_source_sequence_and_options(&parts, &opts) else {
         return String::new();
     };
-    web_sys::Url::create_object_url_with_blob(&blob)
-        .map(String::from)
-        .unwrap_or_default()
+    web_sys::Url::create_object_url_with_blob(&blob).unwrap_or_default()
 }
 
 /// 对比行文案：未转码 / 达标 / 超限。
