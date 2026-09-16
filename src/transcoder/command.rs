@@ -18,6 +18,14 @@ pub(super) const VP9_CRF: u32 = 26;
 /// `-bufsize` 与 `-b:v` 的比值（解码器缓冲时长，越大码率越平稳）。
 pub(super) const BUFSIZE_RATIO: f64 = 1.5;
 
+/// 缩放滤镜规格：三引擎唯一出处（sidecar CLI / inprocess 滤镜图 / 文档化契约）。
+/// 改这里，别在引擎里各写一份。
+pub(super) const SCALE_FILTER: &str =
+    "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos";
+
+/// 时长→默认系数表（设置面板的出厂值，也是 `Transcoder::new` 的初值）。
+pub const DEFAULT_DURATION_FACTORS: [f64; 6] = [1.2, 1.1, 1.0, 0.9, 0.8, 0.7];
+
 /// 目标码率 = 贴纸比特数 / 视频时长。
 pub(super) fn target_bitrate_bps(duration: f64) -> f64 {
     BITRATE_BASE_BYTES * 8.0 / duration
@@ -111,8 +119,7 @@ impl Transcoder {
                     .ok_or(TranscodeError::InvalidOutputPath)?
                     .to_string_lossy(),
             )
-            .filter("scale=512:512:force_original_aspect_ratio=decrease")
-            .args(["-sws_flags", "lanczos"])
+            .filter(SCALE_FILTER)
             .overwrite();
         if let MediaType::Video(v_type) = self
             .media_file
@@ -126,10 +133,7 @@ impl Transcoder {
             command
                 .no_audio()
                 .codec_video("libvpx-vp9")
-                .pix_fmt(match v_type {
-                    VideoType::Mp4 => "yuv420p10",
-                    VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => "yuva420p",
-                })
+                .pix_fmt(v_type.pix_fmt())
                 .crf(VP9_CRF)
                 .args(["-b:v", &target_bitrate.to_string()])
                 .args([

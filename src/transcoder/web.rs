@@ -60,7 +60,9 @@ pub struct WebJob {
     pub name: String,
     pub bitrate: u32,
     pub fps: f64,
-    pub engine: &'static str,
+    /// 类型化引擎（矩阵来自 `Engine::for_web`）；分发表靠它穷尽匹配。
+    pub engine: super::Engine,
+    /// glue 侧契约值（"video" / "image"），与 pix_fmt 同类：JS 按字符串取值。
     pub kind: &'static str,
     pub pix_fmt: &'static str,
 }
@@ -77,7 +79,6 @@ impl Transcoder {
             .r#type()
             .ok_or(TranscodeError::InvalidMediaType)?;
         let (engine, kind, pix_fmt) = super::Engine::for_web(&media_type, webcodecs_ok);
-        let engine = engine.as_str();
         let bitrate = match media_type {
             MediaType::Video(v) => self.video_bitrate(&v)?.1,
             MediaType::Image(_) => 0,

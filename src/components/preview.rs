@@ -75,7 +75,7 @@ pub fn PreviewModal() -> Element {
                     {
                         std::fs::read(path)
                             .ok()
-                            .map(|bytes| crate::transcoder::data_url(mime, &bytes))
+                            .map(|bytes| data_url(mime, &bytes))
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -86,7 +86,7 @@ pub fn PreviewModal() -> Element {
                             .and_then(|t| t.output_bytes.clone())
                             // 镜像大小与内存不一致（竞态）→ None，走 Loading 兜底
                             .filter(|b| b.len() as u64 == *_size)
-                            .map(|bytes| crate::transcoder::data_url(mime, &bytes))
+                            .map(|bytes| data_url(mime, &bytes))
                     }
                 });
                 // 键为 None 时也清空缓存，避免复用上一个任务的 URL
@@ -139,6 +139,8 @@ pub fn PreviewModal() -> Element {
         div {
             class: "modal-backdrop",
             tabindex: 0,
+            role: "dialog",
+            "aria-label": "Preview",
             onmounted: move |evt: Event<MountedData>| {
                 spawn(async move {
                     let _ = evt.data.set_focus(true).await;
@@ -196,6 +198,16 @@ fn kb(bytes: u64) -> String {
     format!("{:.2} KB", bytes as f64 / 1024.0)
 }
 
+/// 内存字节 → base64 data URL（输出轨 ≤512KB，编码毫秒级）。
+/// 唯一消费者是本组件——原先挂在 transcoder 上只是因为预览先落地在那边。
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
 /// 输出文件扩展名（小写）。
 fn path_ext_str(path: &Path) -> String {
     path.extension()
@@ -241,20 +253,39 @@ fn object_url_for(mime: &str, bytes: &[u8]) -> String {
 /// 对比行文案：未转码 / 达标 / 超限。
 fn compare_text(entry: &TaskEntry, ratio: Option<f64>) -> String {
     let input = kb(entry.input_size);
-    match (entry.output_size, ratio) {
-        (Some(out), Some(r)) => format!(
-            "{} \u{2192} {}  \u{2713} within limit ({r:.2}x)",
-            input,
-            kb(out)
-        ),
-        (Some(out), None) => format!("{input} \u{2192} {}", kb(out)),
-        (None, _) => format!("{input} \u{2192} not transcoded"),
+    let Some(out) = entry.output_size else {
+        return format!("{input} \u{2192} not transcoded");
+    };
+    let arrow = format!("{input} \u{2192} {}", kb(out));
+    match ratio {
+        // 超限时不能再说 "within limit"（原先只有颜色变红，文字照旧）
+        Some(r) if r > 1.0 => format!("{arrow}  \u{2717} over limit ({r:.2}x)"),
+        Some(r) => format!("{arrow}  \u{2713} within limit ({r:.2}x)"),
+        None => arrow,
     }
 }
 
 /// 输出侧内容类型：视频输入 → webm 输出；图片输入 → png 输出。
 fn output_is_video(entry: &TaskEntry) -> bool {
     entry.is_video
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// data URL 是浏览器侧的输入契约：mime 前缀 + 标准 base64（写错则预览整片空白）。
+    #[test]
+    fn data_url_formats_prefix_and_payload() {
+        use base64::Engine as _;
+        assert_eq!(
+            data_url("image/png", &[1, 2, 3]),
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
+            )
+        );
+    }
 }
 
 /// 输出侧内容：有 data URL 按类型渲染；已完成但还在编码 → Loading；否则占位。

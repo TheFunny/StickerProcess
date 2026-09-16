@@ -15,10 +15,11 @@ mod steps;
 pub mod web;
 
 pub use error::TranscodeError;
+/// 时长→系数表的出厂值（config 与 Transcoder 共用一份，避免两处漂移）。
+pub use command::DEFAULT_DURATION_FACTORS;
 
 #[cfg(feature = "desktop")]
-use ffmpeg_the_third as ffmpeg;
-
+use ffmpeg_sidecar::child::FfmpegChild;
 #[cfg(feature = "desktop")]
 use ffmpeg_sidecar::event::FfmpegEvent;
 
@@ -29,15 +30,6 @@ use std::sync::atomic::AtomicBool;
 #[cfg(feature = "desktop")]
 use std::sync::atomic::Ordering;
 
-/// 内存字节 → base64 data URL（预览输出轨，两平台共用；≤512KB 编码毫秒级）。
-pub fn data_url(mime: &str, bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum Status {
     /// 已入队，等待探测（添加时异步探测时长/编码）。
@@ -47,6 +39,20 @@ pub enum Status {
     Done,
     Alert,
     SizeExcess,
+}
+
+impl Status {
+    /// 行内徽标文案：不把 Rust 变体名（`SizeExcess` 等）直接抛给用户。
+    pub fn label(&self) -> &'static str {
+        match self {
+            Status::Probing => "Probing",
+            Status::Pending => "Pending",
+            Status::Processing => "Transcoding",
+            Status::Done => "Done",
+            Status::Alert => "Failed",
+            Status::SizeExcess => "Over limit",
+        }
+    }
 }
 
 /// 转码引擎：sidecar（ffmpeg 子进程）/ inprocess（libav 进程内）为桌面双轨；
@@ -91,9 +97,11 @@ impl Engine {
     ) -> (Engine, &'static str, &'static str) {
         use crate::media::{MediaType::*, VideoType::*};
         match media_type {
-            Video(Gif | Apng) => (Engine::FfmpegWasm, "video", "yuva420p"),
-            Video(Mp4) if webcodecs_ok => (Engine::Webcodecs, "video", "yuv420p10"),
-            Video(_) => (Engine::FfmpegWasm, "video", "yuv420p10"),
+            Video(v) if matches!(v, Gif | Apng) => (Engine::FfmpegWasm, "video", v.pix_fmt()),
+            Video(v) if webcodecs_ok && matches!(v, Mp4) => {
+                (Engine::Webcodecs, "video", v.pix_fmt())
+            }
+            Video(v) => (Engine::FfmpegWasm, "video", v.pix_fmt()),
             Image(_) => (Engine::Webcodecs, "image", "yuva420p"),
         }
     }
@@ -125,7 +133,7 @@ impl Transcoder {
             output_size: None,
             status: Status::Probing,
             cancel_flag: Arc::new(AtomicBool::new(false)),
-            duration_factors: [1.2, 1.1, 1.0, 0.9, 0.8, 0.7],
+            duration_factors: command::DEFAULT_DURATION_FACTORS,
             target_fps: 0.0,
             output_bytes: None,
         }
@@ -133,13 +141,7 @@ impl Transcoder {
 
     /// 同步执行探测（读编码/时长），供后台线程调用。
     /// wasm：media_file.probe() 直接 Ok（见 media.rs 平台分支）。
-    #[cfg(feature = "desktop")]
-    pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
-        self.media_file.probe()
-    }
-
-    #[cfg(not(feature = "desktop"))]
-    pub fn probe(&mut self) -> Result<(), ()> {
+    pub fn probe(&mut self) -> Result<(), String> {
         self.media_file.probe()
     }
 
@@ -176,10 +178,15 @@ impl Transcoder {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                // ISO: "2026-09-11T12:34:56.789Z" → "2026-09-11-123456.789"（唯一性即可）
+                // ISO: "2026-09-11T12:34:56.789Z" → "2026-09-11-12-34-56.789"
+                // （尾 Z 不参与替换：替成 "-" 会留下悬空分隔符）
                 let d = js_sys::Date::new(&js_sys::Date::now().into());
-                let s = d.to_iso_string().as_string().unwrap_or_default();
-                let s = s.replace(['T', ':', 'Z'], "-");
+                let iso = d.to_iso_string().as_string().unwrap_or_default();
+                let mut s = iso.trim_end_matches('Z').replace(['T', ':'], "-");
+                if s.is_empty() {
+                    // ISO 串异常时不能用 ".webm" 这种隐藏文件名——退回毫秒时间戳
+                    s = (js_sys::Date::now() as u64).to_string();
+                }
                 output_dir.as_ref().join(format!("{s}.{ext}"))
             }
         };
@@ -187,23 +194,67 @@ impl Transcoder {
         Ok(())
     }
 
+    /// 读 ffmpeg stderr 事件直到 EOF，回报进度，并保证取消可达。
+    ///
+    /// 刻意不用 `child.iter()`：那个迭代器把 `&mut FfmpegChild` 借走整个循环，
+    /// 于是卡住的 ffmpeg（无声输入、无进度行）就永远 kill 不到——Cancel 变成
+    /// 空操作，worker 还持着 Transcoder 锁不放。这里自持 stderr，事件经 crate
+    /// 公开的 `spawn_stderr_thread` 以 sync channel 回传（bound=0，天然反压），
+    /// 按 100ms 节拍轮询 cancel_flag。
+    #[cfg(feature = "desktop")]
+    fn pump_events(
+        &self,
+        process: &mut FfmpegChild,
+        duration: f64,
+        on_progress: &mut impl FnMut(f32),
+    ) -> Result<(), TranscodeError> {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+        let stderr = process.take_stderr().ok_or(TranscodeError::ReadOutput)?;
+        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        let reader = ffmpeg_sidecar::iter::spawn_stderr_thread(stderr, tx);
+        let mut outcome = Ok(());
+        loop {
+            match rx.recv_timeout(POLL) {
+                Ok(FfmpegEvent::LogEOF) => break,
+                Ok(FfmpegEvent::Progress(p)) => {
+                    let pct = command::parse_progress_time(&p.time) / duration;
+                    on_progress(pct.clamp(0.0, 1.0) as f32);
+                }
+                Ok(_) => {}
+                // 解析线程消失 == stderr 到底
+                Err(RecvTimeoutError::Disconnected) => break,
+                // 100ms 没输出也照样查取消（引擎卡住时唯一能中断的时刻）
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            if self.cancel_flag.load(Ordering::Relaxed) {
+                let _ = process.kill();
+                let _ = process.wait(); // 回收子进程（crate 无 Drop）
+                outcome = Err(TranscodeError::Cancelled);
+                break;
+            }
+        }
+        drop(rx); // 解除 reader 线程在 send 上的阻塞
+        let _ = reader.join();
+        outcome
+    }
+
     /// 执行转码（按 engine 设置分发 sidecar / inprocess / webcodecs）；
     /// 进度经回调上报（0..=1）。取消经 `cancel_flag` 中断。
     pub fn run_with_progress(
         &mut self,
-        engine: &str,
+        engine: Engine,
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
-        if engine == "webcodecs" || engine == "ffmpeg-wasm" {
+        if matches!(engine, Engine::Webcodecs | Engine::FfmpegWasm) {
             // 网页端引擎（分发在 runner.rs wasm 两段式路径）；桌面设置这两个值
             // → 明确 Alert（resolve_engine 只兜底 webcodecs，ffmpeg-wasm 漏到这）
             let _ = &mut on_progress;
-            return Err(TranscodeError::UnsupportedEngine(
-                "web engines (webcodecs / ffmpeg-wasm) require the web build",
-            ));
+            return Err(TranscodeError::UnsupportedEngine(engine.as_str()));
         }
         #[cfg(feature = "desktop")]
-        if engine == "inprocess" {
+        if engine == Engine::Inprocess {
             return self.run_inprocess(on_progress);
         }
         // sidecar 分支（ffmpeg 子进程）桌面专属；wasm 无子进程
@@ -222,17 +273,8 @@ impl Transcoder {
                     // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件。
                     // 分母与码率同一时长源（APNG=1.0）；pct 钳到 [0,1] 与
                     // inprocess 一致——0.001s 地板会把进度条冲出千位
-                    let duration = self.effective_duration(&v_type).unwrap_or(1.0);
-                    for event in process.iter().map_err(|_| TranscodeError::ReadOutput)? {
-                        if self.cancel_flag.load(Ordering::Relaxed) {
-                            let _ = process.kill();
-                            return Err(TranscodeError::Cancelled);
-                        }
-                        if let FfmpegEvent::Progress(p) = event {
-                            let pct = command::parse_progress_time(&p.time) / duration;
-                            on_progress(pct.clamp(0.0, 1.0) as f32);
-                        }
-                    }
+                    let duration = self.effective_duration(&v_type)?;
+                    self.pump_events(&mut process, duration, &mut on_progress)?;
                     // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
                     // 不查退出码会把无 trailer 坏文件判成 Done。
                     let status = process.wait().map_err(|_| TranscodeError::ReadOutput)?;
@@ -269,7 +311,8 @@ impl Transcoder {
         #[cfg(feature = "desktop")]
         {
             let path = self.get_output().ok_or(TranscodeError::OutputNotSet)?;
-            std::fs::write(path, &bytes).map_err(|e| TranscodeError::Engine(e.to_string()))?;
+            std::fs::write(path, &bytes)
+                .map_err(|e| TranscodeError::OutputWrite(e.to_string()))?;
             Ok(())
         }
         #[cfg(not(feature = "desktop"))]
@@ -301,19 +344,6 @@ pub fn shrunk_factor(current: f64, excess: f64, shrink: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn data_url_formats_prefix_and_payload() {
-        use super::data_url;
-        use base64::Engine as _;
-        assert_eq!(
-            data_url("image/png", &[1, 2, 3]),
-            format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
-            )
-        );
-    }
-
     use super::shrunk_factor;
 
     #[test]
@@ -352,10 +382,11 @@ mod tests {
                 (Engine::Webcodecs, "image", "yuva420p")
             );
         }
-        // AnimatedWebP 仅桌面出现；若真到 web 侧，兜底 ffmpeg-wasm 无害（web 恒 Image(Webp)）
+        // 动画 webp 不会走到 web（桌面 probe 专属变体）——pix_fmt 与 gen_command
+        // 同一出处，故为 alpha 格式而非旧的硬编码 yuv420p10
         assert_eq!(
             Engine::for_web(&MediaType::Video(VideoType::AnimatedWebP), true),
-            (Engine::FfmpegWasm, "video", "yuv420p10")
+            (Engine::FfmpegWasm, "video", "yuva420p")
         );
     }
 }

@@ -42,7 +42,8 @@ fn default_retry_shrink_factor() -> f64 {
 }
 
 fn default_duration_factors() -> [f64; 6] {
-    [1.2, 1.1, 1.0, 0.9, 0.8, 0.7]
+    // 与 Transcoder::new / command.rs 常量同一份（原先三处各写一遍）
+    crate::transcoder::DEFAULT_DURATION_FACTORS
 }
 
 impl Default for Settings {

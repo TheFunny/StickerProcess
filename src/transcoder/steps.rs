@@ -7,6 +7,8 @@ use ffmpeg_sidecar::child::FfmpegChild;
 use std::io::BufReader;
 #[cfg(feature = "desktop")]
 use std::io::Read;
+#[cfg(feature = "desktop")]
+use std::sync::atomic::Ordering;
 
 impl Transcoder {
     /// webm 时长补丁（桌面 Path 源）：只读头部定位 Duration，原地覆写 8 字节。
@@ -21,37 +23,16 @@ impl Transcoder {
     }
 }
 
-/// 头部扫描上限：Duration 在 Info 内、先于首个 Cluster，ffmpeg 头部远小于此。
-/// 窗口内定位失败（异常文件）→ 退回整文件补丁，保持旧行为。
-#[cfg(feature = "desktop")]
-const HEADER_SCAN: u64 = 8192;
-
-/// 原地补丁：读头部窗口 → 定位 → seek + 写 8 字节。文件长度不变。
+/// 磁盘补丁（桌面 Path 源）：读全文件 → 定位 → 写回。
+/// 文件上限就是贴纸大小（≤512KB），一次全量 I/O 是微秒级；原先的"8KB 头部
+/// 窗口 + seek 原地写 + 整文件兜底"为省这点 I/O 维护了三条写路径与三种错误
+/// 映射（还多一份重复的定位逻辑）。定位语义全在 `find_duration_payload`。
 #[cfg(feature = "desktop")]
 fn patch_webm_file(path: &std::path::Path) -> Result<(), TranscodeError> {
-    use std::io::{Read, Seek, SeekFrom, Write};
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
-    let mut head = Vec::new();
-    (&mut file)
-        .take(HEADER_SCAN)
-        .read_to_end(&mut head)
+    let data = std::fs::read(path)
         .map_err(|_| TranscodeError::DurationPatch("failed to read output file"))?;
-    let Ok(at) = find_duration_payload(&head) else {
-        // 罕见：Duration 在头部窗口之外 —— 整文件路径兜底（缺标记则同样报错）
-        let data = std::fs::read(path)
-            .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
-        let patched = patch_webm_bytes(data)?;
-        file.seek(SeekFrom::Start(0))
-            .and_then(|_| file.write_all(&patched))
-            .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
-        return Ok(());
-    };
-    file.seek(SeekFrom::Start(at as u64))
-        .and_then(|_| file.write_all(&100f64.to_be_bytes()))
+    let patched = patch_webm_bytes(data)?;
+    std::fs::write(path, &patched)
         .map_err(|_| TranscodeError::DurationPatch("error writing file"))
 }
 
@@ -93,14 +74,42 @@ impl Transcoder {
     /// 图片管道（sidecar）：ffmpeg stdout PNG → 共享 oxipng 管道写盘。
     /// oxipng 优化逻辑在 inprocess.rs::write_optimized_png（两引擎共用）。
     pub(super) fn run_image(&mut self, process: &mut FfmpegChild) -> Result<(), TranscodeError> {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        const POLL: std::time::Duration = std::time::Duration::from_millis(100);
         let std_out = process
             .take_stdout()
             .ok_or(TranscodeError::ImagePipe("stdout not piped"))?;
-        let mut reader = BufReader::new(std_out);
-        let mut buffer = Vec::new();
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(|_| TranscodeError::ImagePipe("read stdout failed"))?;
+        // stdout 读到 EOF 可能要等 ffmpeg 退出：放独立线程读，主线程按拍轮询
+        // cancel_flag（否则卡住的解码让 Cancel 同样失效）。
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(std_out);
+            let mut buffer = Vec::new();
+            let ok = reader.read_to_end(&mut buffer).is_ok();
+            tx.send((buffer, ok)).ok();
+        });
+        let buffer = loop {
+            match rx.recv_timeout(POLL) {
+                Ok((buffer, true)) => break buffer,
+                Ok((_, false)) | Err(RecvTimeoutError::Disconnected) => {
+                    return Err(TranscodeError::ImagePipe("read stdout failed"));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.cancel_flag.load(Ordering::Relaxed) {
+                        let _ = process.kill();
+                        let _ = process.wait(); // 回收子进程（crate 无 Drop）
+                        return Err(TranscodeError::Cancelled);
+                    }
+                }
+            }
+        };
+        // 与视频路径同一不变量：退出码才代表成功。解码失败时 stdout 可能只有
+        // 半个 PNG，直接交给 oxipng 会把真因报成 "optimize failed"。
+        let status = process.wait().map_err(|_| TranscodeError::ReadOutput)?;
+        if !status.success() {
+            return Err(TranscodeError::FfmpegFailed(status.to_string()));
+        }
         self.write_optimized_png(&buffer)
     }
 }

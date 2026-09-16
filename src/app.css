@@ -2,6 +2,8 @@
 
 /* ---- 主题变量（浅色默认，[data-theme="dark"] 覆盖）---- */
 :root {
+  /* 原生控件（滚动条、select 弹层、文件选择器）跟随主题，深色下不再白条 */
+  color-scheme: light;
   --bg: #fafafa;
   --fg: #1f2328;
   --fg-muted: #57606a;
@@ -22,6 +24,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0d1117;
   --fg: #e6edf3;
   --fg-muted: #9198a1;
@@ -474,8 +477,9 @@ body {
 
 /* 预览弹窗（Phase D） */
 .preview-modal {
-  min-width: 720px;
-  max-width: 90vw;
+  /* 桌面窗口最小 640px，固定 720px 会被裁掉两侧（Close 点不到）——窄屏退到 92vw */
+  min-width: min(720px, 92vw);
+  max-width: 92vw;
 }
 
 .preview-path {
@@ -524,6 +528,12 @@ body {
 .task-row:hover:not(:active) {
   background: var(--surface-hover);
   cursor: pointer;
+}
+
+/* 键盘焦点环（任务行可 Tab 到，Enter/Space 打开预览） */
+.task-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .btn-mini {

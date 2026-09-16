@@ -14,7 +14,7 @@ pub fn TaskList() -> Element {
     let count = ctx.tasks.read().len();
 
     rsx! {
-        div { class: "task-list grow",
+        div { class: "task-list grow", role: "list",
             if count == 0 {
                 div { class: "empty-hint",
                     "No tasks yet. Click \"Add File\" or drop files here."
@@ -89,6 +89,9 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         div {
             class: "task-row",
             title: "{tooltip}",
+            role: "listitem",
+            tabindex: 0,
+            "aria-label": "Preview {entry.input_path}",
             onmousedown: move |evt: Event<MouseData>| {
                 let p = evt.data.client_coordinates();
                 mouse_down_at.set(Some((p.x, p.y)));
@@ -104,8 +107,18 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 }
                 ctx.show_preview.set(Some(index));
             },
+            // 键盘等价物：行可 Tab 到，Enter/Space 打开预览（子控件自行吞掉按键）
+            onkeydown: move |evt: Event<KeyboardData>| {
+                let key = evt.data.key();
+                if key == dioxus::html::Key::Enter
+                    || matches!(&key, dioxus::html::Key::Character(s) if s.as_str() == " ")
+                {
+                    evt.prevent_default();
+                    ctx.show_preview.set(Some(index));
+                }
+            },
             div { class: "row-main",
-                span { class: "{status_class}", "[{entry.status:?}]" }
+                span { class: "{status_class}", "[{entry.status.label()}]" }
                 span { class: "path", "{entry.input_path}" }
                 if let Some(pct) = entry.progress {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
@@ -113,6 +126,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     button {
                         class: if is_excess { "size-excess btn-link" } else { "size-ok btn-link" },
                         title: "Select file in Explorer",
+                        onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
                             // /select 打开资源管理器并选中输出文件
@@ -150,9 +164,9 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 if let Some(factor) = factor_value {
                     span {
                         onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
+                        onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         NumberInput<f64> {
                             value: factor,
-                            key: "{factor}",
                             min: 0.1,
                             max: 10.0,
                             disabled: running,
@@ -166,20 +180,24 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                         }
                     }
                 }
-                if matches!(entry.status, Status::Alert | Status::SizeExcess) {
+                // Done 也可重跑：Run 只处理未完成任务，重转需先把它退回 Pending
+                if matches!(entry.status, Status::Alert | Status::SizeExcess | Status::Done) {
                     button {
                         class: "btn btn-mini",
                         disabled: running,
+                        onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
                             ctx.retry_task(index);
                         },
-                        "Retry"
+                        if entry.status == Status::Done { "Re-run" } else { "Retry" }
                     }
                 }
                 button {
                     class: "btn btn-mini btn-remove",
                     disabled: running,
+                    "aria-label": "Remove task",
+                    onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                     onclick: move |evt: Event<MouseData>| {
                         evt.stop_propagation();
                         ctx.remove_task(index);

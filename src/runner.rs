@@ -40,30 +40,30 @@ pub(crate) async fn run_blocking<T>(f: impl FnOnce() -> T) -> Result<T, String> 
     Ok(f())
 }
 
-/// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎字符串。
+/// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎。
 /// - 非法值（parse 失败）→ 回落 inprocess（config.load 已兜底，此处是运行期保险）
 /// - webcodecs 且浏览器不支持（`web_supported=false`）→ 回落 inprocess
 /// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
 ///
 /// 桌面端 `web_supported` 恒为 false；wasm 侧由 JS 探测结果传入。
-pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
+pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> Engine {
     let engine = match Engine::parse(setting) {
         Some(e) => e,
         None => {
             log::warn!("engine='{setting}' 非法，回落 inprocess");
-            return Engine::Inprocess.as_str().to_string();
+            return Engine::Inprocess;
         }
     };
     match engine {
         Engine::Webcodecs if !web_supported => {
             log::warn!("engine=webcodecs 但浏览器不支持，回落 inprocess");
-            Engine::Inprocess.as_str().to_string()
+            Engine::Inprocess
         }
         Engine::Sidecar if !sidecar_vp9_available() => {
             log::warn!("engine=sidecar 但 ffmpeg/libvpx-vp9 不可用，回落 inprocess");
-            Engine::Inprocess.as_str().to_string()
+            Engine::Inprocess
         }
-        other => other.as_str().to_string(),
+        other => other,
     }
 }
 
@@ -137,6 +137,13 @@ pub async fn run_all(
         // prepare_web_job 读到空时长误 Alert。
         if matches!(entry.status, Status::Probing) {
             crate::timers::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
+        }
+        // Done 不重跑（用户要重转走行内 Re-run）；整体进度按位次照常推进。
+        if entry.status == Status::Done {
+            let total = ctx.tasks.peek().len().max(1);
+            ctx.overall_progress.set((index + 1) as f32 / total as f32);
+            index += 1;
             continue;
         }
         // 每任务取当前设置（output_dir 等）
@@ -237,7 +244,7 @@ async fn run_single_task(
                     let mut t = task_arc
                         .lock()
                         .map_err(|e| TranscodeError::Join(e.to_string()))?;
-                    t.run_with_progress(&engine, move |pct| {
+                    t.run_with_progress(engine, move |pct| {
                         // 发送失败仅意味着接收端已关闭，忽略即可
                         let _ = tx.send(ProgressUpdate { index, pct });
                     })
@@ -278,8 +285,9 @@ async fn run_single_task(
                                 let _ = tx.send(ProgressUpdate { index, pct });
                             }
                         };
+                        // 穷尽匹配：Engine 类型一路保留，未知引擎串已不可能出现
                         let awaited = match engine {
-                            "webcodecs" => {
+                            crate::transcoder::Engine::Webcodecs => {
                                 crate::transcoder::web::exec_webcodecs(
                                     job,
                                     std::sync::Arc::clone(&cancel_flag),
@@ -287,7 +295,7 @@ async fn run_single_task(
                                 )
                                 .await
                             }
-                            "ffmpeg-wasm" => {
+                            crate::transcoder::Engine::FfmpegWasm => {
                                 crate::transcoder::web::exec_ffmpeg_wasm(
                                     job,
                                     std::sync::Arc::clone(&cancel_flag),
@@ -295,7 +303,10 @@ async fn run_single_task(
                                 )
                                 .await
                             }
-                            other => Err(TranscodeError::UnsupportedEngine(other)),
+                            crate::transcoder::Engine::Sidecar
+                            | crate::transcoder::Engine::Inprocess => {
+                                Err(TranscodeError::UnsupportedEngine(engine.as_str()))
+                            }
                         };
                         match awaited {
                             Ok(out) => {
@@ -435,25 +446,26 @@ async fn run_single_task(
 #[cfg(test)]
 mod tests {
     use super::resolve_engine;
+    use crate::transcoder::Engine;
 
     #[test]
     fn resolve_engine_passthrough_valid() {
-        assert_eq!(resolve_engine("inprocess", false), "inprocess");
+        assert_eq!(resolve_engine("inprocess", false), Engine::Inprocess);
         // sidecar 直通与否取决于本机 ffmpeg 探测结果，两者都是合法输出
         let sc = resolve_engine("sidecar", false);
-        assert!(sc == "sidecar" || sc == "inprocess");
+        assert!(sc == Engine::Sidecar || sc == Engine::Inprocess);
     }
 
     #[test]
     fn resolve_engine_webcodecs_falls_back_when_unsupported() {
-        assert_eq!(resolve_engine("webcodecs", false), "inprocess");
-        assert_eq!(resolve_engine("webcodecs", true), "webcodecs");
+        assert_eq!(resolve_engine("webcodecs", false), Engine::Inprocess);
+        assert_eq!(resolve_engine("webcodecs", true), Engine::Webcodecs);
     }
 
     #[test]
     fn resolve_engine_invalid_falls_back() {
-        assert_eq!(resolve_engine("gpu", false), "inprocess");
-        assert_eq!(resolve_engine("", false), "inprocess");
+        assert_eq!(resolve_engine("gpu", false), Engine::Inprocess);
+        assert_eq!(resolve_engine("", false), Engine::Inprocess);
     }
 
     #[test]

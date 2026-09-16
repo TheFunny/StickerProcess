@@ -16,27 +16,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub const VIDEO: [&str; 3] = ["mp4", "gif", "apng"];
-pub const IMAGE: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
-
-/// 全部受支持扩展名（编译期从 VIDEO/IMAGE 拼装，保证不漂移）。
-pub const SUPPORTED: [&str; 7] = {
-    let mut all = [""; 7];
-    let mut i = 0;
-    let mut j = 0;
-    while j < VIDEO.len() {
-        all[i] = VIDEO[j];
-        i += 1;
-        j += 1;
-    }
-    let mut k = 0;
-    while k < IMAGE.len() {
-        all[i] = IMAGE[k];
-        i += 1;
-        k += 1;
-    }
-    all
-};
+/// 全部受支持扩展名（唯一列表）。新增媒体类型时按 AGENTS「四处同步」约定：
+/// 改这里 + `media.rs` 扩展名表 + `command.rs` 编码处理。
+pub const SUPPORTED: [&str; 7] = ["mp4", "gif", "apng", "jpg", "jpeg", "png", "webp"];
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -207,6 +189,7 @@ impl UiState {
     /// 添加文件，仅保留受支持的扩展名。每个新任务在后台线程探测时长/编码。
     pub fn add_files(&mut self, files: Vec<PathBuf>) {
         let mut added = Vec::new();
+        let mut skipped = Vec::new();
         self.tasks.with_mut(|list| {
             for path in files {
                 let ext = path
@@ -218,10 +201,14 @@ impl UiState {
                         list.push(TaskEntry::new(MediaFile::new(&path)));
                         added.push(list.len() - 1);
                     }
-                    _ => log::warn!("Skipped unsupported file: {}", path.display()),
+                    _ => {
+                        log::warn!("Skipped unsupported file: {}", path.display());
+                        skipped.push(path.display().to_string());
+                    }
                 }
             }
         });
+        self.report_skipped(skipped);
         for index in added {
             self.spawn_probe(index);
         }
@@ -232,15 +219,30 @@ impl UiState {
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
         if !ext.as_deref().is_some_and(|e| SUPPORTED.contains(&e)) {
             log::warn!("Skipped unsupported file: {name}");
+            self.report_skipped(vec![name]);
             return;
         };
-        let mut added = Vec::new();
-        self.tasks.with_mut(|list| {
+        let index = self.tasks.with_mut(|list| {
             list.push(TaskEntry::new(MediaFile::from_bytes(data, name)));
-            added.push(list.len() - 1);
+            list.len() - 1
         });
-        for index in added {
-            self.spawn_probe(index);
+        self.spawn_probe(index);
+    }
+
+    /// 被静默丢弃的文件必须让用户看见（拖入 10 个只进 8 个时，日志没人看）。
+    /// 多个时只报数量 + 首例，避免刷屏。
+    fn report_skipped(&mut self, skipped: Vec<String>) {
+        match skipped.as_slice() {
+            [] => {}
+            [one] => self.push_toast(ToastKind::Warn, format!("Skipped unsupported file: {one}")),
+            many => self.push_toast(
+                ToastKind::Warn,
+                format!(
+                    "Skipped {} unsupported files (e.g. {})",
+                    many.len(),
+                    many[0]
+                ),
+            ),
         }
     }
 
@@ -256,7 +258,7 @@ impl UiState {
             {
                 let awaited = crate::runner::run_blocking(move || {
                     let mut t = task_arc.lock().map_err(|e| e.to_string())?;
-                    t.probe().map_err(|e| e.to_string())
+                    t.probe()
                 })
                 .await;
                 // 扁平化 JoinError 包装（与 runner 同一模式）
@@ -290,7 +292,7 @@ impl UiState {
                             crate::media::VideoType::Apng,
                         ));
                     }
-                    t.probe().map_err(|_: ()| "probe failed".to_string())
+                    t.probe()
                 })();
                 Self::write_back_probe(&mut ctx, index, &entry, result);
             }
@@ -382,8 +384,21 @@ impl UiState {
     }
 
     /// 点击 Run：建输出目录后启动异步转码循环。
+    /// 已完成（Done）的任务不重跑——要重转先点行内 Re-run 退回 Pending。
     pub fn start_run(&mut self) {
         if self.running.cloned() || self.tasks.cloned().is_empty() {
+            return;
+        }
+        if !self
+            .tasks
+            .cloned()
+            .iter()
+            .any(|task| task.status != Status::Done)
+        {
+            self.push_toast(
+                ToastKind::Info,
+                "Nothing to run — every task is done (use Re-run to redo one)",
+            );
             return;
         }
         if self

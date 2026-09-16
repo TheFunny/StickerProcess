@@ -15,6 +15,8 @@ const FACTOR_BANDS: [&str; 6] = ["<1s", "<2s", "<3s", "<5s", "<8s", "\u{2265}8s"
 #[component]
 pub fn SettingsPanel() -> Element {
     let mut ctx = use_context::<UiState>();
+    // Reset Defaults 的二次确认态（4s 无第二次点击自动解除）
+    let mut reset_armed = use_signal(|| false);
     // wasm 引擎 caps：None=未知（探测中），Some(b)=WebCodecs VP9 是否可用。
     // 面板首次打开时异步探测（只注入轻量 glue，不加载 ffmpeg core）；结果缓存。
     // 仅 wasm 引用（engine_select 桌面/wasm 两支真 cfg 分离），故 wasm-only 声明。
@@ -137,6 +139,8 @@ pub fn SettingsPanel() -> Element {
         div {
             class: "modal-backdrop",
             tabindex: 0,
+            role: "dialog",
+            "aria-label": "Settings",
             onmounted: move |evt: Event<MountedData>| {
                 spawn(async move {
                     let _ = evt.data.set_focus(true).await;
@@ -231,7 +235,10 @@ pub fn SettingsPanel() -> Element {
                     }
                 }
 
-                {engine_select}
+                div { class: "settings-row",
+                    span { class: "label", "Engine" }
+                    {engine_select}
+                }
                 div { class: "settings-row",
                     span { class: "label", "Theme" }
                     select {
@@ -249,8 +256,18 @@ pub fn SettingsPanel() -> Element {
 
                 div { class: "row modal-actions",
                     button {
-                        class: "btn",
+                        class: if reset_armed() { "btn btn-danger" } else { "btn" },
+                        // 一键清空全部调参且立即落盘、无撤销——要求二次确认
                         onclick: move |_| {
+                            if !reset_armed() {
+                                reset_armed.set(true);
+                                spawn(async move {
+                                    crate::timers::sleep(std::time::Duration::from_secs(4)).await;
+                                    reset_armed.set(false);
+                                });
+                                return;
+                            }
+                            reset_armed.set(false);
                             // 恢复默认值但保留用户已选择的输出目录
                             ctx.update_settings(|s| {
                                 let dir = s.output_dir.clone();
@@ -258,7 +275,7 @@ pub fn SettingsPanel() -> Element {
                                 s.output_dir = dir;
                             });
                         },
-                        "Reset Defaults"
+                        if reset_armed() { "Confirm reset?" } else { "Reset Defaults" }
                     }
                     div { class: "spacer" }
                     button {

@@ -10,7 +10,7 @@
 //! 时间基决策：整条管道统一 1/1000（毫秒）。解码后帧 pts 一次性重缩放到
 //! 1/1000，编码器/输出流/滤镜 buffer 参数均以此为基准，mux 前无需再缩放。
 
-use super::command::{BUFSIZE_RATIO, VP9_CRF};
+use super::command::{BUFSIZE_RATIO, SCALE_FILTER, VP9_CRF};
 use super::{TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
 use ffmpeg_the_third as ffmpeg;
@@ -65,18 +65,14 @@ impl Transcoder {
         on_progress: &mut impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
         let (duration, target_bitrate) = self.video_bitrate(&v_type)?;
-        let out_pix = match v_type {
-            VideoType::Mp4 => Pixel::YUV420P10LE,
-            VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => Pixel::YUVA420P,
-        };
+        let out_pix = pixel_of(v_type.pix_fmt());
 
         let input_path = self
             .media_file
             .path()
             .ok_or(TranscodeError::InvalidOutputPath)?
             .to_path_buf();
-        let mut ictx = ffmpeg::format::input(&input_path)
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+        let mut ictx = ffmpeg::format::input(&input_path)?;
         let istream = ictx
             .streams()
             .best(ffmpeg::media::Type::Video)
@@ -92,17 +88,13 @@ impl Transcoder {
             let src_fps = istream.avg_frame_rate();
             (src_fps.numerator() > 0 && src_fps.denominator() > 0).then_some(src_fps)
         };
-        let mut dec_ctx = ffmpeg::codec::Context::from_parameters(istream.parameters())
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+        let mut dec_ctx = ffmpeg::codec::Context::from_parameters(istream.parameters())?;
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get());
         dec_ctx.set_threading(threading::Config {
             kind: threading::Type::Frame,
             count: threads,
         });
-        let mut decoder = dec_ctx
-            .decoder()
-            .video()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+        let mut decoder = dec_ctx.decoder().video()?;
 
         // time_base：未 open 的 decoder 常为 0/1（无效），回退容器流 tb；
         // packet 统一重缩放到该基，解码输出帧 pts 即在此基下。
@@ -123,12 +115,9 @@ impl Transcoder {
         // 强制 fps 与 sidecar `-r` 语义对齐：fps 滤镜复制/丢帧到目标 CFR
         // （置于 scale 之后，保留 alpha 通道）；未强制时沿用源流帧率仅作元数据。
         let spec = if self.target_fps > 0.0 {
-            format!(
-                "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,fps={}",
-                self.target_fps
-            )
+            format!("{SCALE_FILTER},fps={}", self.target_fps)
         } else {
-            "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos".to_string()
+            SCALE_FILTER.to_string()
         };
         let mut graph = build_graph(in_w, in_h, in_pix, in_tb, sar, out_pix, &spec)?;
 
@@ -136,12 +125,7 @@ impl Transcoder {
         let codec = ffmpeg::codec::encoder::find_by_name("libvpx-vp9")
             .ok_or(TranscodeError::EncoderNotFound("libvpx-vp9"))?;
         let enc_ctx = ffmpeg::codec::Context::new_with_codec(codec);
-        let mut enc_video_opt = Some(
-            enc_ctx
-                .encoder()
-                .video()
-                .map_err(|e| TranscodeError::Encoder(e.to_string()))?,
-        );
+        let mut enc_video_opt = Some(enc_ctx.encoder().video()?);
         // webm muxer 需要全局头（open 时生成 extradata 供 copy_parameters）
         enc_video_opt
             .as_mut()
@@ -293,7 +277,9 @@ impl Transcoder {
                     drain_filter!();
                 }
                 Err(ffmpeg::Error::Eof) => break,
-                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => continue,
+                // EAGAIN 在 drain 阶段等于"暂时没帧"：已无输入可喂，continue 会
+                // 原地自旋（无 cancel 检查、持锁不放）；与兄弟循环一致按终止处理
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => break,
                 Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
             }
         }
@@ -317,18 +303,15 @@ impl Transcoder {
             .path()
             .ok_or(TranscodeError::InvalidOutputPath)?
             .to_path_buf();
-        let mut ictx = ffmpeg::format::input(&input_path)
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+        let mut ictx = ffmpeg::format::input(&input_path)?;
         let istream = ictx
             .streams()
             .best(ffmpeg::media::Type::Video)
             .ok_or(TranscodeError::Decoder("no video stream".into()))?;
         let stream_index = istream.index();
-        let mut decoder = ffmpeg::codec::Context::from_parameters(istream.parameters())
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?
+        let mut decoder = ffmpeg::codec::Context::from_parameters(istream.parameters())?
             .decoder()
-            .video()
-            .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
+            .video()?;
 
         let in_tb = {
             let tb = decoder.time_base();
@@ -401,10 +384,7 @@ impl Transcoder {
         let codec = ffmpeg::codec::encoder::find_by_name("png")
             .ok_or(TranscodeError::EncoderNotFound("png"))?;
         let enc_ctx = ffmpeg::codec::Context::new_with_codec(codec);
-        let mut enc = enc_ctx
-            .encoder()
-            .video()
-            .map_err(|e| TranscodeError::Encoder(e.to_string()))?;
+        let mut enc = enc_ctx.encoder().video()?;
         enc.set_width(out_frame.width());
         enc.set_height(out_frame.height());
         enc.set_format(Pixel::RGBA);
@@ -428,7 +408,8 @@ impl Transcoder {
                     }
                 }
                 Err(ffmpeg::Error::Eof) => break,
-                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => continue,
+                // 同上：drain 阶段 EAGAIN 不能 continue（原地自旋，无帧可喂）
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => break,
                 Err(e) => return Err(TranscodeError::Encoder(e.to_string())),
             }
         }
@@ -443,7 +424,16 @@ impl Transcoder {
         let optimized = oxipng::optimize_from_memory(raw, &option)
             .map_err(|_| TranscodeError::ImagePipe("optimize failed"))?;
         self.store_output(optimized)
-            .map_err(|_| TranscodeError::ImagePipe("write failed"))
+    }
+}
+
+/// 共享 pix_fmt 字符串 → libav 像素格式枚举。`VideoType::pix_fmt` 返回字符串是
+/// 因为 CLI 与浏览器 glue 都按名字要格式；这里把它翻译回 libav 的类型。
+fn pixel_of(pix_fmt: &str) -> Pixel {
+    match pix_fmt {
+        "yuv420p10" => Pixel::YUV420P10LE,
+        // 其余取值（yuva420p）由 VideoType::pix_fmt 保证
+        _ => Pixel::YUVA420P,
     }
 }
 
@@ -544,6 +534,7 @@ fn next_pts(last: Option<i64>, pts: Option<i64>, from: Rational, to: Rational) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcoder::Engine;
 
     #[test]
     fn fps_rational_millisecond_precision() {
@@ -642,7 +633,7 @@ mod tests {
                 .ok()?;
             String::from_utf8_lossy(&out.stdout).trim().parse().ok()
         };
-        let run = |engine: &str, out: String| -> String {
+        let run = |engine: Engine, out: String| -> String {
             let mut t = Transcoder::new(crate::media::MediaFile::new(std::path::Path::new(
                 "input/1.mp4",
             )));
@@ -653,11 +644,11 @@ mod tests {
             out
         };
         let a = run(
-            "inprocess",
+            Engine::Inprocess,
             format!("out/_fps_inproc_{}.webm", std::process::id()),
         );
         let b = run(
-            "sidecar",
+            Engine::Sidecar,
             format!("out/_fps_side_{}.webm", std::process::id()),
         );
         let (fa, fb) = (ffprobe(&a), ffprobe(&b));

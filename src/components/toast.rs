@@ -1,4 +1,4 @@
-//! Toast 通知：右上角堆叠，自动消失。
+//! Toast 通知：右下角堆叠，自动消失。
 //!
 //! 由 `UiState::push_toast` 入队（含 4 秒自动移除），
 //! `ToastContainer` 只负责渲染。
@@ -49,7 +49,7 @@ pub fn ToastContainer() -> Element {
     let toasts = ctx.toasts.cloned();
 
     rsx! {
-        div { class: "toast-container",
+        div { class: "toast-container", "aria-live": "polite",
             for toast in toasts {
                 div {
                     key: "{toast.id}",

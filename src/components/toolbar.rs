@@ -145,6 +145,7 @@ pub fn Toolbar() -> Element {
             div { class: "spacer" }
             button {
                 class: "btn",
+                title: "Theme — click to cycle System / Light / Dark",
                 onclick: move |_| {
                     ctx.update_settings(|s| s.theme = next_theme(&s.theme));
                 },
@@ -152,13 +153,19 @@ pub fn Toolbar() -> Element {
             }
             button {
                 class: "btn btn-danger",
-                disabled: running || ctx.tasks.read().is_empty(),
+                // 只在进行中可点：原先写成 `running ||`，运行期间按钮反而是禁用的
+                disabled: !running,
                 onclick: move |_| ctx.cancel.set(true),
                 "Cancel"
             }
             button {
                 class: "btn btn-primary",
-                disabled: running || ctx.tasks.cloned().is_empty(),
+                disabled: running
+                    || !ctx
+                        .tasks
+                        .read()
+                        .iter()
+                        .any(|t| t.status != crate::transcoder::Status::Done),
                 onclick: move |_| ctx.start_run(),
                 "Run"
             }

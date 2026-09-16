@@ -127,20 +127,24 @@ impl MediaFile {
     /// 用 ffmpeg 探测真实编码与时长，并纠正按扩展名误判的类型
     /// （如视频容器装着图片编码）。供后台探测线程调用。
     ///
-    /// Bytes 源（网页端）跳过 ffmpeg 探测：时长/类型由前端传入，直接 Ok。
-    #[cfg(feature = "desktop")]
-    pub fn probe(&mut self) -> Result<(), ffmpeg::Error> {
-        if matches!(self.source, Source::Bytes { .. }) {
-            return Ok(());
+    /// 错误统一成 `String`：两个平台各自的错误类型（`ffmpeg::Error` / 无错误）
+    /// 的消费者都只是把它转成 UI 文案，原先的 cfg 双签名只在 app.rs 换来两组
+    /// 一模一样语义的 map_err。Bytes 源（网页端）跳过 ffmpeg 探测：时长/类型
+    /// 由前端传入，直接 Ok。
+    pub fn probe(&mut self) -> Result<(), String> {
+        #[cfg(feature = "desktop")]
+        {
+            if matches!(self.source, Source::Bytes { .. }) {
+                return Ok(());
+            }
+            self.probe_desktop().map_err(|e| e.to_string())
         }
-        self.probe_desktop()
-    }
-
-    /// wasm：无 ffmpeg。Bytes 源类型由前端判定（from_bytes），时长下一阶段
-    /// 由前端元数据填充；本阶段直接 Ok。
-    #[cfg(not(feature = "desktop"))]
-    pub fn probe(&mut self) -> Result<(), ()> {
-        Ok(())
+        #[cfg(not(feature = "desktop"))]
+        {
+            // wasm：无 ffmpeg。Bytes 源类型由前端判定（from_bytes），时长由
+            // 前端元数据填充（app.rs 的 native_probe 回填）。
+            Ok(())
+        }
     }
 
     #[cfg(feature = "desktop")]
@@ -235,6 +239,18 @@ pub enum VideoType {
     AnimatedWebP,
 }
 
+impl VideoType {
+    /// 输出像素格式：三引擎（sidecar CLI / inprocess libav / web glue）唯一出处。
+    /// `yuv420p10` 是 CLI 与 wasm 端都接受的写法（`descriptor().name()` 会给
+    /// `yuv420p10le`，改名会连带改 JS 胶水）。
+    pub fn pix_fmt(&self) -> &'static str {
+        match self {
+            VideoType::Mp4 => "yuv420p10",
+            VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => "yuva420p",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ImageType {
     Jpg,
@@ -245,7 +261,7 @@ pub enum ImageType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{IMAGE, SUPPORTED, VIDEO};
+    use crate::app::SUPPORTED;
 
     #[test]
     fn test_new_media_file_mp4() {
@@ -285,14 +301,9 @@ mod tests {
         assert_eq!(media_file.r#type, None);
     }
 
-    /// AGENTS"四处同步"约定的保证：SUPPORTED 的每一项都必须能被识别，
-    /// VIDEO/IMAGE 必须与 SUPPORTED 完全一致。
+    /// AGENTS「四处同步」约定的保证：SUPPORTED 的每一项都必须能被识别。
     #[test]
     fn supported_extensions_are_consistent() {
-        assert!(
-            VIDEO.iter().chain(IMAGE.iter()).eq(SUPPORTED.iter()),
-            "VIDEO+IMAGE must equal SUPPORTED"
-        );
         for ext in SUPPORTED {
             let file = MediaFile::new(Path::new(&format!("file.{ext}")));
             assert!(
