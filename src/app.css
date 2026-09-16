@@ -89,6 +89,9 @@ body {
 .btn {
   display: inline-block;
   padding: 4px 12px;
+  /* 按钮不继承 body 字体（UA 默认 Arial），与其它控件不一致 */
+  font-family: inherit;
+  font-size: inherit;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-alt);
@@ -131,6 +134,75 @@ body {
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover);
   border-color: var(--danger-hover);
+}
+
+/* 图标按钮：与文字按钮同高，窄到 ~34px */
+.btn.icon {
+  width: 34px;
+  padding: 4px 0;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+/* "⋯" 溢出菜单：低频动作（清空完成 / 下载全部 / 主题三档）收在这里 */
+.menu-wrap {
+  position: relative;
+}
+
+.menu-catch {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-item .menu-check {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-soft);
 }
 
 .input {

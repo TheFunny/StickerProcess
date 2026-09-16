@@ -1,9 +1,15 @@
-//! 工具栏：添加文件、清空完成、设置入口、主题切换、取消、运行按钮。
+//! 工具栏：添加文件、运行/取消、设置入口 + "⋯" 溢出菜单（清空完成、下载全部、主题）。
+//!
+//! 改动背景（批次二实验）：按钮一多，640px 最小窗口就满了（7 个文字按钮实测只剩
+//! ~10px 余量）。低频动作（清空完成 / 下载全部 / 主题三档）收进溢出菜单，主题由
+//! "循环切换"改为"三选一 + 当前项打勾"——循环按钮看不出有哪几档，也看不出当前在
+//! 哪一档；工具栏只留入口（Add File）、绝对主操作（Run）、以及成对出现的 Cancel。
 //!
 //! Phase B：输出目录直接读写 `Settings`（即时同步落盘）；重试次数移入设置面板。
-//! web：输出目录行整体不渲染（产物驻内存走下载）；新增 Download All。
+//! web：输出目录行整体不渲染（产物驻内存走下载）。
 
 use crate::app::{SUPPORTED, UiState};
+use crate::transcoder::Status;
 use dioxus::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
@@ -17,41 +23,38 @@ fn file_accept() -> String {
         .join(",")
 }
 
+/// 主题三档（溢出菜单里的单选项）。
+const THEMES: [(&str, &str); 3] = [
+    ("system", "System (follow OS)"),
+    ("light", "Light"),
+    ("dark", "Dark"),
+];
+
 #[component]
 pub fn Toolbar() -> Element {
     let mut ctx = use_context::<UiState>();
     let running = ctx.running.cloned();
-    // 主题按钮显示当前档位（与设置面板/实际呈现一致），点击切换到下一档
-    let theme_label = match ctx.settings.read().theme.as_str() {
-        "system" => "System",
-        "light" => "Light",
-        _ => "Dark",
+    let mut menu_open = use_signal(|| false);
+    let theme = ctx.settings.read().theme.clone();
+    // 不 clone 任务列表：只读一遍算两个标志（工具栏会随 tasks 信号重渲染）
+    let (has_done, runnable) = {
+        let list = ctx.tasks.read();
+        (
+            list.iter().any(|e| e.mirror.status == Status::Done),
+            list.iter().any(|e| e.mirror.status != Status::Done),
+        )
     };
 
-    /// 主题三档循环。
-    fn next_theme(current: &str) -> String {
-        match current {
-            "system" => "light",
-            "light" => "dark",
-            _ => "system",
-        }
-        .into()
-    }
-
-    // web：产物驻内存，逐个点下载太累——一键顺序下载全部 Done（400ms 间隔
-    // 防浏览器多文件拦截，首次弹"允许"）。rsx 元素级 #[cfg] 不被解析，
-    // 按 settings_panel engine_select 的 let 双分支先例处理。
+    // web：产物驻内存，一键顺序下载全部 Done（400ms 间隔防浏览器多文件拦截）
     #[cfg(target_arch = "wasm32")]
     let extra_btn = rsx! {
         button {
-            class: "btn",
-            disabled: running
-                || !ctx
-                    .tasks
-                    .read()
-                    .iter()
-                    .any(|e| e.mirror.status == crate::transcoder::Status::Done),
-            onclick: move |_| ctx.download_all(),
+            class: "menu-item",
+            disabled: running || !has_done,
+            onclick: move |_| {
+                menu_open.set(false);
+                ctx.download_all();
+            },
             "Download All"
         }
     };
@@ -129,27 +132,14 @@ pub fn Toolbar() -> Element {
                     },
                 }
             }
-            button {
-                class: "btn",
-                disabled: running,
-                onclick: move |_| ctx.clear_done(),
-                "Clear Done"
-            }
-            {extra_btn}
-            button {
-                class: "btn",
-                disabled: running,
-                onclick: move |_| ctx.show_settings.set(true),
-                "Settings"
-            }
             div { class: "spacer" }
             button {
-                class: "btn",
-                title: "Theme — click to cycle System / Light / Dark",
-                onclick: move |_| {
-                    ctx.update_settings(|s| s.theme = next_theme(&s.theme));
-                },
-                "{theme_label}"
+                class: "btn icon",
+                title: "Settings",
+                "aria-label": "Settings",
+                disabled: running,
+                onclick: move |_| ctx.show_settings.set(true),
+                "⚙"
             }
             button {
                 class: "btn btn-danger",
@@ -160,14 +150,50 @@ pub fn Toolbar() -> Element {
             }
             button {
                 class: "btn btn-primary",
-                disabled: running
-                    || !ctx
-                        .tasks
-                        .read()
-                        .iter()
-                        .any(|t| t.mirror.status != crate::transcoder::Status::Done),
+                disabled: running || !runnable,
                 onclick: move |_| ctx.start_run(),
                 "Run"
+            }
+            div { class: "menu-wrap",
+                button {
+                    class: "btn icon",
+                    title: "More actions",
+                    "aria-label": "More actions",
+                    "aria-expanded": if menu_open() { "true" } else { "false" },
+                    onclick: move |_| menu_open.set(!menu_open()),
+                    "⋯"
+                }
+                if menu_open() {
+                    // 点击外部关闭（透明满屏捕获层）
+                    div { class: "menu-catch", onclick: move |_| menu_open.set(false) }
+                    div { class: "menu",
+                        button {
+                            class: "menu-item",
+                            disabled: running || !has_done,
+                            onclick: move |_| {
+                                menu_open.set(false);
+                                ctx.clear_done();
+                            },
+                            "Clear Done"
+                        }
+                        {extra_btn}
+                        div { class: "menu-sep" }
+                        // 主题：三选一（原先是一个看不出档位的循环按钮）
+                        for (value, label) in THEMES {
+                            button {
+                                class: "menu-item",
+                                onclick: move |_| {
+                                    menu_open.set(false);
+                                    ctx.update_settings(move |s| s.theme = value.to_string());
+                                },
+                                span { "{label}" }
+                                if theme == value {
+                                    span { class: "menu-check", "✓" }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         {output_row}

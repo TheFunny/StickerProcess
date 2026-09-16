@@ -57,11 +57,13 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     let is_excess = entry
         .size_excess_ratio(video_limit, image_limit)
         .is_some_and(|ratio| ratio > 1.0);
-    // 输出产物：名字降为元信息（12px 弱化），大小才是结果本身
+    // 输出产物：名字降为元信息（12px 弱化），大小才是结果本身。
+    // 达标与否除颜色外必须有文字标记（色觉障碍用户 + WCAG 1.4.1 不只是颜色）
     let output = entry.mirror.output_size.map(|size| {
+        let (mark, kb) = (if is_excess { "!" } else { "✓" }, size as f64 / 1024.0);
         (
             entry.mirror.output_file_name.clone().unwrap_or_default(),
-            format!("{:.2}KB", size as f64 / 1024.0),
+            format!("{mark} {kb:.2}KB"),
         )
     });
     let size_class = if is_excess { "size-excess" } else { "size-ok" };
