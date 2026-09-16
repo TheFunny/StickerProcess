@@ -162,6 +162,10 @@ pub fn PreviewModal() -> Element {
                 onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                 h2 { class: "modal-title", "Preview" }
                 span { class: "preview-path", title: "{entry.mirror.input_path}", "{entry.mirror.input_path}" }
+                // 行内只放一行省略版，完整原因在这里（可换行/滚动）
+                if let Some(err) = entry.mirror.error.as_deref() {
+                    div { class: "preview-error", "{err}" }
+                }
 
                 div { class: "preview-grid",
                     div { class: "preview-pane",

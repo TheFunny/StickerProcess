@@ -238,6 +238,11 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     div { class: "row-progress-fill", width: "{(pct * 100.0).round()}%" }
                 }
             }
+            // 失败原因必须是行内可见的：原先只有 title 悬停 + 一次性的 toast，
+            // 而失败（无编码器 / 时长探测失败 / 输入损坏）是这工具的常态
+            if let Some(err) = entry.mirror.error.as_deref() {
+                div { class: "row-error", title: "{err}", "{err}" }
+            }
         }
     }
 }
