@@ -55,7 +55,7 @@ jobs:
           fi
           dx --version
 
-      # 32MB core 不入库（.gitignore）；从 wasm-core 孤儿分支取回。
+      # 29.5MB core 不入库（.gitignore）；从 wasm-core 孤儿分支取回。
       - name: Fetch ffmpeg core wasm
         run: |
           git fetch --depth 1 origin wasm-core

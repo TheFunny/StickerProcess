@@ -51,7 +51,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/W4_CORE_BUILD.md` | Self-built ffmpeg.wasm core recipe (Docker/WSL), rollback record; the built wasm lives ONLY on the `wasm-core` orphan branch |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
-| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
+| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 29.5MB core（wasm-opt -Oz） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
 | `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（缓存 `ffmpeg-dist`）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
@@ -241,7 +241,7 @@ cargo build --release
 cargo test           # 45 unit tests + 5 #[ignore] libav smoke tests
 cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
 
-# web (wasm32): engine matrix runs in browser; core assets in assets/ (32MB wasm gitignored)
+# web (wasm32): engine matrix runs in browser; core assets in assets/ (29.5MB wasm gitignored)
 # chrono/pretty_env_logger 是桌面专属 target 依赖；wasm 无日志后端（log 宏直接短路）
 cargo check --target wasm32-unknown-unknown --no-default-features --features web
 dx serve --platform web
@@ -261,9 +261,9 @@ ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
 "Optimizing WASM" 那行；`Dioxus.toml` 缺 `[web.wasm_opt]` 段即关），但给 app
 wasm 开这个开关是白费：当前产物 638KB（rustc `opt-level="s"` + LTO fat + strip，
 无 name 段），binaryen 132 `-Oz` 只再省 1.2KB（-0.2%），`-O3`/`-O4` 反而更大
-（+0.6%/+0.8%）。**别加 `[web.wasm_opt]`**。真正的体积杠杆是 33MB 的 ffmpeg
-core：`-Oz` → 29.5MB（-11%，gzip -3.6%，export/memory 声明不变，转码实测正常），
-见 `docs/W4_CORE_BUILD.md` 配方步骤 6。
+（+0.6%/+0.8%）。**别加 `[web.wasm_opt]`**。真正的体积杠杆是 ffmpeg core：
+33MB → 29.5MB（`-Oz`，-11%，gzip -3.6%，export/memory 声明不变，转码实测正常），
+产物已推到 `wasm-core` 孤儿分支，见 `docs/W4_CORE_BUILD.md` 配方步骤 6。
 
 ### ffmpeg environment
 
@@ -380,7 +380,7 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
 - **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core + 图标全套
   （`ffmpeg.js` wrapper、`814.ffmpeg.js` classic worker、`ffmpeg-core-st.{js,wasm}`
-  32MB gitignore、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`、
+  29.5MB gitignore（wasm-opt -Oz 后）、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`、
   `favicon.png`、`og-image.png`）。
   **dx（serve 与 build 皆然）不会把项目 `assets/` 拷进 `target/dx/.../web/public/`**——
   构建/跑起来前必须手动 cp 到该目录根，改过任一 JS 再 cp 一次（否则用的是旧副本）。
@@ -394,7 +394,7 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   Actions 那次 deploy 报 `environment protection rules`（源被 configure-pages 同
   运行内才切成 workflow，自动建的 `github-pages` environment 带残留分支限制），
   **再跑一次即绿**（Run #1 失败 → #3 成功实证）。用户 PAT 对 Pages/env 设置 API
-  是 404——但 workflow 的 `pages: write` 权限够用。32MB core 的 CI 来源 =
+  是 404——但 workflow 的 `pages: write` 权限够用。core 的 CI 来源 =
   `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑 `build-wasmcore-branch.sh`
   再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
 - **python http.server 无 Cache-Control → 浏览器启发式缓存 wasm/loader JS**：改过 Rust
