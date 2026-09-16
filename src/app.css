@@ -369,6 +369,34 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 输出目录输入框：选择按钮做成框内右侧的后缀图标 */
+.dir-field {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+
+.dir-field .input {
+  padding-right: 32px; /* 给框内图标让位 */
+}
+
+.dir-field .btn.icon {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+}
+
+.dir-field .btn.icon:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
 /* 列表底部的结果汇总（12px 弱化；计数用语义色） */
 .summary {
   font-size: 12px;

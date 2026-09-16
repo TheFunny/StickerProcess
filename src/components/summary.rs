@@ -44,23 +44,7 @@ pub fn SummaryBar() -> Element {
         return rsx! {};
     }
 
-    // 桌面专属：打开输出目录（web 产物驻内存，没有目录可开）
-    #[cfg(not(target_arch = "wasm32"))]
-    let open_btn = rsx! {
-        button {
-            class: "btn",
-            disabled: !ctx.settings.read().output_dir_valid(),
-            onclick: move |_| {
-                // UiState 是 Copy：拿一份局部可变绑定去调 &mut 方法
-                let mut ctx = ctx;
-                ctx.open_output_dir();
-            },
-            "Open Output Folder"
-        }
-    };
-    #[cfg(target_arch = "wasm32")]
-    let open_btn = rsx! {};
-
+    // 桌面专属按钮（"打开输出目录"）已挪到工具栏的输出目录行——那里才是它的位置
     rsx! {
         div { class: "row summary",
             span { class: "summary-item", "{done} done" }
@@ -73,8 +57,6 @@ pub fn SummaryBar() -> Element {
             if bytes > 0 {
                 span { class: "summary-item", "{format_size(bytes)} total" }
             }
-            div { class: "spacer" }
-            {open_btn}
         }
     }
 }

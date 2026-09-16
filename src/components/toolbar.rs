@@ -66,26 +66,43 @@ pub fn Toolbar() -> Element {
     let output_row = rsx! {
         div { class: "row",
             span { class: "label", "Output Dir:" }
-            input {
-                class: if ctx.settings.read().output_dir_valid() {
-                    "input grow"
-                } else {
-                    "input grow invalid-dir"
-                },
-                r#type: "text",
-                placeholder: "Type output directory here",
-                value: "{ctx.settings.read().output_dir}",
-                disabled: running,
-                oninput: move |evt: Event<FormData>| {
-                    let value = evt.data.value();
-                    ctx.update_settings(move |s| s.output_dir = value);
-                },
+            // 选择按钮做成输入框内的后缀图标；"打开目录"放在本行最右
+            div { class: "dir-field",
+                input {
+                    class: if ctx.settings.read().output_dir_valid() {
+                        "input grow"
+                    } else {
+                        "input grow invalid-dir"
+                    },
+                    r#type: "text",
+                    placeholder: "Type output directory here",
+                    value: "{ctx.settings.read().output_dir}",
+                    disabled: running,
+                    oninput: move |evt: Event<FormData>| {
+                        let value = evt.data.value();
+                        ctx.update_settings(move |s| s.output_dir = value);
+                    },
+                }
+                button {
+                    class: "btn icon dir-pick",
+                    title: "Choose output folder",
+                    "aria-label": "Choose output folder",
+                    disabled: running,
+                    onclick: move |_| ctx.pick_output_dir(),
+                    crate::components::icon::IconFolder {}
+                }
             }
             button {
-                class: "btn",
-                disabled: running,
-                onclick: move |_| ctx.pick_output_dir(),
-                "Select"
+                class: "btn icon",
+                title: "Open output folder in Explorer",
+                "aria-label": "Open output folder",
+                disabled: !ctx.settings.read().output_dir_valid(),
+                onclick: move |_| {
+                    // UiState 是 Copy：拿一份局部可变绑定去调 &mut 方法
+                    let mut ctx = ctx;
+                    ctx.open_output_dir();
+                },
+                crate::components::icon::IconOpenExternal {}
             }
         }
     };

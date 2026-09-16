@@ -47,3 +47,27 @@ pub fn IconClose() -> Element {
         }
     }
 }
+
+/// 选择文件夹（输出目录输入框内的后缀按钮）。
+#[component]
+pub fn IconFolder() -> Element {
+    rsx! {
+        svg { class: "ico ico-stroke", view_box: "0 0 16 16",
+            // 经典文件夹轮廓：左上角折起一个标签
+            path { d: "M2 5.6h4.2l1.4 1.8h6.4v6.2H2z" }
+        }
+    }
+}
+
+/// 在资源管理器里打开目录（箭头出框；与"选择文件夹"区分开）。
+#[component]
+pub fn IconOpenExternal() -> Element {
+    rsx! {
+        svg { class: "ico ico-stroke", view_box: "0 0 16 16",
+            // 缺右上角的框
+            path { d: "M6.6 3.4H3.4v9.2h9.2V9.4" }
+            // 右上角的外跳箭头
+            path { d: "M9.4 3.4h3.2v3.2M12.6 3.4 7.8 8.2" }
+        }
+    }
+}
