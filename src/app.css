@@ -482,6 +482,21 @@ body {
   gap: 6px;
 }
 
+/* 复选框：沿用 .input 的边框/焦点样式，但不要固定高度与内边距 */
+.input.check {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* 设置项的一行说明（12px 弱化），专业项不该只有术语 */
+.hint {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
 .factor-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

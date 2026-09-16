@@ -103,11 +103,16 @@ enum TaskOutcome {
     Cancelled,
 }
 
-/// 为尚未设置输出路径的任务分配带时间戳的输出文件。
-fn ensure_output_dir_set(task: &Arc<Mutex<Transcoder>>, output_dir: &str) -> Result<(), String> {
+/// 为尚未设置输出路径的任务分配输出文件（文件名规则见 `set_output_dir`）。
+fn ensure_output_dir_set(
+    task: &Arc<Mutex<Transcoder>>,
+    output_dir: &str,
+    keep_input_name: bool,
+) -> Result<(), String> {
     let mut t = task.lock().map_err(|e| e.to_string())?;
     if t.get_output().is_none() {
-        t.set_output_dir(output_dir).map_err(|e| e.to_string())?;
+        t.set_output_dir(output_dir, keep_input_name)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -149,7 +154,11 @@ pub async fn run_all(
         // 每任务取当前设置（output_dir 等）
         let settings = ctx.settings.peek().clone();
 
-        if let Err(msg) = ensure_output_dir_set(&entry.transcoder, &settings.output_dir) {
+        if let Err(msg) = ensure_output_dir_set(
+            &entry.transcoder,
+            &settings.output_dir,
+            settings.keep_input_name,
+        ) {
             ctx.touch_entry(index, |e| e.error = Some(msg.clone()));
             ctx.with_task(index, |t| t.status = Status::Alert);
             ctx.push_toast(ToastKind::Error, msg);

@@ -75,6 +75,18 @@ impl MediaFile {
         }
     }
 
+    /// 输入文件名主干（不含扩展名）；取不到或为空返回 None。
+    /// 产物命名（"保留输入文件名"设置）用。
+    pub fn file_stem(&self) -> Option<String> {
+        let stem = match &self.source {
+            Source::Path(p) => p.file_stem().map(|s| s.to_string_lossy().into_owned()),
+            Source::Bytes { name, .. } => {
+                name.rsplit_once('.').map(|(stem, _)| stem.to_string())
+            }
+        };
+        stem.filter(|s| !s.is_empty())
+    }
+
     /// 是否为内存字节源（网页端任务）。
     pub fn is_bytes(&self) -> bool {
         matches!(self.source, Source::Bytes { .. })

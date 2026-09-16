@@ -236,6 +236,21 @@ pub fn SettingsPanel() -> Element {
                 }
 
                 div { class: "settings-row",
+                    span { class: "label", "Keep input file name" }
+                    input {
+                        class: "input check",
+                        r#type: "checkbox",
+                        disabled: false,
+                        checked: ctx.settings.read().keep_input_name,
+                        onchange: move |evt: Event<FormData>| {
+                            let on = evt.data.checked();
+                            ctx.update_settings(move |s| s.keep_input_name = on);
+                        },
+                    }
+                    span { class: "hint", "Output: input-name-timestamp.webm (off = timestamp only)" }
+                }
+
+                div { class: "settings-row",
                     span { class: "label", "Engine" }
                     {engine_select}
                 }

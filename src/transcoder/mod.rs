@@ -18,6 +18,9 @@ pub use error::TranscodeError;
 /// 时长→系数表的出厂值（config 与 Transcoder 共用一份，避免两处漂移）。
 pub use command::DEFAULT_DURATION_FACTORS;
 
+/// 产物文件名里输入名主干的最大字符数（Windows 路径长度上限的粗保护）。
+const MAX_NAME_STEM: usize = 64;
+
 #[cfg(feature = "desktop")]
 use ffmpeg_sidecar::child::FfmpegChild;
 #[cfg(feature = "desktop")]
@@ -153,10 +156,13 @@ impl Transcoder {
         self.media_file.output()
     }
 
-    /// 为任务分配带时间戳的输出文件（视频 .webm / 图片 .png）。
+    /// 为任务分配输出文件（视频 .webm / 图片 .png）。
+    /// `keep_input_name` 为真时前缀输入文件名主干：`输入名-时间戳.webm`（默认
+    /// 只有时间戳，与历史行为一致）。
     pub fn set_output_dir<P: AsRef<Path> + ?Sized>(
         &mut self,
         output_dir: &P,
+        keep_input_name: bool,
     ) -> Result<(), TranscodeError> {
         let ext = match self
             .media_file
@@ -166,15 +172,28 @@ impl Transcoder {
             MediaType::Video(_) => "webm",
             MediaType::Image(_) => "png",
         };
+        // 输入名可能很长（Windows MAX_PATH 260）：截断，唯一性交给时间戳
+        let prefix = if keep_input_name {
+            self.media_file
+                .file_stem()
+                .map(|stem| {
+                    let stem: String = stem.chars().take(MAX_NAME_STEM).collect();
+                    format!("{stem}-")
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         // chrono::Local 依赖 std::time（wasm 未实现）——网页端用 JS Date 的 ISO 时间戳
         #[cfg(not(target_arch = "wasm32"))]
         let time = chrono::Local::now();
         let output = {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                output_dir
-                    .as_ref()
-                    .join(format!("{}.{}", time.format("%Y-%m-%d-%H%M%S%.3f"), ext))
+                output_dir.as_ref().join(format!(
+                    "{prefix}{}.{ext}",
+                    time.format("%Y-%m-%d-%H%M%S%.3f")
+                ))
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -187,7 +206,7 @@ impl Transcoder {
                     // ISO 串异常时不能用 ".webm" 这种隐藏文件名——退回毫秒时间戳
                     s = (js_sys::Date::now() as u64).to_string();
                 }
-                output_dir.as_ref().join(format!("{s}.{ext}"))
+                output_dir.as_ref().join(format!("{prefix}{s}.{ext}"))
             }
         };
         self.set_output(&output);
@@ -352,7 +371,56 @@ pub fn excess_ratio(output_size: Option<u64>, limit: u64) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::shrunk_factor;
+    use super::{Transcoder, shrunk_factor};
+
+    /// 产物命名契约（"保留输入文件名"设置）：默认纯时间戳，开启后前缀输入名主干。
+    #[test]
+    fn output_name_keeps_input_stem_only_when_enabled() {
+        use crate::media::MediaFile;
+
+        let mut t = Transcoder::new(MediaFile::new(std::path::Path::new("input/clip.mp4")));
+        t.set_output_dir(std::path::Path::new("out"), false).unwrap();
+        let plain = t
+            .get_output()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(plain.ends_with(".webm"), "{plain}");
+        assert!(!plain.starts_with("clip-"), "默认不该带输入名: {plain}");
+
+        let mut t = Transcoder::new(MediaFile::new(std::path::Path::new("input/clip.mp4")));
+        t.set_output_dir(std::path::Path::new("out"), true).unwrap();
+        let kept = t
+            .get_output()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(kept.starts_with("clip-"), "应保留输入名: {kept}");
+        assert!(kept.ends_with(".webm"), "{kept}");
+    }
+
+    /// 输入名主干截到 64 字符（Windows 路径上限的粗保护）；图片产物是 .png。
+    #[test]
+    fn output_name_truncates_long_input_stem() {
+        use crate::media::MediaFile;
+
+        let long = format!("input/{}.png", "x".repeat(200));
+        let mut t = Transcoder::new(MediaFile::new(std::path::Path::new(&long)));
+        t.set_output_dir(std::path::Path::new("out"), true).unwrap();
+        let name = t
+            .get_output()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(name.matches('x').count(), 64, "{name}");
+        assert!(name.ends_with(".png"), "{name}");
+    }
 
     #[test]
     fn shrunk_factor_formula() {

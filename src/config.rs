@@ -31,6 +31,9 @@ pub struct Settings {
     /// 转码引擎："sidecar"（ffmpeg 子进程）或 "inprocess"（libav 进程内）。
     #[serde(default = "default_engine")]
     pub engine: String,
+    /// 产物文件名是否带上输入文件名（`输入名-时间戳.webm`）；默认 false = 只有时间戳。
+    #[serde(default)]
+    pub keep_input_name: bool,
 }
 
 fn default_engine() -> String {
@@ -58,6 +61,7 @@ impl Default for Settings {
             duration_factors: default_duration_factors(),
             target_fps: 0.0,
             theme: "system".into(),
+            keep_input_name: false,
         }
     }
 }
@@ -242,6 +246,7 @@ mod tests {
         s.target_fps = 30.0;
         s.theme = "dark".into();
         s.engine = "inprocess".into();
+        s.keep_input_name = true;
         let raw = toml::to_string_pretty(&s).unwrap();
         assert_eq!(toml::from_str::<Settings>(&raw).unwrap(), s);
     }
