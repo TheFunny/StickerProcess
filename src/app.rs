@@ -653,10 +653,18 @@ impl UiState {
     }
 }
 
-/// 全局快捷键的原生监听（只装一次）。web 端不接管 Ctrl+O：浏览器自身的
-/// "打开文件"拦不住（同步默认动作），两条路径同时弹框更糟，而浏览器那个行为
-/// 本身可接受。末尾永不 resolve —— eval 通道在 JS 代码返回后会被关闭，留着
-/// 挂起的 Promise 才能一直 `dioxus.send` 回来。
+/// 全局按键的原生监听（只装一次）：弹窗焦点陷阱 + 全局快捷键。
+///
+/// 陷阱用原生 Tab 循环手写，而不是把背景设 `inert`：背景内容散在 .app 的多个
+/// 兄弟节点上，得为它加一层 `display: contents` 包装，而 inert 用在这里还要求
+/// 元素 omit 属性（假值也照样生效），dioxus 的自定义属性没有这个语义。
+///
+/// 快捷键挂在 window 上而不是 DOM 上：点掉按钮/关掉弹窗后焦点落到 body，事件
+/// 就不再经过 .app；原生监听顺带能**同步** preventDefault（dioxus 事件管线的
+/// prevent_default 是异步的，拦不住浏览器默认动作）。web 端不接管 Ctrl+O：
+/// 浏览器自身的"打开文件"拦不住，两条路径同时弹框更糟，而浏览器那个行为本身
+/// 可接受。末尾永不 resolve —— eval 通道在 JS 代码返回后会被关闭，留着挂起的
+/// Promise 才能一直 `dioxus.send` 回来。
 fn key_bridge_js() -> String {
     #[cfg(target_arch = "wasm32")]
     let open_branch = "";
@@ -668,6 +676,22 @@ fn key_bridge_js() -> String {
 if (!window.__stp_keys) {{
     window.__stp_keys = true;
     window.addEventListener('keydown', (e) => {{
+        // 弹窗打开时 Tab 在弹窗内循环（初始焦点在 backdrop 上，第一次 Tab 进正文）
+        if (e.key === 'Tab') {{
+            const modal = document.querySelector('.modal');
+            if (modal) {{
+                const stops = [...modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+                    .filter((el) => el.tabIndex >= 0 && !el.disabled && el.offsetParent !== null);
+                if (!stops.length) {{ e.preventDefault(); return; }}
+                const first = stops[0], last = stops[stops.length - 1], active = document.activeElement;
+                const inside = modal.contains(active);
+                if (e.shiftKey) {{
+                    if (!inside || active === first) {{ e.preventDefault(); last.focus(); }}
+                }} else if (!inside || active === last) {{
+                    e.preventDefault(); first.focus();
+                }}
+            }}
+        }}
         if (!e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
         if (e.key === 'Enter') {{ e.preventDefault(); dioxus.send('run'); }}
         {open_branch}

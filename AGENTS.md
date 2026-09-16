@@ -53,6 +53,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
 | `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 32MB core → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
+| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（缓存 `ffmpeg-dist`）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
@@ -334,6 +335,7 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   cross-platform item trips it, use one of those two forms.
   `cargo clippy --all-targets` is *not* a substitute: it adds a second target
   whose own dead-code view differs (measured: 6 → 7 warnings).
+  Both commands are **gated in CI** (`.github/workflows/ci.yml`) with `-- -D warnings`.
 - New media types must be wired in **four** places:
   1. `src/app.rs` — `SUPPORTED` (the single extension list; `file_accept()` and
      the drop/upload filter both derive from it, and
@@ -357,6 +359,13 @@ offline from the registry cache while `Cargo.lock` stays untouched.
      preventDefault（dragover+drop）+ thread_local 队列 + dioxus 排空任务。
   3. 经 wasm-bindgen 传出的 `&[u8]` 背靠 wasm 内存、**不可 detach**——ffmpeg.wasm
      `writeFile` 会 transfer 所有权，glue 必须先 `new Uint8Array(data).slice()`。
+- **全局快捷键/弹窗焦点陷阱走 window 级原生监听 + eval 通道**（`app.rs::key_bridge_js`
+  的 JS + `Eval::recv` 循环），别改回"根节点 tabindex + onkeydown"：点掉一个按钮或
+  关掉弹窗后焦点落到 `body`，事件就不再经过 `.app`，快捷键会**静默失效**（实测：
+  关掉设置面板后 Ctrl+Enter 彻底不响应）。同理，键盘默认动作只能靠原生监听里
+  **同步** 的 `preventDefault` 拦（dioxus 管线是异步的，见上条）。桥的 JS 末尾必须
+  永不 resolve（`await new Promise(() => {})`）：eval 通道在 JS 返回后即关闭，
+  `dioxus.send` 会全部丢失；启动日志里的 `key bridge installed` 就是它的心跳。
 - **dragover 期间 `dataTransfer.files` 恒空**（规范保护模式，文件仅 drop 时可见）——
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
 - **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core + 图标全套

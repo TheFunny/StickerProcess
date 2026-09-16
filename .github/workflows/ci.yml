@@ -1,0 +1,85 @@
+name: CI
+
+# 门禁：clippy 两端零告警（本地约定见 AGENTS.md「Lint state」）。
+# 独立于 deploy-web.yml —— 不让一处 lint 挡住线上部署，但 PR/推送里可见。
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # wasm 目标不需要 ffmpeg（build.rs 在非 desktop 特性下直接返回）
+  clippy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: clippy-web-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            clippy-web-${{ runner.os }}-
+
+      - name: Clippy (wasm32)
+        run: cargo clippy --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
+
+  # 两个 target 看到的 cfg 不同（对方的平台专属项会被报成 never used），所以两个都要跑
+  clippy-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: clippy-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            clippy-desktop-${{ runner.os }}-
+
+      # 与 release-desktop.yml 同一份预构建静态库（clippy 也要过 build.rs）
+      - name: Cache ffmpeg static libs
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-dist
+          key: ffmpeg-static-x64-win-v1
+
+      - name: Fetch prebuilt ffmpeg static libs
+        shell: bash
+        run: |
+          if [ -f ffmpeg-dist/lib/avcodec.lib ]; then
+            echo "cached"
+          else
+            mkdir -p ffmpeg-dist
+            curl -sSL -o ff.tar.xz \
+              https://github.com/TheFunny/ffmpeg-static-win/releases/download/ffmpeg-static-v1/ffmpeg-static-x64-win.tar.xz
+            tar xJf ff.tar.xz -C ffmpeg-dist
+            test -f ffmpeg-dist/lib/avcodec.lib
+          fi
+          echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
+
+      - name: Clippy (desktop)
+        run: cargo clippy -- -D warnings
