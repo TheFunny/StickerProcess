@@ -32,8 +32,7 @@ fn patch_webm_file(path: &std::path::Path) -> Result<(), TranscodeError> {
     let data = std::fs::read(path)
         .map_err(|_| TranscodeError::DurationPatch("failed to read output file"))?;
     let patched = patch_webm_bytes(data)?;
-    std::fs::write(path, &patched)
-        .map_err(|_| TranscodeError::DurationPatch("error writing file"))
+    std::fs::write(path, &patched).map_err(|_| TranscodeError::DurationPatch("error writing file"))
 }
 
 /// Duration 载荷（8 字节 f64）的起始偏移 = 标记位置 + 3。

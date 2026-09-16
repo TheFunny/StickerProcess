@@ -87,8 +87,13 @@ body {
 }
 
 .btn {
-  display: inline-block;
-  padding: 4px 12px;
+  /* 统一高度 30px（与 .input 一致）：图标按钮/文字按钮不再各高各的 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 12px;
   /* 按钮不继承 body 字体（UA 默认 Arial），与其它控件不一致 */
   font-family: inherit;
   font-size: inherit;
@@ -99,7 +104,6 @@ body {
   cursor: pointer;
   user-select: none;
   line-height: 20px;
-  text-align: center;
   white-space: nowrap;
 }
 
@@ -134,14 +138,6 @@ body {
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover);
   border-color: var(--danger-hover);
-}
-
-/* 图标按钮：与文字按钮同高，窄到 ~34px */
-.btn.icon {
-  width: 34px;
-  padding: 4px 0;
-  font-size: 15px;
-  line-height: 20px;
 }
 
 /* "⋯" 溢出菜单：低频动作（清空完成 / 下载全部 / 主题三档）收在这里 */
@@ -644,13 +640,64 @@ body {
 }
 
 .btn-mini {
-  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  padding: 3px 10px;
-  font-size: 13px;
-  line-height: 18px;
-  border-radius: 5px;
+  align-self: center;
+  height: 22px;
+  padding: 0 8px;
   margin-left: 8px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 5px;
+}
+
+/* 方形图标按钮：与文字按钮同高，宽度固定 */
+.btn.icon {
+  width: 34px;
+  padding: 0;
+}
+
+.btn-mini.btn-icon {
+  width: 28px;
+  padding: 0;
+}
+
+/* Run/Cancel 共用同一个槽位：定宽避免切换时整条工具栏抖动 */
+.btn.run-slot {
+  min-width: 84px;
+}
+
+/* 内联 SVG：尺寸与颜色由 CSS 决定（stroke 型图标用 .ico-stroke） */
+.ico {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.ico-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 圆弧箭头的那一小块实心三角 */
+.ico-head {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* 行内系数输入：与右侧 Re-run / ✕ 同尺寸（原 64×30 明显更壮） */
+.factor-mini .input.num {
+  width: 52px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 13px;
+  border-radius: 5px;
 }
 
 .btn-link {
@@ -670,10 +717,19 @@ body {
   color: #fff;
 }
 
-/* 输出产物链接：名字是元信息，大小带语义色（颜色之外还有 ✓/! 标记，见 task_list） */
-.out-name {
+/* 输出产物：文件名是动作（打开目录/下载），size 只读 */
+/* 放在 .btn-link 之后 + 提高一级特异性：.btn-link 的 font: inherit 会把 12px 顶掉 */
+.btn-link.out-name {
   font-size: 12px;
   color: var(--fg-muted);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-link.out-name:hover {
+  color: var(--fg);
 }
 
 .out-size {
@@ -681,8 +737,4 @@ body {
   font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-
-.out-file:hover .out-name {
-  color: var(--fg);
 }

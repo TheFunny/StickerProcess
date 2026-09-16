@@ -73,9 +73,7 @@ pub fn PreviewModal() -> Element {
                     let mime = output_mime(path);
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        std::fs::read(path)
-                            .ok()
-                            .map(|bytes| data_url(mime, &bytes))
+                        std::fs::read(path).ok().map(|bytes| data_url(mime, &bytes))
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -131,6 +129,12 @@ pub fn PreviewModal() -> Element {
         .map(|s| format!("Output ({})", kb(s)))
         .unwrap_or_else(|| "Output".into());
     let compare = compare_text(&entry, ratio);
+    // 产物动作的平台差异（桌面定位 / web 下载）
+    let output_action = if cfg!(target_arch = "wasm32") {
+        "Download"
+    } else {
+        "Reveal in Explorer"
+    };
     // data URL 已同步生成：Done/SizeExcess 时必有值；仅剩极端竞态兜底
     let show_loading = matches!(
         entry.mirror.status,
@@ -184,6 +188,52 @@ pub fn PreviewModal() -> Element {
                         "{compare}"
                     }
                     div { class: "spacer" }
+                    // 产物动作：行内标记只读后，这里是"拿到结果"的唯一入口
+                    if entry.mirror.output_path.is_some() && entry.mirror.output_size.is_some() {
+                        button {
+                            class: "btn",
+                            title: "{output_action}",
+                            onclick: move |_| {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if let Some(path) = entry.mirror.output_path.as_ref() {
+                                    // /select 打开资源管理器并选中输出文件
+                                    let _ = std::process::Command::new("explorer")
+                                        .arg(format!("/select,{}", path.display()))
+                                        .spawn();
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    // web：从内存 output_bytes 触发浏览器下载
+                                    let name = entry
+                                        .mirror
+                                        .output_file_name
+                                        .clone()
+                                        .unwrap_or_else(|| "sticker.webm".into());
+                                    let bytes = entry
+                                        .transcoder
+                                        .lock()
+                                        .ok()
+                                        .and_then(|t| t.output_bytes.clone());
+                                    if let Some(bytes) = bytes {
+                                        spawn(async move {
+                                            if crate::transcoder::web::sticker_download(
+                                                &bytes, &name,
+                                            )
+                                            .is_err()
+                                            {
+                                                // wasm 无日志后端：失败必须给用户看得见的反馈
+                                                ctx.push_toast(
+                                                    crate::components::toast::ToastKind::Error,
+                                                    "Download failed",
+                                                );
+                                            }
+                                        });
+                                    }
+                                }
+                            },
+                            "{output_action}"
+                        }
+                    }
                     button {
                         class: "btn btn-primary",
                         onclick: move |_| ctx.show_preview.set(None),

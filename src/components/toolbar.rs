@@ -139,20 +139,24 @@ pub fn Toolbar() -> Element {
                 "aria-label": "Settings",
                 disabled: running,
                 onclick: move |_| ctx.show_settings.set(true),
-                "⚙"
+                crate::components::icon::IconSettings {}
             }
-            button {
-                class: "btn btn-danger",
-                // 只在进行中可点：原先写成 `running ||`，运行期间按钮反而是禁用的
-                disabled: !running,
-                onclick: move |_| ctx.cancel.set(true),
-                "Cancel"
-            }
-            button {
-                class: "btn btn-primary",
-                disabled: running || !runnable,
-                onclick: move |_| ctx.start_run(),
-                "Run"
+            // Run 与 Cancel 是同一处状态机：进行中显示 Cancel，否则显示 Run
+            if running {
+                button {
+                    class: "btn btn-danger run-slot",
+                    title: "Cancel the running job",
+                    onclick: move |_| ctx.cancel.set(true),
+                    "Cancel"
+                }
+            } else {
+                button {
+                    class: "btn btn-primary run-slot",
+                    title: "Transcode every task that is not done yet",
+                    disabled: !runnable,
+                    onclick: move |_| ctx.start_run(),
+                    "Run"
+                }
             }
             div { class: "menu-wrap",
                 button {

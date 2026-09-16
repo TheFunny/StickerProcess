@@ -421,7 +421,8 @@ async fn run_single_task(
                     .filter(|e| e.mirror.status == Status::Done)
                 {
                     let kb = done
-                        .mirror.output_size
+                        .mirror
+                        .output_size
                         .map_or_else(|| "?".into(), |s| format!("{:.2}KB", s as f64 / 1024.0));
                     #[cfg(not(target_arch = "wasm32"))]
                     {

@@ -80,9 +80,7 @@ impl MediaFile {
     pub fn file_stem(&self) -> Option<String> {
         let stem = match &self.source {
             Source::Path(p) => p.file_stem().map(|s| s.to_string_lossy().into_owned()),
-            Source::Bytes { name, .. } => {
-                name.rsplit_once('.').map(|(stem, _)| stem.to_string())
-            }
+            Source::Bytes { name, .. } => name.rsplit_once('.').map(|(stem, _)| stem.to_string()),
         };
         stem.filter(|s| !s.is_empty())
     }

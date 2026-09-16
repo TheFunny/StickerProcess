@@ -14,9 +14,9 @@ mod steps;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
-pub use error::TranscodeError;
 /// 时长→系数表的出厂值（config 与 Transcoder 共用一份，避免两处漂移）。
 pub use command::DEFAULT_DURATION_FACTORS;
+pub use error::TranscodeError;
 
 /// 产物文件名里输入名主干的最大字符数（Windows 路径长度上限的粗保护）。
 const MAX_NAME_STEM: usize = 64;
@@ -332,8 +332,7 @@ impl Transcoder {
         #[cfg(feature = "desktop")]
         {
             let path = self.get_output().ok_or(TranscodeError::OutputNotSet)?;
-            std::fs::write(path, &bytes)
-                .map_err(|e| TranscodeError::OutputWrite(e.to_string()))?;
+            std::fs::write(path, &bytes).map_err(|e| TranscodeError::OutputWrite(e.to_string()))?;
             Ok(())
         }
         #[cfg(not(feature = "desktop"))]
@@ -379,7 +378,8 @@ mod tests {
         use crate::media::MediaFile;
 
         let mut t = Transcoder::new(MediaFile::new(std::path::Path::new("input/clip.mp4")));
-        t.set_output_dir(std::path::Path::new("out"), false).unwrap();
+        t.set_output_dir(std::path::Path::new("out"), false)
+            .unwrap();
         let plain = t
             .get_output()
             .unwrap()

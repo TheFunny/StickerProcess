@@ -5,6 +5,8 @@
 
 use crate::app::{TaskEntry, UiState};
 use crate::components::number_field::NumberInput;
+#[cfg(target_arch = "wasm32")]
+use crate::components::toast::ToastKind;
 use crate::transcoder::Status;
 use dioxus::prelude::*;
 
@@ -67,8 +69,10 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         )
     });
     let size_class = if is_excess { "size-excess" } else { "size-ok" };
-    // 同一个链接的动作随平台不同：桌面在资源管理器定位，web 触发下载
-    let size_action = if cfg!(target_arch = "wasm32") {
+    // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
+    let factor_value = entry.mirror.factor;
+    // 产物动作落在**文件名**上（size 只读）：桌面在资源管理器定位，web 触发下载
+    let out_action = if cfg!(target_arch = "wasm32") {
         "Download output"
     } else {
         "Reveal in Explorer"
@@ -82,8 +86,12 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     // 选中输出文件用（onclick 闭包捕获，桌面专属）
     #[cfg(not(target_arch = "wasm32"))]
     let select_path = entry.mirror.output_path.clone();
-    // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
-    let factor_value = entry.mirror.factor;
+    // 重试/重跑：同一动作的两种语义（失败后重来 / 已完成后重做），按钮只有图标
+    let retry_label = if entry.mirror.status == Status::Done {
+        "Re-run"
+    } else {
+        "Retry"
+    };
     // 转码耗时（成功后保留展示）
     let elapsed_text = entry.mirror.elapsed_ms.map(format_elapsed);
     // 悬停提示：优先错误详情，否则完整路径
@@ -130,40 +138,46 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 if let Some(pct) = entry.mirror.progress {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
                 } else if let Some((name, size)) = output {
-                    button {
-                        class: "btn-link out-file",
-                        title: "{size_action}",
-                        onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
-                        onclick: move |evt: Event<MouseData>| {
-                            evt.stop_propagation();
-                            // /select 打开资源管理器并选中输出文件
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if let Some(path) = select_path.as_ref() {
+                    // 文件名 = 动作（打开目录 / 下载），size = 只读标记：两者行为分开
+                    span { class: "out-file",
+                        button {
+                            class: "btn-link out-name",
+                            title: "{out_action}",
+                            onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
+                            onclick: move |evt: Event<MouseData>| {
+                                evt.stop_propagation();
                                 // /select 打开资源管理器并选中输出文件
-                                let _ = std::process::Command::new("explorer")
-                                    .arg(format!("/select,{}", path.display()))
-                                    .spawn();
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                // web：从内存 output_bytes 触发浏览器下载
-                                if let Some(bytes) = entry_bytes.clone() {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if let Some(path) = select_path.as_ref() {
+                                    let _ = std::process::Command::new("explorer")
+                                        .arg(format!("/select,{}", path.display()))
+                                        .spawn();
+                                }
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    // web：从内存 output_bytes 触发浏览器下载
+                                    // （已用 CDP 下载目录做过落盘验证）
                                     let name = entry
                                         .mirror
                                         .output_file_name
                                         .clone()
                                         .unwrap_or_else(|| "sticker.webm".into());
-                                    spawn(async move {
-                                        if crate::transcoder::web::sticker_download(
-                                            &bytes, &name,
-                                        ).is_err() {
-                                            log::error!("download failed: glue missing");
-                                        }
-                                    });
+                                    match entry_bytes.clone() {
+                                        Some(bytes)
+                                            if crate::transcoder::web::sticker_download(
+                                                &bytes, &name,
+                                            )
+                                            .is_ok() => {}
+                                        // 失败原先只写 log（wasm 无日志后端 = 静默），给用户看得见的反馈
+                                        _ => ctx.push_toast(
+                                            ToastKind::Error,
+                                            "Download failed",
+                                        ),
+                                    }
                                 }
-                            }
-                        },
-                        span { class: "out-name", "{name}" }
+                            },
+                            "{name}"
+                        }
                         span { class: "out-size {size_class}", "{size}" }
                     }
                 }
@@ -172,6 +186,8 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 }
                 if let Some(factor) = factor_value {
                     span {
+                        class: "factor-mini",
+                        title: "Size factor (higher = bigger file)",
                         onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                         onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         NumberInput<f64> {
@@ -192,26 +208,29 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 // Done 也可重跑：Run 只处理未完成任务，重转需先把它退回 Pending
                 if matches!(entry.mirror.status, Status::Alert | Status::SizeExcess | Status::Done) {
                     button {
-                        class: "btn btn-mini",
+                        class: "btn btn-mini btn-icon",
+                        title: "{retry_label}",
+                        "aria-label": "{retry_label} this task",
                         disabled: running,
                         onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
                             ctx.retry_task(index);
                         },
-                        if entry.mirror.status == Status::Done { "Re-run" } else { "Retry" }
+                        crate::components::icon::IconRetry {}
                     }
                 }
                 button {
-                    class: "btn btn-mini btn-remove",
-                    disabled: running,
+                    class: "btn btn-mini btn-icon btn-remove",
+                    title: "Remove task",
                     "aria-label": "Remove task",
+                    disabled: running,
                     onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                     onclick: move |evt: Event<MouseData>| {
                         evt.stop_propagation();
                         ctx.remove_task(index);
                     },
-                    "✕"
+                    crate::components::icon::IconClose {}
                 }
             }
             if let Some(pct) = entry.mirror.progress {
