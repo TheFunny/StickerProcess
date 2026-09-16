@@ -7,6 +7,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// 输出目录可用性：红框与提示文案都从它派生（替代原来的 bool）。
+/// 桌面专属——web 没有输出目录这一行。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputDirState {
+    /// 已存在（是否可写另算，见 `Settings::output_dir_writable`）。
+    Ok,
+    /// 不存在，但父目录在——开跑时自动创建。
+    WillCreate,
+    /// 父目录不存在，或路径上已经是个文件（建不出来）。
+    Missing,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     /// 输出目录；空串表示未设置（load 时回填为 ./output）。
@@ -72,12 +85,41 @@ impl Settings {
         crate::transcoder::Engine::parse(self.engine.as_str()).is_some()
     }
 
-    /// 输出目录是否可用（已存在，或父目录存在可创建）。
-    /// 桌面专属：web 无文件系统，该行在 wasm 下不渲染。
+    /// 输出目录状态（桌面）：UI 用它决定红框与提示文案。
+    /// 只看存在性，不碰磁盘写——可写性要真正建文件才知道，见 `output_dir_writable`。
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn output_dir_valid(&self) -> bool {
+    pub fn output_dir_state(&self) -> OutputDirState {
+        if self.output_dir.is_empty() {
+            return OutputDirState::Missing;
+        }
         let path = std::path::Path::new(&self.output_dir);
-        path.is_dir() || (!self.output_dir.is_empty() && path.parent().is_some_and(|p| p.is_dir()))
+        if path.is_dir() {
+            return OutputDirState::Ok;
+        }
+        // 父目录在、且路径本身没被别的东西占着 → 开跑时 create_dir 会成功
+        match path.parent() {
+            Some(parent) if parent.is_dir() && !path.exists() => OutputDirState::WillCreate,
+            _ => OutputDirState::Missing,
+        }
+    }
+
+    /// 真正建/删一个临时文件确认可写。
+    /// 只读目录与 ACL 拒绝在 `is_dir()` 上都是"正常"，只有写一次才知道——但这是有
+    /// 副作用的 syscall，**别放进每键一次的渲染路径**：仅失焦与开跑前调用。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn output_dir_writable(&self) -> bool {
+        let dir = std::path::Path::new(&self.output_dir);
+        if !dir.is_dir() {
+            return false;
+        }
+        let probe = dir.join(".stickerprocess_write_test");
+        match std::fs::write(&probe, b"") {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&probe);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn video_max_size(&self) -> u64 {
@@ -296,6 +338,45 @@ mod tests {
         assert_eq!(s.target_fps, 240.0);
         // 序列化必须恢复可用
         assert!(toml::to_string_pretty(&s).is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn output_dir_state_covers_the_four_cases() {
+        let base = std::env::temp_dir().join(format!("sp_cfg_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+        let mut s = Settings::default();
+
+        // 已存在的目录
+        s.output_dir = base.to_string_lossy().into_owned();
+        assert_eq!(s.output_dir_state(), OutputDirState::Ok);
+        assert!(s.output_dir_writable(), "temp dir should be writable");
+
+        // 不存在、但父目录在 → 开跑时 create_dir 会成功
+        s.output_dir = base.join("child").to_string_lossy().into_owned();
+        assert_eq!(s.output_dir_state(), OutputDirState::WillCreate);
+        // 还没建出来时不能声称可写（探测不建目录）
+        assert!(!s.output_dir_writable());
+
+        // 路径已被一个文件占着 → 建不出来
+        let file = base.join("occupied");
+        std::fs::write(&file, b"x").unwrap();
+        s.output_dir = file.to_string_lossy().into_owned();
+        assert_eq!(s.output_dir_state(), OutputDirState::Missing);
+
+        // 父目录本身就不存在
+        s.output_dir = base
+            .join("nope")
+            .join("deeper")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(s.output_dir_state(), OutputDirState::Missing);
+
+        // 空串 = 未设置
+        s.output_dir = String::new();
+        assert_eq!(s.output_dir_state(), OutputDirState::Missing);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

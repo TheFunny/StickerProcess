@@ -9,6 +9,8 @@
 //! web：输出目录行整体不渲染（产物驻内存走下载）。
 
 use crate::app::{SUPPORTED, UiState};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::config::OutputDirState;
 use crate::transcoder::Status;
 use dioxus::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
@@ -61,26 +63,48 @@ pub fn Toolbar() -> Element {
     #[cfg(not(target_arch = "wasm32"))]
     let extra_btn = rsx! {};
 
+    // 输出目录状态（桌面）：红框与提示文案都从它派生；可写性只在失焦时真写一次
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut dir_write_ok = use_signal(|| None::<bool>);
+    #[cfg(not(target_arch = "wasm32"))]
+    let dir_state = ctx.settings.read().output_dir_state();
+    #[cfg(not(target_arch = "wasm32"))]
+    let (dir_bad, dir_hint) = match dir_state {
+        OutputDirState::Missing => (true, Some(("Folder not found", " danger"))),
+        // 存在但是写不进去（只读/ACL）：以前会一路通过校验、跑到写盘才炸
+        OutputDirState::Ok if dir_write_ok() == Some(false) => {
+            (true, Some(("Folder is not writable", " danger")))
+        }
+        OutputDirState::WillCreate => (false, Some(("Will be created when you run", ""))),
+        OutputDirState::Ok => (false, None),
+    };
+
     // 输出目录仅桌面有意义（web 无文件系统），整行 let 双分支。
     #[cfg(not(target_arch = "wasm32"))]
     let output_row = rsx! {
         div { class: "row",
-            span { class: "label", "Output Dir:" }
+            span { class: "label", "Save to" }
             // 选择按钮做成输入框内的后缀图标；"打开目录"放在本行最右
             div { class: "dir-field",
                 input {
-                    class: if ctx.settings.read().output_dir_valid() {
-                        "input grow"
-                    } else {
+                    class: if dir_bad {
                         "input grow invalid-dir"
+                    } else {
+                        "input grow"
                     },
                     r#type: "text",
+                    "aria-label": "Output folder",
                     placeholder: "Type output directory here",
                     value: "{ctx.settings.read().output_dir}",
                     disabled: running,
                     oninput: move |evt: Event<FormData>| {
                         let value = evt.data.value();
                         ctx.update_settings(move |s| s.output_dir = value);
+                    },
+                    onblur: move |_| {
+                        // 真写一个临时文件才算数；有副作用，故只挂失焦而不是每键
+                        let ok = ctx.settings.peek().output_dir_writable();
+                        dir_write_ok.set(Some(ok));
                     },
                 }
                 button {
@@ -96,7 +120,8 @@ pub fn Toolbar() -> Element {
                 class: "btn icon",
                 title: "Open output folder in Explorer",
                 "aria-label": "Open output folder",
-                disabled: !ctx.settings.read().output_dir_valid(),
+                // 目录还不存在时不可点（Explorer 会报错），与"将自动创建"区分开
+                disabled: dir_state != OutputDirState::Ok,
                 onclick: move |_| {
                     // UiState 是 Copy：拿一份局部可变绑定去调 &mut 方法
                     let mut ctx = ctx;
@@ -104,6 +129,9 @@ pub fn Toolbar() -> Element {
                 },
                 crate::components::icon::IconOpenExternal {}
             }
+        }
+        if let Some((text, cls)) = dir_hint {
+            div { class: "hint{cls}", "{text}" }
         }
     };
     #[cfg(target_arch = "wasm32")]

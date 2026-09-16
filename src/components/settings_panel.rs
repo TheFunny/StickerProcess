@@ -6,6 +6,8 @@
 
 use crate::app::UiState;
 use crate::components::number_field::NumberInput;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::config::OutputDirState;
 use crate::config::Settings;
 use dioxus::prelude::*;
 
@@ -111,14 +113,15 @@ pub fn SettingsPanel() -> Element {
     #[cfg(not(target_arch = "wasm32"))]
     let output_dir_row = rsx! {
         div { class: "settings-row",
-            span { class: "label", "Output Dir" }
+            span { class: "label", "Save to" }
             input {
-                class: if ctx.settings.read().output_dir_valid() {
+                class: if ctx.settings.read().output_dir_state() == OutputDirState::Ok {
                     "input grow"
                 } else {
                     "input grow invalid-dir"
                 },
                 r#type: "text",
+                "aria-label": "Output folder",
                 value: "{ctx.settings.read().output_dir}",
                 oninput: move |evt: Event<FormData>| {
                     let value = evt.data.value();

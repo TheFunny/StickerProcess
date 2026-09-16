@@ -649,6 +649,10 @@ body {
   color: var(--fg-muted);
 }
 
+.hint.danger {
+  color: var(--danger);
+}
+
 .factor-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

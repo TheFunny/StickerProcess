@@ -417,7 +417,8 @@ impl UiState {
         // wasm：无输出目录概念，跳过创建与校验
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let output_dir = PathBuf::from(self.settings.peek().output_dir.clone());
+            let settings = self.settings.peek().clone();
+            let output_dir = PathBuf::from(&settings.output_dir);
             if !output_dir.exists()
                 && let Err(e) = std::fs::create_dir(&output_dir)
             {
@@ -425,6 +426,15 @@ impl UiState {
                 self.push_toast(
                     ToastKind::Error,
                     format!("Failed to create output directory: {e}"),
+                );
+                return;
+            }
+            // 只读目录 / ACL 拒绝都能通过"存在"校验，但每个任务都会在写盘时失败。
+            // 开跑前写一次就能立刻说清楚，不必让用户等一轮全红。
+            if !settings.output_dir_writable() {
+                self.push_toast(
+                    ToastKind::Error,
+                    format!("Output folder is not writable: {}", settings.output_dir),
                 );
                 return;
             }
