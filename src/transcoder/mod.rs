@@ -4,7 +4,7 @@
 //! - [`command`]：ffmpeg 命令生成 + 码率/系数纯函数
 //! - [`steps`]：webm 时长补丁、图片 oxipng 管道
 //!
-//! 对外暴露 `Transcoder` / `Factor` / `FileSize` / `Status` / `shrunk_factor`。
+//! 对外暴露 `Transcoder` / `Status` / `shrunk_factor`。
 
 mod command;
 mod error;
@@ -27,38 +27,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, Clone)]
-pub struct Factor {
-    value: f64,
-}
-
-impl Factor {
-    pub fn new(value: f64) -> Self {
-        Self { value }
-    }
-
-    pub fn set(&mut self, value: f64) {
-        self.value = value;
-    }
-
-    pub fn get(&self) -> f64 {
-        self.value
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FileSize {
-    pub size: u64,
-}
-
-impl FileSize {
-    pub fn new(size: u64) -> Self {
-        Self { size }
-    }
-
-    pub fn set(&mut self, size: u64) {
-        self.size = size;
-    }
+/// 内存字节 → base64 data URL（预览输出轨，两平台共用；≤512KB 编码毫秒级）。
+pub fn data_url(mime: &str, bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -125,8 +100,8 @@ impl Engine {
 #[derive(Debug, Clone)]
 pub struct Transcoder {
     pub media_file: MediaFile,
-    pub size_factor: Option<Factor>,
-    pub output_size: Option<FileSize>,
+    pub size_factor: Option<f64>,
+    pub output_size: Option<u64>,
     pub status: Status,
     /// 置位后中断正在运行的 ffmpeg 进程（runner 经 Arc 桥接 UI 的 cancel 信号）。
     pub cancel_flag: Arc<AtomicBool>,
@@ -285,12 +260,8 @@ impl Transcoder {
     /// 两条路径都同步 output_size 供尺寸重试判定。
     pub fn store_output(&mut self, bytes: Vec<u8>) -> Result<(), TranscodeError> {
         if self.media_file.is_bytes() {
-            let size = bytes.len() as u64;
+            self.output_size = Some(bytes.len() as u64);
             self.output_bytes = Some(bytes);
-            match &mut self.output_size {
-                Some(s) => s.set(size),
-                None => self.output_size = Some(FileSize::new(size)),
-            }
             return Ok(());
         }
         #[cfg(feature = "desktop")]
@@ -306,7 +277,7 @@ impl Transcoder {
     }
 
     /// 转码完成后读取输出文件大小（供尺寸重试判定）。
-    pub fn check_size(&mut self) -> Result<&FileSize, TranscodeError> {
+    pub fn check_size(&mut self) -> Result<(), TranscodeError> {
         let size = if let Some(bytes) = &self.output_bytes {
             bytes.len() as u64
         } else {
@@ -316,11 +287,8 @@ impl Transcoder {
                 .map_err(|e| TranscodeError::SizeCheck(e.to_string()))?
                 .len()
         };
-        match &mut self.output_size {
-            Some(size_slot) => size_slot.set(size),
-            None => self.output_size = Some(FileSize::new(size)),
-        }
-        Ok(self.output_size.as_ref().unwrap())
+        self.output_size = Some(size);
+        Ok(())
     }
 }
 
@@ -331,6 +299,19 @@ pub fn shrunk_factor(current: f64, excess: f64, shrink: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn data_url_formats_prefix_and_payload() {
+        use super::data_url;
+        use base64::Engine as _;
+        assert_eq!(
+            data_url("image/png", &[1, 2, 3]),
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
+            )
+        );
+    }
+
     use super::shrunk_factor;
 
     #[test]

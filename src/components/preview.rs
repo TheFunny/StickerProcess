@@ -75,7 +75,7 @@ pub fn PreviewModal() -> Element {
                     {
                         std::fs::read(path)
                             .ok()
-                            .map(|bytes| preview::output_data_url_mime(mime, &bytes))
+                            .map(|bytes| crate::transcoder::data_url(mime, &bytes))
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -86,7 +86,7 @@ pub fn PreviewModal() -> Element {
                             .and_then(|t| t.output_bytes.clone())
                             // 镜像大小与内存不一致（竞态）→ None，走 Loading 兜底
                             .filter(|b| b.len() as u64 == *_size)
-                            .map(|bytes| crate::transcoder::web::data_url(mime, &bytes))
+                            .map(|bytes| crate::transcoder::data_url(mime, &bytes))
                     }
                 });
                 // 键为 None 时也清空缓存，避免复用上一个任务的 URL

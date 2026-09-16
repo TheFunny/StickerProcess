@@ -7,7 +7,6 @@
 //! 安全性：URL 携带 percent-encoded 的本机路径，但该协议仅注册在本进程的
 //! WebView 内，外部无法访问。
 
-use base64::Engine;
 use dioxus::desktop::{Config, wry};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -23,14 +22,6 @@ pub fn media_url(path: &Path) -> String {
         "{}media?p={}",
         URL_PREFIX,
         percent_encode(&path.to_string_lossy())
-    )
-}
-
-/// 输出预览 data URL：`data:<mime>;base64,…`。
-pub fn output_data_url_mime(mime: &str, bytes: &[u8]) -> String {
-    format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }
 
@@ -239,18 +230,6 @@ mod tests {
         assert_eq!(
             percent_decode(url_cn.rsplit("?p=").next().unwrap()),
             r"D:\目 录\a.png"
-        );
-    }
-
-    #[test]
-    fn output_data_url_encodes() {
-        let url = output_data_url_mime("image/png", &[1, 2, 3]);
-        assert_eq!(
-            url,
-            format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
-            )
         );
     }
 }

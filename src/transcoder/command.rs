@@ -2,7 +2,7 @@
 //!
 //! 纯函数独立出来以便脱离 ffmpeg 进程单测（E6）。
 
-use super::{Factor, TranscodeError, Transcoder};
+use super::{TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
 #[cfg(feature = "desktop")]
 use ffmpeg_sidecar::command::FfmpegCommand;
@@ -68,11 +68,11 @@ impl Transcoder {
 
     /// 求值码率系数：惰性初始化默认系数（查表）+ GIF 0.75 patch（程序内固定值，非设置项）。
     pub(super) fn resolve_factor(&mut self, duration: f64, v_type: &VideoType) -> f64 {
-        let mut factor = match self.size_factor.as_ref() {
-            Some(factor) => factor.get(),
+        let mut factor = match self.size_factor {
+            Some(factor) => factor,
             None => {
                 let factor = default_factor(duration, &self.duration_factors);
-                self.size_factor = Some(Factor::new(factor));
+                self.size_factor = Some(factor);
                 factor
             }
         };

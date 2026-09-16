@@ -150,8 +150,8 @@ impl UiState {
                 task.media_file.r#type(),
                 Some(crate::media::MediaType::Video(_))
             );
-            entry.factor = task.size_factor.as_ref().map(|f| f.get());
-            entry.output_size = task.output_size.as_ref().map(|s| s.size);
+            entry.factor = task.size_factor;
+            entry.output_size = task.output_size;
             entry.output_path = task.get_output().cloned();
             entry.output_file_name = task
                 .get_output()

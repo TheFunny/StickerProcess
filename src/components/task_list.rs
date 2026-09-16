@@ -159,7 +159,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                             on_change: move |v| {
                                 ctx.with_task(index, move |t| {
                                     if let Some(f) = t.size_factor.as_mut() {
-                                        f.set(v);
+                                        *f = v;
                                     }
                                 });
                             },

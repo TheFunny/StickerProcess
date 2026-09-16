@@ -42,7 +42,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
-| `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）；另有 `poll_step()` 200ms 步进 |
+| `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
 | `build-wasmcore-branch.sh` | 把 `assets/ffmpeg-core-st.wasm` 灌成 `wasm-core` 孤儿分支并推送（core 的远端唯一出处，CI 取件处） |
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |

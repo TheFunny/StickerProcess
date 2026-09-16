@@ -167,15 +167,6 @@ pub(crate) async fn exec_ffmpeg_wasm(
     js_value_to_bytes(out)
 }
 
-/// 内存字节 → base64 data URL（wasm 预览输入/输出共用；≤512KB 编码毫秒级）。
-pub fn data_url(mime: &str, bytes: &[u8]) -> String {
-    use base64::Engine as _;
-    format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
-}
-
 /// WebCodecs 引擎（Route B）：视频路径先查 caps（非 Chromium → 明确报错），
 /// 图片路径直接跑（Canvas/ImageDecoder 无编码 caps 依赖）。
 pub(crate) async fn exec_webcodecs(

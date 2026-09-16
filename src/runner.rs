@@ -80,7 +80,7 @@ fn sidecar_vp9_available() -> bool {
 
 /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
 fn size_excess_factor(task: &Transcoder, video_limit: u64, image_limit: u64) -> Option<f64> {
-    let size = task.output_size.as_ref()?.size as f64;
+    let size = task.output_size? as f64;
     let limit = match task.media_file.r#type() {
         Some(MediaType::Image(_)) => image_limit,
         Some(MediaType::Video(_)) => video_limit,
@@ -346,15 +346,13 @@ async fn run_single_task(
                 Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
                     Some(excess) if excess > 1.0 => {
                         if let Some(factor) = t.size_factor.as_mut() {
-                            let old = factor.get();
+                            let old = *factor;
                             let new = shrunk_factor(old, excess, retry_shrink);
-                            factor.set(new);
+                            *factor = new;
                             log::warn!(
                                 "{name}: output {:.2} KB over limit ({excess:.2}x), \
                                  factor {old:.3} -> {new:.3}",
-                                t.output_size
-                                    .as_ref()
-                                    .map_or(0.0, |s| s.size as f64 / 1024.0),
+                                t.output_size.map_or(0.0, |s| s as f64 / 1024.0),
                             );
                         }
                         t.status = Status::SizeExcess;

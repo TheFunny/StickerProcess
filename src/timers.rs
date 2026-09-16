@@ -19,9 +19,3 @@ pub async fn sleep(duration: std::time::Duration) {
     let promise = js_sys::Promise::new(&mut init);
     let _ = promise.await;
 }
-
-/// wasm 专用：固定 200ms 轮询步进（web.rs 注入等待用）。
-#[cfg(target_arch = "wasm32")]
-pub async fn poll_step() {
-    sleep(std::time::Duration::from_millis(200)).await;
-}
