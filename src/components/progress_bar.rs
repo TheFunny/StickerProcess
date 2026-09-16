@@ -16,8 +16,11 @@ pub fn ProgressBar() -> Element {
     let done = list.iter().filter(|t| t.mirror.status == Status::Done).count();
 
     rsx! {
-        div { class: "progress-track",
-            div { class: "progress-fill", width: "{pct}%" }
+        div { class: "row",
+            div { class: "progress-track grow",
+                div { class: "progress-fill", width: "{pct}%" }
+            }
+            // 原先绝对定位在 track 上方 + track 的 overflow:hidden → 从未显示过
             span { class: "progress-label", "{done} / {total}" }
         }
     }

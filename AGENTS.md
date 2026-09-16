@@ -328,7 +328,8 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   Each target sees the other's platform-only items as `never used` /
   `never constructed` (desktop target: `app::add_file_bytes`,
   `components/preview::input_mime`, `media::Source::Bytes` + `from_bytes`/`bytes`/
-  `set_duration`/`set_type`, `Engine::for_web`, `TranscodeError::Engine` (produced
+  `set_duration`/`set_type`, `Engine::for_web`, `Engine::as_str` (only the wasm
+  dispatch stringifies it now), `TranscodeError::Engine` (produced
   only by the wasm glue bridge); wasm target: `add_files`,
   `pick_output_dir`, `output_dir_valid`, `Source::Path`, `VideoType::AnimatedWebP`,
   `run_blocking`, `resolve_engine`, `sidecar_vp9_available`, `run_with_progress`,

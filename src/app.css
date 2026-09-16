@@ -7,7 +7,6 @@
   --bg: #fafafa;
   --fg: #1f2328;
   --fg-muted: #57606a;
-  --fg-faint: #8c959f;
   --border: #d0d7de;
   --border-soft: #eaeef2;
   --border-hairline: #f0f2f4;
@@ -28,7 +27,6 @@
   --bg: #0d1117;
   --fg: #e6edf3;
   --fg-muted: #9198a1;
-  --fg-faint: #6e7681;
   --border: #30363d;
   --border-soft: #21262d;
   --border-hairline: #21262d;
@@ -174,14 +172,17 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  border: 1px solid var(--border-soft);
+  /* 容器用 --border（1.4:1）而非 --border-soft（1.1:1）——后者在浅底上等于看不见 */
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
 }
 
 .empty-hint {
   margin: auto;
-  color: var(--fg-faint);
+  padding: 0 24px;
+  text-align: center;
+  color: var(--fg-muted);
 }
 
 .task-row {
@@ -191,7 +192,11 @@ body {
   gap: 2px;
   min-height: 32px;
   padding: 2px 8px;
-  border-bottom: 1px solid var(--border-hairline);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.task-row:last-child {
+  border-bottom: none;
 }
 
 .row-main {
@@ -210,19 +215,23 @@ body {
 
 .pct {
   color: var(--accent);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   min-width: 44px;
   text-align: right;
 }
 
 .elapsed {
+  font-size: 12px;
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
+/* 定宽徽标列：spinner + 最长标签（[Transcoding]）也不许把 path 列推走 */
 .badge {
-  flex-shrink: 0;
-  min-width: 86px;
+  flex: none;
+  width: 108px;
+  white-space: nowrap;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -300,6 +309,13 @@ body {
   background: var(--border-soft);
 }
 
+.progress-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .progress-fill {
   height: 100%;
   border-radius: 4px;
@@ -325,7 +341,7 @@ body {
 /* Toast 通知（右下角堆叠，自动消失） */
 .toast-container {
   position: fixed;
-  bottom: 14px;
+  bottom: 30px;
   right: 14px;
   z-index: 20;
   display: flex;
@@ -486,7 +502,7 @@ body {
 }
 
 .preview-path {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -525,7 +541,7 @@ body {
   height: 160px;
   border: 1px dashed var(--border);
   border-radius: 4px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---- UX polish (row actions, link buttons, progress label) ---- */
@@ -567,16 +583,19 @@ body {
   color: #fff;
 }
 
-.progress-track {
-  position: relative;
+/* 输出产物链接：名字是元信息，大小带语义色（颜色之外还有 ✓/! 标记，见 task_list） */
+.out-name {
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 
-.progress-label {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: -16px;
-  font-size: 11px;
-  color: var(--fg-muted);
+.out-size {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.out-file:hover .out-name {
+  color: var(--fg);
 }

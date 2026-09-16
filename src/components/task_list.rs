@@ -57,15 +57,20 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     let is_excess = entry
         .size_excess_ratio(video_limit, image_limit)
         .is_some_and(|ratio| ratio > 1.0);
-    // 输出文件名 + 输出大小（有输出时一起展示）
-    let size_text = entry.mirror.output_size.map(|size| {
-        let name = entry.mirror.output_file_name.as_deref().unwrap_or_default();
-        if name.is_empty() {
-            format!("{:.2}KB", size as f64 / 1024.0)
-        } else {
-            format!("{}  {:.2}KB", name, size as f64 / 1024.0)
-        }
+    // 输出产物：名字降为元信息（12px 弱化），大小才是结果本身
+    let output = entry.mirror.output_size.map(|size| {
+        (
+            entry.mirror.output_file_name.clone().unwrap_or_default(),
+            format!("{:.2}KB", size as f64 / 1024.0),
+        )
     });
+    let size_class = if is_excess { "size-excess" } else { "size-ok" };
+    // 同一个链接的动作随平台不同：桌面在资源管理器定位，web 触发下载
+    let size_action = if cfg!(target_arch = "wasm32") {
+        "Download output"
+    } else {
+        "Reveal in Explorer"
+    };
     // wasm 下载用：锁内克隆输出字节（仅 Done/SizeExcess 任务有）
     #[cfg(target_arch = "wasm32")]
     let entry_bytes: Option<Vec<u8>> = {
@@ -91,7 +96,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
             title: "{tooltip}",
             role: "listitem",
             tabindex: 0,
-            "aria-label": "Preview {entry.mirror.input_path}",
+            "aria-label": "{entry.mirror.status.label()}: {entry.mirror.input_path} — open preview",
             onmousedown: move |evt: Event<MouseData>| {
                 let p = evt.data.client_coordinates();
                 mouse_down_at.set(Some((p.x, p.y)));
@@ -122,10 +127,10 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 span { class: "path", "{entry.mirror.input_path}" }
                 if let Some(pct) = entry.mirror.progress {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
-                } else if let Some(size) = size_text {
+                } else if let Some((name, size)) = output {
                     button {
-                        class: if is_excess { "size-excess btn-link" } else { "size-ok btn-link" },
-                        title: "Select file in Explorer",
+                        class: "btn-link out-file",
+                        title: "{size_action}",
                         onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
                         onclick: move |evt: Event<MouseData>| {
                             evt.stop_propagation();
@@ -156,7 +161,8 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                                 }
                             }
                         },
-                        "{size}"
+                        span { class: "out-name", "{name}" }
+                        span { class: "out-size {size_class}", "{size}" }
                     }
                 }
                 if let Some(elapsed) = elapsed_text {
