@@ -9,29 +9,59 @@ use std::io::BufReader;
 use std::io::Read;
 
 impl Transcoder {
-    /// webm 时长补丁：读盘 → patch_webm_bytes → store_output。
+    /// webm 时长补丁（桌面 Path 源）：只读头部定位 Duration，原地覆写 8 字节。
+    /// 旧实现读全文件 + 整写一遍——每次尝试为改 8 字节多一轮全量 I/O。
+    #[cfg(feature = "desktop")]
     pub(super) fn run_video(&mut self) -> Result<(), TranscodeError> {
         let path = self
             .get_output()
             .ok_or(TranscodeError::OutputNotSet)?
             .clone();
-        let data = std::fs::read(&path)
-            .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
-        let patched = patch_webm_bytes(data)?;
-        self.store_output(patched)
-            .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
-        Ok(())
+        patch_webm_file(&path)
     }
 }
 
-/// 定位 Duration 元素 `44 89 88`（EBML ID 0x4489 + 1 字节 size vint 0x88），
-/// 其后 8 字节覆写为 `100f64`（大端）强制贴纸时长。
-/// 纯函数：桌面 run_video 与网页端 finish_web_job 共用。
+/// 头部扫描上限：Duration 在 Info 内、先于首个 Cluster，ffmpeg 头部远小于此。
+/// 窗口内定位失败（异常文件）→ 退回整文件补丁，保持旧行为。
+#[cfg(feature = "desktop")]
+const HEADER_SCAN: u64 = 8192;
+
+/// 原地补丁：读头部窗口 → 定位 → seek + 写 8 字节。文件长度不变。
+#[cfg(feature = "desktop")]
+fn patch_webm_file(path: &std::path::Path) -> Result<(), TranscodeError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
+    let mut head = Vec::new();
+    (&mut file)
+        .take(HEADER_SCAN)
+        .read_to_end(&mut head)
+        .map_err(|_| TranscodeError::DurationPatch("failed to read output file"))?;
+    let Ok(at) = find_duration_payload(&head) else {
+        // 罕见：Duration 在头部窗口之外 —— 整文件路径兜底（缺标记则同样报错）
+        let data = std::fs::read(path)
+            .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
+        let patched = patch_webm_bytes(data)?;
+        file.seek(SeekFrom::Start(0))
+            .and_then(|_| file.write_all(&patched))
+            .map_err(|_| TranscodeError::DurationPatch("error writing file"))?;
+        return Ok(());
+    };
+    file.seek(SeekFrom::Start(at as u64))
+        .and_then(|_| file.write_all(&100f64.to_be_bytes()))
+        .map_err(|_| TranscodeError::DurationPatch("error writing file"))
+}
+
+/// Duration 载荷（8 字节 f64）的起始偏移 = 标记位置 + 3。
+/// 纯函数：桌面原地补丁与网页端 finish_web_job 共用。
 ///
 /// 扫描止于首个 Cluster（ID `1F 43 B6 75`）：Duration 恒在 Info 内、先于
 /// 任何 Cluster。不限界的搜索若 Duration 缺失/编码不同，会误中 VP9 载荷
 /// 字节并静默改坏 8 字节视频数据。
-pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
+fn find_duration_payload(data: &[u8]) -> Result<usize, TranscodeError> {
     const MARKER: [u8; 3] = [0x44, 0x89, 0x88];
     const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
     let cluster_at = data
@@ -48,7 +78,13 @@ pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeEr
             "binary sequence too close to EOF",
         ));
     }
-    data[position + 3..end].copy_from_slice(&100f64.to_be_bytes());
+    Ok(position + 3)
+}
+
+/// 内存字节补丁（网页端 Bytes 源）。
+pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
+    let at = find_duration_payload(&data)?;
+    data[at..at + 8].copy_from_slice(&100f64.to_be_bytes());
     Ok(data)
 }
 
@@ -107,5 +143,22 @@ mod tests {
         data[50..53].copy_from_slice(&[0x44, 0x89, 0x88]); // 载荷里的伪标记
         let err = patch_webm_bytes(data).unwrap_err();
         assert!(err.to_string().contains("not found"));
+    }
+
+    /// 回归：原地补丁只改 8 字节载荷——文件长度与其余字节必须原封不动。
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn duration_patch_in_place_preserves_rest() {
+        let mut data = vec![7u8; 300];
+        data[10..13].copy_from_slice(&[0x44, 0x89, 0x88]);
+        let path = std::env::temp_dir().join(format!("sp_patch_{}.webm", std::process::id()));
+        std::fs::write(&path, &data).unwrap();
+        patch_webm_file(&path).unwrap();
+        let got = std::fs::read(&path).unwrap();
+        assert_eq!(got.len(), data.len());
+        assert_eq!(&got[13..21], &100f64.to_be_bytes());
+        assert_eq!(&got[..10], &data[..10]);
+        assert_eq!(&got[21..], &data[21..]);
+        let _ = std::fs::remove_file(&path);
     }
 }

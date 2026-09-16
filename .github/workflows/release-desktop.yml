@@ -25,6 +25,8 @@ jobs:
             ~/.cargo/git
             target
           key: desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            desktop-${{ runner.os }}-
 
       - name: Install dx CLI
         shell: bash

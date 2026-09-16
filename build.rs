@@ -54,6 +54,14 @@ fn main() {
         println!("cargo:rustc-link-lib=static={lib}");
     }
     println!("cargo:rerun-if-env-changed=FFMPEG_DIR");
+    // VCPKG 推导路径同样反缓存：改了 root/triplet 必须重跑脚本
+    println!("cargo:rerun-if-env-changed=VCPKG_ROOT");
+    println!("cargo:rerun-if-env-changed=VCPKG_DEFAULT_TRIPLET");
+}
+
+/// 目录名字典序 ≠ 版本序（"14.39" > "14.100" 字典序成立，版本相反）——按数字段比。
+fn version_key(name: &str) -> Vec<u32> {
+    name.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
 /// 用 MSVC lib.exe 从 .def 生成 avicap32 导入库。
@@ -86,7 +94,7 @@ fn generate_avicap32_import_lib(out_dir: &str) {
                 .filter_map(|e| e.ok())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
                 .filter(|n| n.chars().next().is_some_and(|c| c.is_ascii_digit()))
-                .max()
+                .max_by_key(|n| version_key(n))
         })
         .unwrap_or_else(|| panic!("no MSVC toolset found under {}", msvc_root.display()));
     let lib_exe = msvc_root.join(toolset).join("bin/Hostx64/x64/lib.exe");

@@ -47,7 +47,7 @@ pub fn Toolbar() -> Element {
             disabled: running
                 || !ctx
                     .tasks
-                    .cloned()
+                    .read()
                     .iter()
                     .any(|e| e.status == crate::transcoder::Status::Done),
             onclick: move |_| ctx.download_all(),
@@ -151,7 +151,7 @@ pub fn Toolbar() -> Element {
             }
             button {
                 class: "btn btn-danger",
-                disabled: !running,
+                disabled: running || ctx.tasks.read().is_empty(),
                 onclick: move |_| ctx.cancel.set(true),
                 "Cancel"
             }

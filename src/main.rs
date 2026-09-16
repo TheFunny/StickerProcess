@@ -51,10 +51,8 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use wasm_bindgen::JsCast;
-    pretty_env_logger::formatted_builder()
-        .filter_level(log::LevelFilter::Info)
-        .parse_default_env()
-        .init();
+    // 无日志后端：wasm32 无 stderr，log 宏按默认 max_level=Off 直接短路。
+    // 需要网页端诊断时再接 console logger（web-sys Console）。
     // 启动即注册原生守卫（同步 preventDefault）：
     // - dragover：浏览器只在 dragover 被取消时才派发 drop，否则拖文件直接导航打开；
     // - drop：兜底阻止"打开文件"默认动作。

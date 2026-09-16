@@ -26,14 +26,12 @@ pub struct ProgressUpdate {
 /// 平台无关的阻塞执行桥：桌面走 tokio spawn_blocking 线程池；
 /// wasm 单线程直接执行（阻塞 UI —— 下一阶段换 web worker）。
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run_blocking<T: Send + 'static>(
+pub(crate) async fn run_blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
-) -> impl Future<Output = Result<T, String>> {
-    async move {
-        tokio::task::spawn_blocking(f)
-            .await
-            .map_err(|e| e.to_string())
-    }
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -45,6 +43,7 @@ pub(crate) async fn run_blocking<T>(f: impl FnOnce() -> T) -> Result<T, String> 
 /// - 非法值（parse 失败）→ 回落 inprocess（config.load 已兜底，此处是运行期保险）
 /// - webcodecs 且浏览器不支持（`web_supported=false`）→ 回落 inprocess
 /// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
+///
 /// 桌面端 `web_supported` 恒为 false；wasm 侧由 JS 探测结果传入。
 pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> String {
     let engine = match Engine::parse(setting) {
@@ -127,11 +126,8 @@ pub async fn run_all(
     let webcodecs_ok = crate::transcoder::web::webcodecs_supported().await;
     #[cfg(not(target_arch = "wasm32"))]
     let webcodecs_ok = true;
-    loop {
-        // 动态读取队列长度：允许运行中拖入新文件
-        let Some(entry) = ctx.tasks.cloned().get(index).cloned() else {
-            break;
-        };
+    // 动态读取队列长度：允许运行中拖入新文件
+    while let Some(entry) = ctx.tasks.cloned().get(index).cloned() {
         if *ctx.cancel.peek() {
             break;
         }

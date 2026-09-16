@@ -41,7 +41,10 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin
             target
-          key: web-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: web-${{ runner.os }}-dx0.7.10-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            web-${{ runner.os }}-dx0.7.10-
+            web-${{ runner.os }}-
 
       - name: Install dx CLI
         run: |

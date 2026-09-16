@@ -160,7 +160,7 @@ impl Transcoder {
         opts.as_mut().unwrap().set("row-mt", "1");
         opts.as_mut().unwrap().set(
             "rc_buffer_size",
-            &(target_bitrate as f64 * BUFSIZE_RATIO).to_string(),
+            (target_bitrate as f64 * BUFSIZE_RATIO).to_string(),
         );
 
         let out_path = self
@@ -355,9 +355,10 @@ impl Transcoder {
 
         let mut iframe = VideoFrame::empty();
         let mut oframe = VideoFrame::empty();
-        // 首个解码帧入滤镜
+        // 首个解码帧入滤镜：每 packet 单次 receive——EAGAIN 就是"喂下一个包"，
+        // 本就不需要内层循环（旧 loop{match} 触发 clippy never_loop）
         let mut got = false;
-        'decode: for res in ictx.packets() {
+        for res in ictx.packets() {
             let (stream, ipacket) = res.map_err(|e| TranscodeError::Decoder(e.to_string()))?;
             if stream.index() != stream_index {
                 continue;
@@ -368,18 +369,16 @@ impl Transcoder {
             decoder
                 .send_packet(&ipacket)
                 .map_err(|e| TranscodeError::Decoder(e.to_string()))?;
-            loop {
-                match decoder.receive_frame(&mut iframe) {
-                    Ok(()) => {
-                        push_frame(&mut graph, &iframe)
-                            .map_err(|e| TranscodeError::Filter(e.to_string()))?;
-                        got = true;
-                        break 'decode;
-                    }
-                    Err(ffmpeg::Error::Eof) => break 'decode,
-                    Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => break,
-                    Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
+            match decoder.receive_frame(&mut iframe) {
+                Ok(()) => {
+                    push_frame(&mut graph, &iframe)
+                        .map_err(|e| TranscodeError::Filter(e.to_string()))?;
+                    got = true;
+                    break;
                 }
+                Err(ffmpeg::Error::Eof) => break,
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => {}
+                Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
             }
         }
         if !got {

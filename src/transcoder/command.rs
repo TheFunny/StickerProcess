@@ -107,8 +107,7 @@ impl Transcoder {
                 self.media_file
                     .path()
                     .ok_or(TranscodeError::InvalidOutputPath)?
-                    .to_string_lossy()
-                    .into_owned(),
+                    .to_string_lossy(),
             )
             .filter("scale=512:512:force_original_aspect_ratio=decrease")
             .args(["-sws_flags", "lanczos"])

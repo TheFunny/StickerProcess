@@ -8,9 +8,12 @@
 use wasm_bindgen::JsCast;
 
 use crate::app::UiState;
+#[cfg(not(target_arch = "wasm32"))]
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use std::cell::RefCell;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 /// 原生 drop 监听（'static 闭包）与应用状态之间用待处理队列桥接：
