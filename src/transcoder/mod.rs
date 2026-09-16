@@ -241,17 +241,26 @@ impl Transcoder {
             let mut command = self.gen_command()?;
             let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
             match media_type {
-                MediaType::Video(_) => {
-                    // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件
-                    let duration = self.media_file.duration().unwrap_or(1.0).max(0.001);
+                MediaType::Video(v_type) => {
+                    // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件。
+                    // 分母与码率同一时长源（APNG=1.0）；pct 钳到 [0,1] 与
+                    // inprocess 一致——0.001s 地板会把进度条冲出千位
+                    let duration = self.effective_duration(&v_type).unwrap_or(1.0);
                     for event in process.iter().map_err(|_| TranscodeError::ReadOutput)? {
                         if self.cancel_flag.load(Ordering::Relaxed) {
                             let _ = process.kill();
                             return Err(TranscodeError::Cancelled);
                         }
                         if let FfmpegEvent::Progress(p) = event {
-                            on_progress((command::parse_progress_time(&p.time) / duration) as f32);
+                            let pct = command::parse_progress_time(&p.time) / duration;
+                            on_progress(pct.clamp(0.0, 1.0) as f32);
                         }
+                    }
+                    // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
+                    // 不查退出码会把无 trailer 坏文件判成 Done。
+                    let status = process.wait().map_err(|_| TranscodeError::ReadOutput)?;
+                    if !status.success() {
+                        return Err(TranscodeError::FfmpegFailed(status.to_string()));
                     }
                     self.run_video()
                 }
@@ -287,7 +296,7 @@ impl Transcoder {
         #[cfg(feature = "desktop")]
         {
             let path = self.get_output().ok_or(TranscodeError::OutputNotSet)?;
-            std::fs::write(path, &bytes).map_err(|e| TranscodeError::SizeCheck(e.to_string()))?;
+            std::fs::write(path, &bytes).map_err(|e| TranscodeError::Engine(e.to_string()))?;
             Ok(())
         }
         #[cfg(not(feature = "desktop"))]

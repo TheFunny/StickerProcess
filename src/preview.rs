@@ -68,7 +68,9 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
             None => not_found(),
         },
         None => match std::fs::read(&path) {
-            Ok(data) => full(mime, data, total),
+            // Content-Length 用实际读到的字节数：metadata 与 read 之间文件
+            // 增长会让头/体长度不一致
+            Ok(data) => full(mime, data),
             Err(_) => not_found(),
         },
     }
@@ -76,11 +78,11 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
 
 type Body = Vec<u8>;
 
-fn full(mime: &'static str, data: Body, total: u64) -> HttpResponse<Cow<'static, [u8]>> {
+fn full(mime: &'static str, data: Body) -> HttpResponse<Cow<'static, [u8]>> {
     HttpResponse::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, mime)
-        .header(CONTENT_LENGTH, total)
+        .header(CONTENT_LENGTH, data.len() as u64)
         .body(Cow::Owned(data))
         .unwrap()
 }

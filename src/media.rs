@@ -50,11 +50,12 @@ impl MediaFile {
         }
     }
 
-    /// 扩展名（小写前调用方处理）：Path 用 extension()，Bytes 用 name 的最后一个点后缀。
+    /// 扩展名（小写前调用方处理）：Path 用 extension()，Bytes 用 name 的最后一个点后缀
+    /// （无点 → None，与 Path 语义一致）。
     fn ext_of(source: &Source) -> Option<&str> {
         match source {
             Source::Path(p) => p.extension().and_then(|e| e.to_str()),
-            Source::Bytes { name, .. } => name.rsplit('.').next(),
+            Source::Bytes { name, .. } => name.rsplit_once('.').map(|(_, ext)| ext),
         }
     }
 

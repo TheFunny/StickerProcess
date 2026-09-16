@@ -10,7 +10,7 @@
 //! 时间基决策：整条管道统一 1/1000（毫秒）。解码后帧 pts 一次性重缩放到
 //! 1/1000，编码器/输出流/滤镜 buffer 参数均以此为基准，mux 前无需再缩放。
 
-use super::command::{BUFSIZE_RATIO, VP9_CRF, quantized_bitrate, target_bitrate_bps};
+use super::command::{BUFSIZE_RATIO, VP9_CRF};
 use super::{TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
 use ffmpeg_the_third as ffmpeg;
@@ -64,9 +64,7 @@ impl Transcoder {
         v_type: VideoType,
         on_progress: &mut impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
-        let duration = self.effective_duration(&v_type)?;
-        let factor = self.resolve_factor(duration, &v_type);
-        let target_bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
+        let (duration, target_bitrate) = self.video_bitrate(&v_type)?;
         let out_pix = match v_type {
             VideoType::Mp4 => Pixel::YUV420P10LE,
             VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => Pixel::YUVA420P,
@@ -142,7 +140,7 @@ impl Transcoder {
             enc_ctx
                 .encoder()
                 .video()
-                .map_err(|e| TranscodeError::Decoder(e.to_string()))?,
+                .map_err(|e| TranscodeError::Encoder(e.to_string()))?,
         );
         // webm muxer 需要全局头（open 时生成 extradata 供 copy_parameters）
         enc_video_opt

@@ -16,6 +16,8 @@ pub enum TranscodeError {
     Spawn,
     #[error("failed to read ffmpeg output")]
     ReadOutput,
+    #[error("ffmpeg failed: {0}")]
+    FfmpegFailed(String),
     #[error("cancelled")]
     Cancelled,
     #[error("duration patch failed: {0}")]
@@ -24,6 +26,8 @@ pub enum TranscodeError {
     ImagePipe(&'static str),
     #[error("size check failed: {0}")]
     SizeCheck(String),
+    #[error("engine error: {0}")]
+    Engine(String),
     #[error("join error: {0}")]
     Join(String),
     #[error("encoder not found: {0}")]

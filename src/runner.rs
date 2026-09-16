@@ -11,7 +11,6 @@
 
 use crate::app::{TaskEntry, UiState};
 use crate::components::toast::ToastKind;
-use crate::config::Settings;
 use crate::media::MediaType;
 use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, shrunk_factor};
 use dioxus::prelude::*;
@@ -121,7 +120,6 @@ pub async fn run_all(
     mut ctx: UiState,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
 ) {
-    let settings = ctx.settings.peek().clone();
     let mut index = 0usize;
     // WebCodecs VP9 caps：每次 Run 探一次（glue 已由探测阶段加载，毫秒级）；
     // 桌面恒 true（wasm 分发不执行，值无消费方）
@@ -137,6 +135,15 @@ pub async fn run_all(
         if *ctx.cancel.peek() {
             break;
         }
+        // 运行中拖入的新文件可能仍在探测：等镜像出结果再起——否则
+        // write_back_probe 在主线程撞 worker 锁（UI 冻结）、wasm 端
+        // prepare_web_job 读到空时长误 Alert。
+        if matches!(entry.status, Status::Probing) {
+            crate::timers::sleep(std::time::Duration::from_millis(50)).await;
+            continue;
+        }
+        // 每任务取当前设置（output_dir 等）
+        let settings = ctx.settings.peek().clone();
 
         if let Err(msg) = ensure_output_dir_set(&entry.transcoder, &settings.output_dir) {
             ctx.touch_entry(index, |e| e.error = Some(msg.clone()));
@@ -145,22 +152,11 @@ pub async fn run_all(
             break;
         }
 
-        match run_single_task(
-            &mut ctx,
-            &entry,
-            index,
-            &settings,
-            progress_tx.clone(),
-            webcodecs_ok,
-        )
-        .await
-        {
+        match run_single_task(&mut ctx, &entry, index, progress_tx.clone(), webcodecs_ok).await {
             TaskOutcome::Advanced => index += 1,
             TaskOutcome::Cancelled => {
-                // 被取消的任务回到 Pending，可再次 Run（cancel_flag 在
-                // run_with_progress 入口复位）
-                ctx.touch_entry(index, |e| e.progress = None);
-                ctx.with_task(index, |t| t.status = Status::Pending);
+                // 复位（progress/状态）由 run_single_task 完成，这里只记日志
+                //（cancel_flag 在 run_with_progress 入口复位）
                 log::info!("queue cancelled at '{}'", entry.input_path);
                 break;
             }
@@ -175,7 +171,6 @@ async fn run_single_task(
     ctx: &mut UiState,
     entry: &TaskEntry,
     index: usize,
-    settings: &Settings,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
     webcodecs_ok: bool,
 ) -> TaskOutcome {
@@ -201,11 +196,6 @@ async fn run_single_task(
             crate::timers::sleep(std::time::Duration::from_millis(100)).await;
         }
     }));
-    let max_retry = settings.max_retry;
-    let (video_limit, image_limit) = (settings.video_max_size(), settings.image_max_size());
-    let duration_factors = settings.duration_factors;
-    let target_fps = settings.target_fps;
-    let retry_shrink = settings.retry_shrink_factor;
 
     let mut retry: u8 = 0;
     let mut cancelled = false;
@@ -215,6 +205,14 @@ async fn run_single_task(
             cancelled = true;
             break 'attempt;
         }
+        // 每 attempt 重读设置：入口快照会让运行中改的上限/重试数失效，
+        // UI 按实时值判超限颜色而 runner 按旧值判 Done —— 显示互相矛盾
+        let settings = ctx.settings.peek().clone();
+        let max_retry = settings.max_retry;
+        let (video_limit, image_limit) = (settings.video_max_size(), settings.image_max_size());
+        let duration_factors = settings.duration_factors;
+        let target_fps = settings.target_fps;
+        let retry_shrink = settings.retry_shrink_factor;
 
         ctx.with_task(index, |t| {
             t.duration_factors = duration_factors;
@@ -262,7 +260,12 @@ async fn run_single_task(
                 // 锁均不跨 await。重试时 prepare_web_job 以收缩后的因子重算 bitrate。
                 let tx = progress_tx.clone();
                 let Ok(mut t) = task_arc.lock() else {
-                    return TaskOutcome::Advanced; // 锁中毒：跳过
+                    // 锁中毒跳过前先收 watcher：否则轮询任务与其 clone 的
+                    // cancel_flag 泄漏，该任务下次 Run 秒"取消"
+                    if let Some(w) = watcher.take() {
+                        w.cancel();
+                    }
+                    return TaskOutcome::Advanced;
                 };
                 t.cancel_flag
                     .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -286,7 +289,7 @@ async fn run_single_task(
                                 )
                                 .await
                             }
-                            _ => {
+                            "ffmpeg-wasm" => {
                                 crate::transcoder::web::exec_ffmpeg_wasm(
                                     job,
                                     std::sync::Arc::clone(&cancel_flag),
@@ -294,6 +297,7 @@ async fn run_single_task(
                                 )
                                 .await
                             }
+                            other => Err(TranscodeError::UnsupportedEngine(other)),
                         };
                         match awaited {
                             Ok(out) => {
@@ -321,8 +325,15 @@ async fn run_single_task(
                 log::info!("{name}: cancelled");
                 ctx.push_toast(ToastKind::Info, format!("Task cancelled: {name}"));
             } else {
-                // 与 iced NextProcess(Err) 一致：标记 Alert 后跳到下一个任务
+                // 与 iced NextProcess(Err) 一致：标记 Alert 后跳到下一个任务。
+                // 半成品（无 trailer 的 webm 等）与 cancel 路径同法清理，
+                // 不留在输出目录冒充成品
                 log::error!("Failed to process {name}: {err}");
+                if let Ok(t) = task_arc.lock()
+                    && let Some(out) = t.get_output()
+                {
+                    let _ = std::fs::remove_file(out);
+                }
                 ctx.touch_entry(index, |e| e.error = Some(err.to_string()));
                 ctx.with_task(index, |t| t.status = Status::Alert);
                 ctx.push_toast(ToastKind::Error, err.to_string());
@@ -393,10 +404,11 @@ async fn run_single_task(
                         .output_size
                         .map_or_else(|| "?".into(), |s| format!("{:.2}KB", s as f64 / 1024.0));
                     #[cfg(not(target_arch = "wasm32"))]
-                    log::info!(
-                        "{name} -> {kb} in {:.1}s",
-                        started.elapsed().as_millis() as f64 / 1000.0
-                    );
+                    {
+                        let ms = started.elapsed().as_millis() as u64;
+                        ctx.touch_entry(index, |e| e.elapsed_ms = Some(ms));
+                        log::info!("{name} -> {kb} in {:.1}s", ms as f64 / 1000.0);
+                    }
                     #[cfg(target_arch = "wasm32")]
                     log::info!("{name} -> {kb}");
                     ctx.push_toast(ToastKind::Success, format!("{name} -> {kb}"));

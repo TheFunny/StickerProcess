@@ -81,6 +81,21 @@ impl Transcoder {
         }
         factor
     }
+
+    /// 视频码率链（三引擎唯一出处）：effective_duration → resolve_factor →
+    /// quantized_bitrate。返回 (参与计算的时长, b:v)——inprocess 进度也要时长。
+    /// AGENTS 不变量：sidecar / inprocess / web 必须码率一致，改这里，别复制。
+    pub(super) fn video_bitrate(
+        &mut self,
+        v_type: &VideoType,
+    ) -> Result<(f64, u32), TranscodeError> {
+        let duration = self.effective_duration(v_type)?;
+        let factor = self.resolve_factor(duration, v_type);
+        Ok((
+            duration,
+            quantized_bitrate(target_bitrate_bps(duration), factor),
+        ))
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -103,9 +118,7 @@ impl Transcoder {
             .r#type()
             .ok_or(TranscodeError::InvalidMediaType)?
         {
-            let duration = self.effective_duration(&v_type)?;
-            let factor = self.resolve_factor(duration, &v_type);
-            let target_bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
+            let (_, target_bitrate) = self.video_bitrate(&v_type)?;
             if self.target_fps > 0.0 {
                 command.args(["-r", &self.target_fps.to_string()]);
             }

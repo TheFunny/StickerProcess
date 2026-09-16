@@ -24,15 +24,26 @@ impl Transcoder {
     }
 }
 
-/// 定位二进制标记 `44 89 88`，其后 8 字节覆写为 `100f64`（大端）强制贴纸时长。
+/// 定位 Duration 元素 `44 89 88`（EBML ID 0x4489 + 1 字节 size vint 0x88），
+/// 其后 8 字节覆写为 `100f64`（大端）强制贴纸时长。
 /// 纯函数：桌面 run_video 与网页端 finish_web_job 共用。
+///
+/// 扫描止于首个 Cluster（ID `1F 43 B6 75`）：Duration 恒在 Info 内、先于
+/// 任何 Cluster。不限界的搜索若 Duration 缺失/编码不同，会误中 VP9 载荷
+/// 字节并静默改坏 8 字节视频数据。
 pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
-    let position = data
+    const MARKER: [u8; 3] = [0x44, 0x89, 0x88];
+    const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+    let cluster_at = data
+        .windows(4)
+        .position(|w| w == CLUSTER)
+        .unwrap_or(data.len());
+    let position = data[..cluster_at]
         .windows(3)
-        .position(|w| w == [0x44, 0x89, 0x88])
+        .position(|w| w == MARKER)
         .ok_or(TranscodeError::DurationPatch("binary sequence not found"))?;
     let end = position + 3 + 8;
-    if end > data.len() {
+    if end > cluster_at {
         return Err(TranscodeError::DurationPatch(
             "binary sequence too close to EOF",
         ));
@@ -84,6 +95,16 @@ mod tests {
     #[test]
     fn duration_patch_rejects_missing_marker() {
         let data = vec![0u8; 64];
+        let err = patch_webm_bytes(data).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    /// 回归：Cluster 载荷里的伪标记不得被改写（误中会静默坏 8 字节视频数据）。
+    #[test]
+    fn duration_patch_refuses_marker_inside_cluster() {
+        let mut data = vec![0u8; 200];
+        data[10..14].copy_from_slice(&[0x1F, 0x43, 0xB6, 0x75]); // Cluster 在前
+        data[50..53].copy_from_slice(&[0x44, 0x89, 0x88]); // 载荷里的伪标记
         let err = patch_webm_bytes(data).unwrap_err();
         assert!(err.to_string().contains("not found"));
     }

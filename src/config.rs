@@ -135,7 +135,10 @@ pub fn load() -> Settings {
     settings
 }
 
-/// 公共兜底：引擎值 / 输出目录（两平台一致）。
+/// 公共兜底：引擎值 / 输出目录 / 数值项（两平台一致）。手改的
+/// settings.toml / localStorage 绕过 NumberInput 的 UI 钳制：0 KB 上限
+/// → inf 超限比烧满重试；非有限值 → toml 序列化永久失败。范围与设置
+/// 面板各 NumberInput 的 min/max 对齐。
 fn sanitize(settings: &mut Settings) {
     if !settings.engine_valid() {
         log::warn!(
@@ -147,6 +150,37 @@ fn sanitize(settings: &mut Settings) {
     if settings.output_dir.is_empty() {
         settings.output_dir = default_output_dir();
     }
+    let max_kb = settings.video_max_size_kb.clamp(16, 102_400);
+    if settings.video_max_size_kb != max_kb {
+        log::warn!("video_max_size_kb out of range, clamped to {max_kb}");
+        settings.video_max_size_kb = max_kb;
+    }
+    let max_kb = settings.image_max_size_kb.clamp(16, 102_400);
+    if settings.image_max_size_kb != max_kb {
+        log::warn!("image_max_size_kb out of range, clamped to {max_kb}");
+        settings.image_max_size_kb = max_kb;
+    }
+    fn clamp_f64(v: &mut f64, min: f64, max: f64, name: &str) {
+        let c = if v.is_finite() {
+            v.clamp(min, max)
+        } else {
+            min
+        };
+        if *v != c {
+            log::warn!("{name} out of range ({v}), clamped to {c}");
+            *v = c;
+        }
+    }
+    clamp_f64(
+        &mut settings.retry_shrink_factor,
+        0.05,
+        1.0,
+        "retry_shrink_factor",
+    );
+    clamp_f64(&mut settings.target_fps, 0.0, 240.0, "target_fps");
+    for (i, f) in settings.duration_factors.iter_mut().enumerate() {
+        clamp_f64(f, 0.05, 10.0, &format!("duration_factors[{i}]"));
+    }
 }
 
 /// 阻塞写盘（调用方放在 spawn_blocking 中）。
@@ -157,7 +191,11 @@ pub fn save(settings: &Settings) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let raw = toml::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, raw).map_err(|e| e.to_string())
+    // 先写临时文件再改名：fs::write 截断后写，中断窗口留下半截 toml
+    // → load 判损坏，全部设置回默认。rename 在同一卷上是原子的。
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, raw).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 /// 阻塞写 localStorage（wasm 无独立线程，直接同步写，量级 ~1KB）。
@@ -233,6 +271,23 @@ mod tests {
         assert!(s.engine_valid());
         s.engine = "gpu".into();
         assert!(!s.engine_valid());
+    }
+
+    #[test]
+    fn sanitize_clamps_out_of_range_values() {
+        let mut s = Settings::default();
+        s.video_max_size_kb = 0; // inf 超限比的源头
+        s.retry_shrink_factor = f64::NAN; // toml 序列化失败源
+        s.duration_factors = [99.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        s.target_fps = 1e9;
+        sanitize(&mut s);
+        assert_eq!(s.video_max_size_kb, 16);
+        assert_eq!(s.retry_shrink_factor, 0.05);
+        assert_eq!(s.duration_factors[0], 10.0);
+        assert_eq!(s.duration_factors[1], 0.05);
+        assert_eq!(s.target_fps, 240.0);
+        // 序列化必须恢复可用
+        assert!(toml::to_string_pretty(&s).is_ok());
     }
 
     #[test]

@@ -4,8 +4,8 @@
 //! 1. 主程序同目录的 `ffmpeg.exe`（随包/手动放置场景）
 //! 2. 系统 `PATH` 中的 `ffmpeg`
 //!
-//! 结果进程内缓存一次；`available()` 只做文件存在性检查（零开销），
-//! `verify()` 追加 `-version` 子进程调用确认可执行（首次 UI 展示时调用）。
+//! 结果进程内缓存一次；`probe()` 只读缓存（零开销），`check_vp9`
+//! 用 `-encoders` 子进程确认 libvpx-vp9（首次探测时调用一次）。
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -28,20 +28,24 @@ impl SidecarProbe {
 
     /// 缓存命中版：首次调用自动触发探测（init 无需显式调用）。
     pub fn probe() -> Option<&'static SidecarProbe> {
-        let this = Self::init() as *const SidecarProbe;
-        // SAFETY: OnceLock 返回的引用是 'static 的；filter 后重建引用
-        let r = unsafe { &*this };
+        let r = Self::init();
         (!r.exe.as_os_str().is_empty()).then_some(r)
     }
     fn detect() -> Self {
-        // 与 ffmpeg-sidecar 相同的解析顺序：同目录 exe 优先，回落 PATH
-        let candidates = [
+        // 解析顺序：同目录 exe → CWD → PATH（CreateProcess 的 bare
+        // "ffmpeg.exe" 只查 CWD/exe 目录，不查 PATH，须手动扫）
+        let mut candidates: Vec<PathBuf> = vec![
             std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join("ffmpeg.exe"))),
-            Some(PathBuf::from("ffmpeg.exe")),
+                .and_then(|p| p.parent().map(|d| d.join("ffmpeg.exe")))
+                .unwrap_or_default(),
+            PathBuf::from("ffmpeg.exe"),
         ];
-        for path in candidates.into_iter().flatten() {
+        candidates.extend(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .map(|dir| dir.join("ffmpeg.exe")),
+        );
+        for path in candidates {
             if path.is_file() {
                 let has_vp9 = Self::check_vp9(&path);
                 log::info!(

@@ -39,7 +39,9 @@ impl_num_edit_int!(u32);
 
 impl NumEdit for f64 {
     fn parse_num(s: &str) -> Option<Self> {
-        s.trim().parse::<f64>().ok()
+        // "NaN"/"inf" 能被 Rust parse 成功；放进 Settings 后 toml 序列化
+        // 永久失败、码率算式变 0 —— 只接受有限值。
+        s.trim().parse::<f64>().ok().filter(|v| v.is_finite())
     }
     fn clamp_to(self, min: Self, max: Self) -> Self {
         self.clamp(min, max)
@@ -87,5 +89,17 @@ pub fn NumberInput<T: NumEdit + 'static>(
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f64_rejects_non_finite() {
+        assert!(f64::parse_num("NaN").is_none());
+        assert!(f64::parse_num("inf").is_none());
+        assert_eq!(f64::parse_num(" 0.96 "), Some(0.96));
     }
 }

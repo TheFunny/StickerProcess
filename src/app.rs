@@ -73,6 +73,7 @@ impl PartialEq for TaskEntry {
             && self.factor == other.factor
             && self.output_file_name == other.output_file_name
             && self.output_size == other.output_size
+            && self.input_size == other.input_size
             && self.progress == other.progress
             && self.elapsed_ms == other.elapsed_ms
             && self.output_path == other.output_path
@@ -228,7 +229,7 @@ impl UiState {
 
     /// 网页端：前端文件字节直接入队（扩展名过滤与 add_files 一致）。
     pub fn add_file_bytes(&mut self, name: String, data: Vec<u8>) {
-        let ext = name.rsplit('.').next().map(|s| s.to_ascii_lowercase());
+        let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
         if !ext.as_deref().is_some_and(|e| SUPPORTED.contains(&e)) {
             log::warn!("Skipped unsupported file: {name}");
             return;
@@ -312,6 +313,14 @@ impl UiState {
             .get(index)
             .is_some_and(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
         {
+            return;
+        }
+        // Run 已接管该任务（镜像 = Processing）则止步：with_task 会在主线程
+        // 撞 worker 持有的锁（UI 冻结），且无条件写 Pending 会抹掉运行中状态。
+        if matches!(
+            ctx.tasks.cloned().get(index),
+            Some(e) if e.status == Status::Processing
+        ) {
             return;
         }
         let status = match &result {
@@ -508,8 +517,11 @@ pub fn App() -> Element {
 
     // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖；随设置持久化。
     // "system" 档：读取 prefers-color-scheme 并监听系统切换实时回写。
+    // 派生信号：settings 其它字段改动（如目录逐键写入）不重跑本 effect，
+    // 只有 theme 变化才重新注入。
+    let theme = use_memo(move || ctx.settings.read().theme.clone());
     use_effect(move || {
-        let theme = ctx.settings.read().theme.clone();
+        let theme = theme.cloned();
         if theme == "system" {
             document::eval(
                 "(() => {
@@ -522,13 +534,15 @@ pub fn App() -> Element {
                 })()",
             );
         } else {
+            // 非 system 档只认 dark/light（未知值按 light 渲染，不进插值）
+            let attr = if theme == "dark" { "dark" } else { "light" };
             document::eval(&format!(
                 "window.__stp_theme_handler && (() => {{
                     window.matchMedia('(prefers-color-scheme: dark)')
                         .removeEventListener('change', window.__stp_theme_handler);
                     window.__stp_theme_handler = null;
                 }})();
-                document.documentElement.setAttribute('data-theme', '{theme}')"
+                document.documentElement.setAttribute('data-theme', '{attr}')"
             ));
         }
     });
@@ -570,5 +584,8 @@ mod tests {
         a.status = Status::Alert;
         a.error = Some("boom".into());
         assert_ne!(a, b);
+        let mut c = b.clone();
+        c.input_size += 1; // 镜像不变量：eq 必须覆盖 input_size（预览按它渲染）
+        assert_ne!(c, b);
     }
 }

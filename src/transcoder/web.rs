@@ -9,7 +9,7 @@
 //! `assets/webcodecs-engine.js`（stickerWebcodecs* + stickerNativeProbe）。
 
 use super::{TranscodeError, Transcoder, steps};
-use crate::media::{MediaType, VideoType};
+use crate::media::MediaType;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen::prelude::*;
@@ -79,7 +79,7 @@ impl Transcoder {
         let (engine, kind, pix_fmt) = super::Engine::for_web(&media_type, webcodecs_ok);
         let engine = engine.as_str();
         let bitrate = match media_type {
-            MediaType::Video(v) => self.video_bitrate(&v)?,
+            MediaType::Video(v) => self.video_bitrate(&v)?.1,
             MediaType::Image(_) => 0,
         };
         let data = match self.media_file.bytes() {
@@ -98,15 +98,7 @@ impl Transcoder {
         })
     }
 
-    /// 视频码率：目标字节 × 8 / 时长 × 因子（与桌面 gen_command 同一公式链）。
-    fn video_bitrate(&mut self, v_type: &VideoType) -> Result<u32, TranscodeError> {
-        let duration = self.effective_duration(v_type)?;
-        let factor = self.resolve_factor(duration, v_type);
-        Ok(super::command::quantized_bitrate(
-            super::command::target_bitrate_bps(duration),
-            factor,
-        ))
-    }
+    // 码率链共享 command.rs::video_bitrate（三引擎唯一出处）
 
     /// 阶段 2（锁内，同步）：视频走 webm 时长补丁，图片（PNG）原样
     /// → store_output（Bytes 源写内存）。
@@ -128,7 +120,7 @@ impl Transcoder {
 pub(crate) async fn exec_ffmpeg_wasm(
     job: WebJob,
     cancel_flag: Arc<AtomicBool>,
-    mut on_progress: impl FnMut(f32) + 'static,
+    on_progress: impl FnMut(f32) + 'static,
 ) -> Result<Vec<u8>, TranscodeError> {
     inject_scripts(&["ffmpeg.js", "ffmpeg-engine.js"], "stickerFfmpegReady").await?;
 
@@ -139,12 +131,10 @@ pub(crate) async fn exec_ffmpeg_wasm(
     // core 下载进度（0–30%）：闭包被 JS 侧在 load 期间持有，await 返回后
     // 不再被调用，随作用域 drop。
     let on_progress = std::rc::Rc::new(std::cell::RefCell::new(on_progress));
-    let cancel_core = Arc::clone(&cancel_flag);
     let op_core = std::rc::Rc::clone(&on_progress);
     let core_closure = Closure::new(move |pct: f32| {
         (*op_core.borrow_mut())(pct * 0.3);
-        let _ = &cancel_core; // cancel 在下载期只置位：ready 返回后统一检查
-    });
+    }); // ponytail: core 下载期不可取消，ready resolve 后统一查 cancel_flag
     let ready = sticker_ffmpeg_ready(&core_closure).map_err(|e| js_error(e, &cancel_flag))?;
     js_sys::Promise::from(ready)
         .await
@@ -171,7 +161,8 @@ pub(crate) async fn exec_ffmpeg_wasm(
     let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, &closure)
         .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
-    closure.forget(); // JS 侧仍持有引用（onProgress），实例重建前不再泄漏增长
+    // glue 的 finally 已 ff.off("progress")——promise settle 后 JS 不再引用
+    // 本闭包，随作用域 drop（此前 forget() 使监听器链随任务数无界增长）。
 
     js_value_to_bytes(out)
 }
@@ -223,7 +214,6 @@ pub(crate) async fn exec_webcodecs(
     let promise = sticker_webcodecs_transcode(data, name, bitrate, fps, kind, &closure)
         .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
-    closure.forget();
 
     js_value_to_bytes(out)
 }
@@ -293,12 +283,21 @@ fn js_error(e: JsValue, cancel_flag: &AtomicBool) -> TranscodeError {
         TranscodeError::Cancelled
     } else {
         let msg = e.as_string().unwrap_or_else(|| format!("{e:?}"));
-        TranscodeError::SizeCheck(msg)
+        TranscodeError::Engine(msg)
     }
 }
 
 fn js_value_to_bytes(v: JsValue) -> Result<Vec<u8>, TranscodeError> {
-    let arr = js_sys::Uint8Array::new(&v);
+    // glue 契约违约（返回非 typed-array）→ 0 字节而不是报错，
+    // 会伪装成"成功且小于上限"的 Done
+    let Some(arr) = v.dyn_ref::<js_sys::Uint8Array>() else {
+        return Err(TranscodeError::Engine("engine returned no bytes".into()));
+    };
+    if arr.length() == 0 {
+        return Err(TranscodeError::Engine(
+            "engine returned empty output".into(),
+        ));
+    }
     Ok(arr.to_vec())
 }
 
@@ -309,27 +308,28 @@ fn reflect_has(window: &web_sys::Window, key: &str) -> bool {
 /// 幂等注入 glue 脚本链（按序：依赖在前）；注入后轮询 marker 是否挂上 window
 /// （200ms × 50 次 = 10s 上限），避免 onload 回调的 Closure 生命周期管理。
 async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeError> {
-    let window = web_sys::window().ok_or(TranscodeError::SizeCheck("no window on wasm".into()))?;
+    let window =
+        web_sys::window().ok_or_else(|| TranscodeError::Engine("no window on wasm".into()))?;
     if reflect_has(&window, marker) {
         return Ok(());
     }
     let document = window
         .document()
-        .ok_or(TranscodeError::SizeCheck("no document on wasm".into()))?;
+        .ok_or_else(|| TranscodeError::Engine("no document on wasm".into()))?;
     // 顺序注入：前一脚本是后一的全局依赖（UMD wrapper → glue；muxer → glue）。
     // 重复插入只多执行一次 IIFE，window 函数被覆盖，无副作用。
     for src in srcs {
         let script = document
             .create_element("script")
-            .map_err(|_| TranscodeError::SizeCheck("create script element failed".into()))?;
+            .map_err(|_| TranscodeError::Engine("create script element failed".into()))?;
         script
             .set_attribute("src", src)
-            .map_err(|_| TranscodeError::SizeCheck("set script src failed".into()))?;
+            .map_err(|_| TranscodeError::Engine("set script src failed".into()))?;
         let head = document
             .head()
-            .ok_or(TranscodeError::SizeCheck("no head on wasm".into()))?;
+            .ok_or_else(|| TranscodeError::Engine("no head on wasm".into()))?;
         head.append_child(&script)
-            .map_err(|_| TranscodeError::SizeCheck("append script failed".into()))?;
+            .map_err(|_| TranscodeError::Engine("append script failed".into()))?;
     }
 
     for _ in 0..50 {
@@ -338,7 +338,7 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
         }
         crate::timers::sleep(std::time::Duration::from_millis(200)).await;
     }
-    Err(TranscodeError::SizeCheck(format!(
+    Err(TranscodeError::Engine(format!(
         "{srcs:?} failed to load within 10s"
     )))
 }

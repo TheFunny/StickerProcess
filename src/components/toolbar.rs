@@ -119,6 +119,12 @@ pub fn Toolbar() -> Element {
                                 });
                             }
                         }
+                        // 必须清空 value：input 保留上次选择，浏览器只在选中的
+                        // 列表与 value 不同时才再触发 change —— 删掉任务后重选
+                        // 同一文件会静默失败
+                        let _ = document::eval(
+                            "document.getElementById('add-file-input').value = ''",
+                        );
                     },
                 }
             }

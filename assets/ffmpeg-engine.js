@@ -79,7 +79,10 @@
     // wasm 传入的 data 背靠 wasm 内存，不可 detach——ffmpeg.wasm writeFile 要
     // transfer 所有权，必须先拷到独立 ArrayBuffer
     await ff.writeFile(name, new Uint8Array(data).slice());
-    ff.on("progress", ({ progress }) => onProgress(Math.min(progress, 1)));
+    // 单例跨任务复用：exec 结束必须 off，否则监听器随任务数累积，
+    // 旧任务的 onProgress 持续向已完行发幽灵进度。
+    const handler = ({ progress }) => onProgress(Math.min(progress, 1));
+    ff.on("progress", handler);
     // 参数镜像 src/transcoder/command.rs::gen_command 视频分支（码率/crf/pix_fmt
     // 由 Rust 传入）；两处 web 专属偏离：ST core 无 pthreads 省 -row-mt；
     // deadline/cpu-used 提速——wasm 单线程 VP9 默认 good 档太慢（GIF exec ~10s），
@@ -100,11 +103,16 @@
       "-bufsize", String(Math.floor(bitrate * 1.5)),
       "-f", "webm", "out.webm",
     );
-    const code = await ff.exec(args);
-    if (code !== 0) throw new Error("ffmpeg exited " + code);
-    const out = await ff.readFile("out.webm");
-    await ff.deleteFile(name).catch(() => {});
-    await ff.deleteFile("out.webm").catch(() => {});
+    let out;
+    try {
+      const code = await ff.exec(args);
+      if (code !== 0) throw new Error("ffmpeg exited " + code);
+      out = await ff.readFile("out.webm");
+    } finally {
+      ff.off("progress", handler);
+      await ff.deleteFile(name).catch(() => {});
+      await ff.deleteFile("out.webm").catch(() => {});
+    }
     return out;
   };
 
