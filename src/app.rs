@@ -22,16 +22,18 @@ pub const SUPPORTED: [&str; 7] = ["mp4", "gif", "apng", "jpg", "jpeg", "png", "w
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 
-/// 队列中的一个任务：共享 Transcoder（逻辑层）+ 显示镜像（渲染层）。
-#[derive(Clone, Debug)]
-pub struct TaskEntry {
-    pub transcoder: Arc<Mutex<Transcoder>>,
+/// 显示镜像：任务行/预览渲染所需的全部字段（不含共享的 Transcoder）。
+///
+/// 刻意派生 `PartialEq`——手写 eq 漏一个字段会让 dioxus memo **静默**跳过重渲染
+/// （历史 bug：系数不显示、状态/错误徽标不刷新）。派生之后不可能再漏。
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskMirror {
     /// 输入文件路径（创建时快照，避免渲染期加锁）。
     pub input_path: String,
-    /// Phase D 预览将展示输入大小对比。
+    /// 预览展示输入大小的对比基准。
     pub input_size: u64,
     pub is_video: bool,
-    // ---- 显示镜像：由修改 Transcoder 的一方负责同步 ----
+    // ---- 以下由修改 Transcoder 的一方负责同步 ----
     pub status: Status,
     pub output_size: Option<u64>,
     /// 输出文件名（不含路径，随 output_path 同步），任务行直接展示。
@@ -47,20 +49,17 @@ pub struct TaskEntry {
     pub error: Option<String>,
 }
 
-// 组件 Props 派生需要 PartialEq；共享的 Transcoder 不参与比较（比较显示镜像即可）
+/// 队列中的一个任务：共享 Transcoder（逻辑层）+ 显示镜像（渲染层）。
+#[derive(Clone, Debug)]
+pub struct TaskEntry {
+    pub transcoder: Arc<Mutex<Transcoder>>,
+    pub mirror: TaskMirror,
+}
+
+/// 组件 Props 派生需要 PartialEq；只比显示镜像（两边都锁 Transcoder 比较会死锁）。
 impl PartialEq for TaskEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.input_path == other.input_path
-            && self.is_video == other.is_video
-            && self.factor == other.factor
-            && self.output_file_name == other.output_file_name
-            && self.output_size == other.output_size
-            && self.input_size == other.input_size
-            && self.progress == other.progress
-            && self.elapsed_ms == other.elapsed_ms
-            && self.output_path == other.output_path
-            && self.status == other.status
-            && self.error == other.error
+        self.mirror == other.mirror
     }
 }
 
@@ -72,30 +71,30 @@ impl TaskEntry {
         log::info!("Added task: {input_path}");
         Self {
             transcoder: Arc::new(Mutex::new(Transcoder::new(media))),
-            input_path,
-            input_size,
-            is_video,
-            status: Status::Probing,
-            output_size: None,
-            output_file_name: None,
-            output_path: None,
-            factor: None,
-            progress: None,
-            elapsed_ms: None,
-            error: None,
+            mirror: TaskMirror {
+                input_path,
+                input_size,
+                is_video,
+                status: Status::Probing,
+                output_size: None,
+                output_file_name: None,
+                output_path: None,
+                factor: None,
+                progress: None,
+                elapsed_ms: None,
+                error: None,
+            },
         }
     }
 
     /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
     pub fn size_excess_ratio(&self, video_limit: u64, image_limit: u64) -> Option<f64> {
-        let size = self.output_size? as f64;
-        Some(
-            size / if self.is_video {
-                video_limit
-            } else {
-                image_limit
-            } as f64,
-        )
+        let limit = if self.mirror.is_video {
+            video_limit
+        } else {
+            image_limit
+        };
+        crate::transcoder::excess_ratio(self.mirror.output_size, limit)
     }
 }
 
@@ -127,15 +126,16 @@ impl UiState {
             let entry = list.get_mut(index)?;
             let mut task = entry.transcoder.lock().ok()?;
             let out = f(&mut task);
-            entry.status = task.status.clone();
-            entry.is_video = matches!(
+            let mirror = &mut entry.mirror;
+            mirror.status = task.status.clone();
+            mirror.is_video = matches!(
                 task.media_file.r#type(),
                 Some(crate::media::MediaType::Video(_))
             );
-            entry.factor = task.size_factor;
-            entry.output_size = task.output_size;
-            entry.output_path = task.get_output().cloned();
-            entry.output_file_name = task
+            mirror.factor = task.size_factor;
+            mirror.output_size = task.output_size;
+            mirror.output_path = task.get_output().cloned();
+            mirror.output_file_name = task
                 .get_output()
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().into_owned());
@@ -146,10 +146,10 @@ impl UiState {
     /// UI 专属镜像字段（progress/elapsed/error）的唯一修改入口。
     /// 派生自 Transcoder 的镜像（status/factor/output_size）请走 `with_task`。
     /// 这两个方法是任务镜像的全部写入口，勿直接 `tasks.with_mut` 改镜像字段。
-    pub fn touch_entry(&mut self, index: usize, f: impl FnOnce(&mut TaskEntry)) {
+    pub fn touch_entry(&mut self, index: usize, f: impl FnOnce(&mut TaskMirror)) {
         self.tasks.with_mut(|list| {
             if let Some(entry) = list.get_mut(index) {
-                f(entry);
+                f(&mut entry.mirror);
             }
         });
     }
@@ -321,7 +321,7 @@ impl UiState {
         // 撞 worker 持有的锁（UI 冻结），且无条件写 Pending 会抹掉运行中状态。
         if matches!(
             ctx.tasks.cloned().get(index),
-            Some(e) if e.status == Status::Processing
+            Some(e) if e.mirror.status == Status::Processing
         ) {
             return;
         }
@@ -338,7 +338,7 @@ impl UiState {
     /// 移除已完成（Done）的任务。
     pub fn clear_done(&mut self) {
         self.tasks
-            .with_mut(|list| list.retain(|task| task.status != Status::Done));
+            .with_mut(|list| list.retain(|task| task.mirror.status != Status::Done));
     }
 
     /// 一键下载全部 Done 任务的产物（web：字节驻内存，顺序触发浏览器下载，
@@ -350,10 +350,11 @@ impl UiState {
             .tasks
             .cloned()
             .iter()
-            .filter(|e| e.status == Status::Done)
+            .filter(|e| e.mirror.status == Status::Done)
             .filter_map(|e| {
                 let bytes = e.transcoder.lock().ok()?.output_bytes.clone()?;
                 let name = e
+                    .mirror
                     .output_file_name
                     .clone()
                     .unwrap_or_else(|| "sticker.webm".into());
@@ -393,7 +394,7 @@ impl UiState {
             .tasks
             .cloned()
             .iter()
-            .any(|task| task.status != Status::Done)
+            .any(|task| task.mirror.status != Status::Done)
         {
             self.push_toast(
                 ToastKind::Info,
@@ -405,7 +406,7 @@ impl UiState {
             .tasks
             .cloned()
             .iter()
-            .any(|task| matches!(task.status, Status::Probing | Status::Processing))
+            .any(|task| matches!(task.mirror.status, Status::Probing | Status::Processing))
         {
             self.push_toast(ToastKind::Info, "Waiting for probing to finish");
             return;
@@ -450,8 +451,8 @@ impl UiState {
                             // 仅 Processing 期间写进度：worker 退出后残留的
                             // 100% 更新不得覆盖 runner 清掉的 progress（否则
                             // Done 任务显示进度条而非文件大小）
-                            if matches!(entry.status, Status::Processing) {
-                                entry.progress = Some(pct);
+                            if matches!(entry.mirror.status, Status::Processing) {
+                                entry.mirror.progress = Some(pct);
                             }
                         }
                     }
@@ -583,24 +584,5 @@ pub fn App() -> Element {
             crate::components::preview::PreviewModal {}
             crate::components::toast::ToastContainer {}
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// AGENTS 契约：eq 必须覆盖组件依赖的每个镜像字段——漏字段会 memo 跳过重渲染。
-    #[test]
-    fn task_entry_eq_covers_status_and_error() {
-        let mut a = TaskEntry::new(MediaFile::new(&PathBuf::from("x.mp4")));
-        let b = a.clone();
-        assert_eq!(a, b);
-        a.status = Status::Alert;
-        a.error = Some("boom".into());
-        assert_ne!(a, b);
-        let mut c = b.clone();
-        c.input_size += 1; // 镜像不变量：eq 必须覆盖 input_size（预览按它渲染）
-        assert_ne!(c, b);
     }
 }

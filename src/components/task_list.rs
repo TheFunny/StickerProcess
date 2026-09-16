@@ -43,7 +43,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     // 拖选文字/数字时按下与松开位置不同——click 会落在行上，需与普通点击区分
     let mut mouse_down_at = use_signal(|| None::<(f64, f64)>);
 
-    let status_class = match entry.status {
+    let status_class = match entry.mirror.status {
         Status::Probing => "badge probing",
         Status::Processing => "badge processing",
         Status::Done => "badge done",
@@ -58,8 +58,8 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
         .size_excess_ratio(video_limit, image_limit)
         .is_some_and(|ratio| ratio > 1.0);
     // 输出文件名 + 输出大小（有输出时一起展示）
-    let size_text = entry.output_size.map(|size| {
-        let name = entry.output_file_name.as_deref().unwrap_or_default();
+    let size_text = entry.mirror.output_size.map(|size| {
+        let name = entry.mirror.output_file_name.as_deref().unwrap_or_default();
         if name.is_empty() {
             format!("{:.2}KB", size as f64 / 1024.0)
         } else {
@@ -74,15 +74,15 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
     };
     // 选中输出文件用（onclick 闭包捕获，桌面专属）
     #[cfg(not(target_arch = "wasm32"))]
-    let select_path = entry.output_path.clone();
+    let select_path = entry.mirror.output_path.clone();
     // 与 iced 一致：系数仅在首次转码（自动初始化）后出现
-    let factor_value = entry.factor;
+    let factor_value = entry.mirror.factor;
     // 转码耗时（成功后保留展示）
-    let elapsed_text = entry.elapsed_ms.map(format_elapsed);
+    let elapsed_text = entry.mirror.elapsed_ms.map(format_elapsed);
     // 悬停提示：优先错误详情，否则完整路径
-    let tooltip = match &entry.error {
-        Some(err) => format!("{}\n{}", entry.input_path, err),
-        None => entry.input_path.clone(),
+    let tooltip = match &entry.mirror.error {
+        Some(err) => format!("{}\n{}", entry.mirror.input_path, err),
+        None => entry.mirror.input_path.clone(),
     };
 
     rsx! {
@@ -91,7 +91,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
             title: "{tooltip}",
             role: "listitem",
             tabindex: 0,
-            "aria-label": "Preview {entry.input_path}",
+            "aria-label": "Preview {entry.mirror.input_path}",
             onmousedown: move |evt: Event<MouseData>| {
                 let p = evt.data.client_coordinates();
                 mouse_down_at.set(Some((p.x, p.y)));
@@ -118,9 +118,9 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 }
             },
             div { class: "row-main",
-                span { class: "{status_class}", "[{entry.status.label()}]" }
-                span { class: "path", "{entry.input_path}" }
-                if let Some(pct) = entry.progress {
+                span { class: "{status_class}", "[{entry.mirror.status.label()}]" }
+                span { class: "path", "{entry.mirror.input_path}" }
+                if let Some(pct) = entry.mirror.progress {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
                 } else if let Some(size) = size_text {
                     button {
@@ -142,6 +142,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                                 // web：从内存 output_bytes 触发浏览器下载
                                 if let Some(bytes) = entry_bytes.clone() {
                                     let name = entry
+                                        .mirror
                                         .output_file_name
                                         .clone()
                                         .unwrap_or_else(|| "sticker.webm".into());
@@ -181,7 +182,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     }
                 }
                 // Done 也可重跑：Run 只处理未完成任务，重转需先把它退回 Pending
-                if matches!(entry.status, Status::Alert | Status::SizeExcess | Status::Done) {
+                if matches!(entry.mirror.status, Status::Alert | Status::SizeExcess | Status::Done) {
                     button {
                         class: "btn btn-mini",
                         disabled: running,
@@ -190,7 +191,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                             evt.stop_propagation();
                             ctx.retry_task(index);
                         },
-                        if entry.status == Status::Done { "Re-run" } else { "Retry" }
+                        if entry.mirror.status == Status::Done { "Re-run" } else { "Retry" }
                     }
                 }
                 button {
@@ -205,7 +206,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     "✕"
                 }
             }
-            if let Some(pct) = entry.progress {
+            if let Some(pct) = entry.mirror.progress {
                 div { class: "row-progress",
                     div { class: "row-progress-fill", width: "{(pct * 100.0).round()}%" }
                 }

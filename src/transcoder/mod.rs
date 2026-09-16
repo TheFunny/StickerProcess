@@ -342,6 +342,12 @@ pub fn shrunk_factor(current: f64, excess: f64, shrink: f64) -> f64 {
     current / excess * shrink
 }
 
+/// 输出大小相对上限的倍率（>1.0 即超限）。镜像侧（`TaskEntry`）与 Transcoder 侧
+/// （runner 重试决策）共用这一条公式——两边各写一遍曾出现过分母漂移。
+pub fn excess_ratio(output_size: Option<u64>, limit: u64) -> Option<f64> {
+    Some(output_size? as f64 / limit as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::shrunk_factor;

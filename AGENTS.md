@@ -32,13 +32,13 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | Path | Purpose |
 |---|---|
 | `src/main.rs` | Binary entry: desktop-only logger init (`pretty_env_logger`; wasm has no log backend) + Dioxus launch with window config |
-| `src/app.rs` | Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry`; `SUPPORTED`/`VIDEO`/`IMAGE` constants |
+|`src/app.rs`|Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry { transcoder, mirror: TaskMirror }`; `SUPPORTED` constant|
 | `src/config.rs` | `Settings` model (serde+toml), persisted to `%APPDATA%/StickerProcess/settings.toml`; `load`/`save`（原子写）+ `sanitize` 数值钳制 + roundtrip tests |
-| `src/runner.rs` | Async transcode loop: `run_all` → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
+| `src/runner.rs` | Async transcode loop: `run_all` (skips `Done` tasks) → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
 | `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check incl. animated-webp → `Video(AnimatedWebP)` correction + packet-summed duration), duration, output path; enums; unit tests |
-| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch), `command.rs` (ffmpeg command gen + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop in-place `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
+| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch + sidecar stderr event pump), `command.rs` (ffmpeg command gen + `SCALE_FILTER` / `DEFAULT_DURATION_FACTORS` + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
@@ -87,17 +87,21 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   the duration-factor table and the forced FPS are synced onto each `Transcoder`
   by the runner before every attempt; the retry shrink factor is applied by the
   runner when shrinking on size excess.
-  Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, ... }`
+  Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, mirror: TaskMirror }`
   shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
-  (deliberately NOT cloned). `TaskEntry` also carries *display mirror* fields
-  (path/status/output_size/factor/progress/elapsed/error) so rendering never
-  locks the mutex while a worker holds it during transcoding. Mirror writes go
-  through the two write entries — `UiState::with_task(index, …)` for
-  Transcoder-derived fields (locks, applies, syncs status/factor/output_size/
-  output_path/output_file_name) and `UiState::touch_entry(index, …)` for
-  UI-only mirrors (progress/elapsed/error). Do not mutate mirrors via raw
-  `tasks.with_mut` elsewhere. Row actions: `retry_task` (Alert/SizeExcess →
-  Pending, factor preserved) and `remove_task` (any status).
+  (deliberately NOT cloned). `TaskMirror` holds **every** render-time field
+  (path/status/output_size/factor/progress/elapsed/error/is_video) so rendering never
+  locks the mutex while a worker holds it during transcoding. `TaskMirror` derives
+  `PartialEq` on purpose: `TaskEntry`'s manual eq only compares the mirror, so a
+  hand-written field list could silently drop a field and make dioxus memo skip
+  re-renders (this broke factor display, then status/error badges).
+  Mirror writes go through the two write entries —
+  `UiState::with_task(index, …)` for Transcoder-derived fields (locks, applies, syncs
+  status/factor/output_size/output_path/output_file_name) and
+  `UiState::touch_entry(index, …)` (closure gets `&mut TaskMirror`) for UI-only
+  mirrors (progress/elapsed/error). Do not mutate mirrors via raw `tasks.with_mut`
+  elsewhere. Row actions: `retry_task` (Alert/SizeExcess/Done → Pending, factor
+  preserved; renders as "Retry"/"Re-run") and `remove_task` (any status).
 - **Async probing**: adding a file creates the `Transcoder` without IO probing
   (`Status::Probing`); `MediaFile::probe` runs on a background thread and flips the
   mirror to `Pending`/`Alert`. Run is blocked while any task is probing.
@@ -108,22 +112,25 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   synchronously on the main thread, so it would block behind the worker's
   transcode lock (frozen UI) and erase the running state; on wasm it would also
   race `prepare_web_job` into reading an empty duration (spurious `Alert`).
-- **Execution flow**: Run → `runner::run_all` async loop. Per task: assign a
-  timestamped output path once, set `Processing`, run
-  `Transcoder::run_with_progress(engine, …)` inside `spawn_blocking` — the
-  `engine` string comes from `Settings.engine` (`"sidecar"` → ffmpeg CLI
-  subprocess via `ffmpeg-sidecar`, progress parsed from stderr `iter()`;
-  `"inprocess"` → `Transcoder::run_inprocess`, libav pipe, progress computed
-  from frame pts / duration). Both send progress over an mpsc channel to the
-  UI mirror; the ~10Hz receiver loop only writes mirrors of tasks still in
-  `Processing` — stale post-completion updates must not resurrect the progress
-  bar on a Done row. Then `check_size()`. If over limit, shrink factor
-  (`factor = factor / excess * retry_shrink_factor`) and retry up to `max_retry`, else advance.
+- **Execution flow**: Run → `runner::run_all` async loop, which **skips `Done`
+  tasks** (re-running one goes through the row's Re-run button → `Pending`).
+  Per task: assign a timestamped output path once, set `Processing`, run
+  `Transcoder::run_with_progress(engine, …)` inside `spawn_blocking` — `engine`
+  is the typed `Engine` returned by `resolve_engine(&Settings.engine, …)`
+  (`"sidecar"` → ffmpeg CLI subprocess via `ffmpeg-sidecar`, progress parsed from
+  a self-driven stderr event pump; `"inprocess"` → `Transcoder::run_inprocess`,
+  libav pipe, progress computed from frame pts / duration). Both send progress
+  over an mpsc channel to the UI mirror; the ~10Hz receiver loop only writes
+  mirrors of tasks still in `Processing` — stale post-completion updates must not
+  resurrect the progress bar on a Done row. Then `check_size()`. If over limit,
+  shrink factor (`factor = factor / excess * retry_shrink_factor`) and retry up to
+  `max_retry`, else advance.
   Task errors mark `Alert`, push an error toast, and skip to the next task.
   The `cancel` signal is checked between attempts; mid-task cancel bridges to
-  `Transcoder.cancel_flag: Arc<AtomicBool>` — sidecar kills the running
-  ffmpeg process, inprocess checks the flag each frame and returns
-  `Cancelled`; either way the task resets to `Pending` and the run stops.
+  `Transcoder.cancel_flag: Arc<AtomicBool>` — sidecar polls it from the event loop
+  (so a *silent*, stuck ffmpeg is still killable) and from the image stdout reader,
+  inprocess checks the flag each frame and returns `Cancelled`; either way the task
+  resets to `Pending` and the run stops.
 - **Sequential processing**: tasks run one at a time; overall progress = `(index+1)/len`.
 - **File input**: toolbar uses a hidden `<input type="file" multiple>` triggered by a
   styled label; output-folder picking uses `rfd` (error dialogs were replaced by
@@ -145,7 +152,8 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `#[cfg]` is NOT parsed).
 - **Status**: `Probing` (async probe in flight), `Pending`, `Processing`,
   `Done`, `Alert` (error), `SizeExcess` (retry-able); badge colors map to CSS
-  classes in `app.css`.
+  classes in `app.css`, badge text comes from `Status::label()` (never `{:?}` —
+  users must not see `SizeExcess`).
 - **Theming**: CSS custom properties in `app.css`; `[data-theme="dark"]` on
   `<html>` overrides variables. Theme is part of `Settings` (persisted); toggles
   live in the toolbar and the settings panel.
@@ -180,14 +188,19 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     `quantized_bitrate`), returning `(duration, b:v)`; sidecar `gen_command`,
     inprocess and web all call it, so the three engines stay bitrate-identical
     — edit the chain here, never inline a copy in an engine.
+    Same rule for `command::SCALE_FILTER` (the `scale=512:512:…:flags=lanczos`
+    spec) and `media::VideoType::pix_fmt()` — both were hand-copied three times
+    before.
     All engines run the webm duration patch after muxing.
-  - *cancel*: sidecar kills the ffmpeg process; inprocess checks
+  - *cancel*: sidecar polls `cancel_flag` in its stderr event pump and its stdout
+    image reader (100 ms), then kills + reaps the child; inprocess checks
     `cancel_flag` each frame and returns `Cancelled` (Drop chain releases
     libav handles; no orphan processes possible).
-  - *failure*: the sidecar path checks ffmpeg's **exit status after stderr EOF**
-    (the header — including Duration — is already on disk when an encode dies,
-    so an unchecked partial file would pass the patch and be reported `Done`);
-    `Alert` tasks get their half-written output deleted, like the cancel path.
+  - *failure*: **both** sidecar paths (video and image) check ffmpeg's exit
+    status after the pipes close — the header (including Duration) is already on
+    disk when an encode dies, so an unchecked partial file would pass the patch
+    and be reported `Done`; `Alert` tasks get their half-written output deleted,
+    like the cancel path.
 - **Duration inference**: `ffmpeg-the-third` opens the input to read codec id
   and duration; APNG is assigned a fixed duration of 1 s (no probe); animated
   webp (codec id `WEBP_ANIM`, container duration N/A) sums packet
@@ -200,17 +213,20 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   (`1F 43 B6 75`; Duration lives in Info, always before any Cluster) — an
   unbounded search would hit a false `44 89 88` inside VP9 payload and silently
   corrupt 8 bytes of video. Shared locator `find_duration_payload` backs both
-  paths: desktop `run_video` patches **in place** (`patch_webm_file`: read an
-  8 KB header window → `seek` → write 8 bytes; only if the marker sits outside
-  the window does it fall back to the whole-file path), web `finish_web_job`
-  uses `patch_webm_bytes` on the in-memory bytes. Regression tests:
+  paths: desktop `run_video` patches the file (`patch_webm_file`: read whole file
+  → patch → write back; the file is capped at the sticker size, so the old
+  "8 KB window + in-place seek + whole-file fallback" arrangement only bought
+  three write paths for 8 bytes), web `finish_web_job` uses `patch_webm_bytes`
+  on the in-memory bytes. Regression tests:
   `duration_patch_writes_at_marker_offset`, `duration_patch_rejects_marker_near_eof`,
   `duration_patch_refuses_marker_inside_cluster`,
   `duration_patch_in_place_preserves_rest`.
 
 ### Default size factors by duration (video)
 
-`<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`;
+`<1s → 1.2`, `<2s → 1.1`, `<3s → 1.0`, `<5s → 0.9`, `<8s → 0.8`, `≥8s → 0.7`
+(`command::DEFAULT_DURATION_FACTORS` is the single copy — `Settings::default` and
+`Transcoder::new` both read it);
 the whole table is configurable in Settings (band edges stay fixed). GIF
 additionally × 0.75 — a hard-coded bitrate-calculation patch, NOT a setting. The
 factor is user-editable per task (0.1..=10.0) and only appears after the first
@@ -275,51 +291,62 @@ offline from the registry cache while `Cargo.lock` stays untouched.
 - Keep the `Arc<Mutex<Transcoder>>` sharing pattern; do not clone task state;
   never hold a `MutexGuard` across an `.await`.
 - Mirror writes: use `UiState::with_task` (Transcoder-derived fields) or
-  `UiState::touch_entry` (UI-only fields); direct `tasks.with_mut` on mirror
-  fields elsewhere will desynchronize the UI.
+  `UiState::touch_entry` (closure receives `&mut TaskMirror`); direct
+  `tasks.with_mut` on mirror fields elsewhere will desynchronize the UI.
 - Engine-specific changes go in their own file (`command.rs` sidecar /
   `inprocess.rs` libav / `web.rs` wasm 桥); shared bitrate logic lives in
-  `command.rs` helpers so all engines stay behaviorally identical. The engine
-  string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"` — dispatch
-  is `mod.rs::run_with_progress` (desktop), validated by `Settings::engine_valid()`.
+  `command.rs` helpers so all engines stay behaviorally identical. The *setting*
+  string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"`, validated by
+  `Settings::engine_valid()` — but the core boundary is **typed**: `resolve_engine`
+  returns `Engine`, `run_with_progress(Engine, …)` dispatches on it, `WebJob.engine`
+  is an `Engine`, and the wasm dispatch matches exhaustively (no `other =>`
+  catch-all, so an unknown engine string can no longer silently run sidecar).
   Web (wasm32) ignores the setting: matrix = policy, `Engine::for_web(&media_type,
   webcodecs_ok)` (`mod.rs`) → GIF/APNG = ffmpeg-wasm (yuva420p alpha); MP4 =
-  webcodecs, **fallback ffmpeg-wasm (yuv420p10)** when VP9 caps unavailable (W4
+  webcodecs, **fallback ffmpeg-wasm (yuva420p10)** when VP9 caps unavailable (W4
   self-built core, real 10-bit verified); image = webcodecs. Animated webp is
-  desktop-only (`Video(AnimatedWebP)` never reaches `for_web`; catch-all arm
+  desktop-only (`Video(AnimatedWebP)` never reaches `for_web`; the last arm
   pins it to ffmpeg-wasm harmlessly — web side keeps it as Image(Webp) →
   first-frame png). `webcodecs_ok` is probed once per Run in `runner::run_all`
-  (wasm); the tuple's pix_fmt rides on `WebJob` through
-  `stickerFfmpegTranscode`. Desktop keeps `resolve_engine`.
+  (wasm); the tuple's pix_fmt (`VideoType::pix_fmt`) rides on `WebJob` through
+  `stickerFfmpegTranscode`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
+  `MediaFile::probe` / `Transcoder::probe` return `Result<(), String>` on both
+  platforms (the consumers only ever stringify the error).
 - Numeric inputs (`NumberInput`) commit on every valid keystroke (parse → clamp →
   `on_change`); focus shows a local draft so the cursor doesn't jump, and the
   non-editing display mirrors the external value directly (retry shrink is
   immediately visible). There is no separate enter/blur commit step.
-  `TaskEntry::eq` MUST include every mirror field a component depends on:
-  a missing field silently memo-skips re-renders (this broke factor display,
-  then status/error badges; regression test `task_entry_eq_covers_status_and_error`).
+  `TaskMirror` MUST NOT hand-write `PartialEq`: it derives it, and `TaskEntry::eq`
+  compares only that struct — a hand-written field list dropped a mirror field
+  before and made dioxus memo silently skip re-renders (broke factor display,
+  then status/error badges).
 - Lint state: run clippy for **both** targets —
   `cargo clippy` and
   `cargo clippy --target wasm32-unknown-unknown --no-default-features --features web`.
   Each target sees the other's platform-only items as `never used` /
   `never constructed` (desktop target: `app::add_file_bytes`,
   `components/preview::input_mime`, `media::Source::Bytes` + `from_bytes`/`bytes`/
-  `set_duration`/`set_type`, `Engine::for_web`; wasm target: `add_files`,
+  `set_duration`/`set_type`, `Engine::for_web`, `TranscodeError::Engine` (produced
+  only by the wasm glue bridge); wasm target: `add_files`,
   `pick_output_dir`, `output_dir_valid`, `Source::Path`, `VideoType::AnimatedWebP`,
-  `run_blocking`, `resolve_engine`, `run_with_progress`, `VP9_CRF`,
-  `BUFSIZE_RATIO`, `parse_progress_time`, some `TranscodeError` variants).
+  `run_blocking`, `resolve_engine`, `sidecar_vp9_available`, `run_with_progress`,
+  `VP9_CRF`, `BUFSIZE_RATIO`, `SCALE_FILTER`, `parse_progress_time`, some
+  `TranscodeError` variants).
   **These are false positives, not dead code** — `for_web` and `from_bytes` are
   exercised by desktop unit tests, so cfg-gating them would delete coverage;
   leave them until/unless clippy becomes a CI gate.
 - New media types must be wired in **four** places:
-  1. `src/app.rs` — `VIDEO` / `IMAGE` constants (`SUPPORTED` is derived)
+  1. `src/app.rs` — `SUPPORTED` (the single extension list; `file_accept()` and
+     the drop/upload filter both derive from it, and
+     `media::tests::supported_extensions_are_consistent` asserts every entry is
+     actually recognized)
   2. `src/components/toolbar.rs` — accept string derives from `SUPPORTED`
      automatically; extend only for special cases
   3. `src/media.rs` — extension match + enum variant + a unit test
-  4. `src/transcoder/command.rs` — pix_fmt / codec handling, plus
-     `MediaFile::probe` codec correction in `src/media.rs`
+  4. `src/media.rs` (`VideoType::pix_fmt`) + `src/transcoder/command.rs`
+     — pix_fmt / codec handling, plus `MediaFile::probe` codec correction
   Same-extension dual type (animated webp) skips 1–2 (extension exists) and adds
   a `VideoType` variant + probe detection instead; `for_web` gets a catch-all.
 

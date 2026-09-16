@@ -113,6 +113,61 @@ settings.toml 只有 ~200 字节，写盘亚毫秒级。500ms 防抖的全部收
 - [x] **静默安装验证**：`setup.exe /S /D=<dir>` 安装出 StickerProcess.exe，
       分发机器需带 WebView2（离线安装器已捆绑在 NSIS 中）
 
+## P6 — UI/UX 与转码核心复查 ✅ 已完成 (2026-09-16)
+
+> 依据：`dx build --platform web` + Chromium 实机逐项复核（640px 最小窗口、
+> 键盘 Tab、拖放、Run/预览/设置全流程），加一次对转码核心的只读复查。
+
+### UI/UX（实测复现的缺陷）
+
+- [x] 预览弹窗固定 `min-width: 720px`，在 640px 窗口两侧各裁 59px、Close 点不到
+      → `min(720px, 92vw)`
+- [x] 引擎下拉是设置面板里唯一无 label 且撑满整行的项 → 补 `.settings-row`
+- [x] 不支持的文件静默丢弃（只有 `log::warn`）→ 弹 toast（多于一个报数量+首例）
+- [x] 预览对比文案超限时仍写 "✓ within limit"（只有颜色变红）→ 按 ratio 分支
+- [x] 徽标直接渲染 `{:?}`（用户看到 `SizeExcess`）→ `Status::label()`
+- [x] 深色主题原生滚动条/select 弹层仍是浅色（无 `color-scheme`）→ 随主题设置
+- [x] 任务行不可聚焦，键盘用户无法打开预览 → `tabindex`/Enter/Space + role/aria
+- [x] web 产物名尾随 `-`（ISO 的 `Z` 被一起替换）→ 只替换 `T`/`:`；空串退回毫秒戳
+- [x] Reset Defaults 无确认且立即落盘 → 二次确认（4s 自动解除）
+- [x] Run 重跑 Done 任务 → 跳过 Done，行内补 Re-run（保留重转能力）
+- [x] **Cancel 按钮写成 `disabled: running || …`——运行期间反而禁用** → `!running`
+
+### 正确性
+
+- [x] `inprocess.rs` 两处 drain 循环 `EAGAIN => continue`（与四个兄弟循环的 `break`
+      不一致）→ 改 `break`：drain 阶段无帧可喂，自旋会持锁不放（UI 冻结、Cancel 失效）
+- [x] sidecar 图片路径不 `wait()`、不查退出码 → 补上与视频路径同一不变量；
+      解码失败不再伪装成 `optimize failed`，子进程正常回收
+- [x] sidecar 视频路径用 `child.iter()`（借走 `&mut child` 整个循环）→ 卡住的
+      ffmpeg 无法 kill。改自持 stderr + crate 公开的 `spawn_stderr_thread`，
+      100ms 轮询 cancel（图片路径同样按拍轮询）
+
+### 重构
+
+- [x] `VideoType::pix_fmt` / `command::SCALE_FILTER` 成为三引擎唯一出处
+      （A/B 实证：加 `flags=lanczos`、去掉 `-sws_flags` 后解码帧逐字节一致）
+- [x] `Engine` 全程保持类型；wasm 分发表穷尽匹配（原 `other =>` 兜底臂只因类型被丢）
+- [x] `probe` 统一 `Result<(), String>`（原两套 cfg 签名 + 两组等价 map_err）
+- [x] `TranscodeError`：加 `Ffmpeg(ffmpeg::Error)`（打开阶段，原误标 Decoder）与
+      `OutputWrite`（写盘失败原被改写成 `ImagePipe("write failed")`）
+- [x] 默认时长系数表单常量（原 config / Transcoder 两处副本）
+- [x] `patch_webm_file` 改读全文件再写回（文件 ≤512KB），删 8KB 窗口 + 整文件兜底
+- [x] `data_url` 移入唯一消费者 `components/preview.rs`
+- [x] `SUPPORTED` 收成唯一扩展名列表，删 `VIDEO`/`IMAGE`（合并保留测试守卫）
+- [x] `TaskEntry` 的镜像字段收进 `TaskMirror`（派生 `PartialEq`）：手写 eq 漏字段
+      的静默 memo 跳过不可能再发生，原回归测试随之删除
+- [x] `excess_ratio` 单公式（镜像侧与 runner 侧共用）；runner 里的 `unreachable!()`
+      改 None（不再为一个已排除的状态 panic 整个进程）
+
+### 未做（有意）
+
+- `inprocess.rs` 的 `map_err(|e| TranscodeError::X(…))` 只替换了"打开容器/上下文"
+  这类阶段名本来就不准的 8 处；帧循环/封装阶段保留阶段变体，否则错误文案会从
+  "decoder error: …" 退化成 "ffmpeg error: …"，用可诊断性换行数不划算。
+- `repo` 无 CI，clippy 仍是人工门禁；两端的目标平台专属 dead-code 误报清单见
+  AGENTS.md。
+
 ## P5 — 远期规划
 
 - [ ] **4. i18n**（原 B 表低优先项）：界面文案现散落在各组件 rsx 中；

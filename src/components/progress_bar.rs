@@ -13,7 +13,7 @@ pub fn ProgressBar() -> Element {
     let pct = (ctx.overall_progress.cloned().clamp(0.0, 1.0) * 100.0).round();
     let list = ctx.tasks.read();
     let total = list.len();
-    let done = list.iter().filter(|t| t.status == Status::Done).count();
+    let done = list.iter().filter(|t| t.mirror.status == Status::Done).count();
 
     rsx! {
         div { class: "progress-track",

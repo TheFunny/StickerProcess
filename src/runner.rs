@@ -12,7 +12,7 @@
 use crate::app::{TaskEntry, UiState};
 use crate::components::toast::ToastKind;
 use crate::media::MediaType;
-use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, shrunk_factor};
+use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, excess_ratio, shrunk_factor};
 use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
@@ -79,14 +79,14 @@ fn sidecar_vp9_available() -> bool {
 }
 
 /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
+/// 类型缺失（不会发生：入队已按扩展名过滤）按图片上限处理——原先 `unreachable!()`
+/// 会直接 panic 掉整个进程，不值得为一个已排除的状态付这个代价。
 fn size_excess_factor(task: &Transcoder, video_limit: u64, image_limit: u64) -> Option<f64> {
-    let size = task.output_size? as f64;
     let limit = match task.media_file.r#type() {
-        Some(MediaType::Image(_)) => image_limit,
         Some(MediaType::Video(_)) => video_limit,
-        None => unreachable!(),
+        _ => image_limit,
     };
-    Some(size / limit as f64)
+    excess_ratio(task.output_size, limit)
 }
 
 enum Decision {
@@ -135,12 +135,12 @@ pub async fn run_all(
         // 运行中拖入的新文件可能仍在探测：等镜像出结果再起——否则
         // write_back_probe 在主线程撞 worker 锁（UI 冻结）、wasm 端
         // prepare_web_job 读到空时长误 Alert。
-        if matches!(entry.status, Status::Probing) {
+        if matches!(entry.mirror.status, Status::Probing) {
             crate::timers::sleep(std::time::Duration::from_millis(50)).await;
             continue;
         }
         // Done 不重跑（用户要重转走行内 Re-run）；整体进度按位次照常推进。
-        if entry.status == Status::Done {
+        if entry.mirror.status == Status::Done {
             let total = ctx.tasks.peek().len().max(1);
             ctx.overall_progress.set((index + 1) as f32 / total as f32);
             index += 1;
@@ -161,7 +161,7 @@ pub async fn run_all(
             TaskOutcome::Cancelled => {
                 // 复位（progress/状态）由 run_single_task 完成，这里只记日志
                 //（cancel_flag 在 run_with_progress 入口复位）
-                log::info!("queue cancelled at '{}'", entry.input_path);
+                log::info!("queue cancelled at '{}'", entry.mirror.input_path);
                 break;
             }
         }
@@ -182,7 +182,7 @@ async fn run_single_task(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = webcodecs_ok;
     let task_arc = Arc::clone(&entry.transcoder);
-    let name = file_name(&entry.input_path);
+    let name = file_name(&entry.mirror.input_path);
 
     // 取消桥接：watcher 轮询 UI 信号，置位后 run_with_progress 内 kill ffmpeg
     let Some(cancel_flag) = task_arc.lock().ok().map(|t| Arc::clone(&t.cancel_flag)) else {
@@ -405,10 +405,10 @@ async fn run_single_task(
                     .tasks
                     .cloned()
                     .get(index)
-                    .filter(|e| e.status == Status::Done)
+                    .filter(|e| e.mirror.status == Status::Done)
                 {
                     let kb = done
-                        .output_size
+                        .mirror.output_size
                         .map_or_else(|| "?".into(), |s| format!("{:.2}KB", s as f64 / 1024.0));
                     #[cfg(not(target_arch = "wasm32"))]
                     {

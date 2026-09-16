@@ -50,7 +50,7 @@ pub fn Toolbar() -> Element {
                     .tasks
                     .read()
                     .iter()
-                    .any(|e| e.status == crate::transcoder::Status::Done),
+                    .any(|e| e.mirror.status == crate::transcoder::Status::Done),
             onclick: move |_| ctx.download_all(),
             "Download All"
         }
@@ -165,7 +165,7 @@ pub fn Toolbar() -> Element {
                         .tasks
                         .read()
                         .iter()
-                        .any(|t| t.status != crate::transcoder::Status::Done),
+                        .any(|t| t.mirror.status != crate::transcoder::Status::Done),
                 onclick: move |_| ctx.start_run(),
                 "Run"
             }

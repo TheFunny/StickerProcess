@@ -61,7 +61,7 @@ pub fn PreviewModal() -> Element {
     // 桌面从镜像路径读盘（免锁）；wasm 锁内克隆 output_bytes（单线程，
     // 锁从不跨 await 持有，渲染期同步取锁与 task_list 下载同一模式）。
     let output_url: Option<String> = {
-        let key = match (&entry.output_path, &entry.output_size) {
+        let key = match (&entry.mirror.output_path, &entry.mirror.output_size) {
             (Some(path), Some(size)) => Some((path.clone(), *size)),
             _ => None,
         };
@@ -97,12 +97,12 @@ pub fn PreviewModal() -> Element {
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let input_url = preview::media_url(Path::new(&entry.input_path));
+    let input_url = preview::media_url(Path::new(&entry.mirror.input_path));
     #[cfg(target_arch = "wasm32")]
     let input_url: String = {
         // web：输入字节 → Blob object URL（几 MB 转 data URL 太浪费）；
         // (名字, 大小) 为键缓存，键变 revoke 旧 URL（Blob 构造时已拷贝字节）。
-        let key = (entry.input_path.clone(), entry.input_size);
+        let key = (entry.mirror.input_path.clone(), entry.mirror.input_size);
         let mut slot = input_cache.borrow_mut();
         match slot.as_ref() {
             Some((k, url)) if *k == key => url.clone(),
@@ -122,17 +122,18 @@ pub fn PreviewModal() -> Element {
             }
         }
     };
-    let input_video = input_is_video(&entry.input_path);
+    let input_video = input_is_video(&entry.mirror.input_path);
 
-    let input_kb = kb(entry.input_size);
+    let input_kb = kb(entry.mirror.input_size);
     let output_side_label = entry
+        .mirror
         .output_size
         .map(|s| format!("Output ({})", kb(s)))
         .unwrap_or_else(|| "Output".into());
     let compare = compare_text(&entry, ratio);
     // data URL 已同步生成：Done/SizeExcess 时必有值；仅剩极端竞态兜底
     let show_loading = matches!(
-        entry.status,
+        entry.mirror.status,
         crate::transcoder::Status::Done | crate::transcoder::Status::SizeExcess
     ) && output_url.is_none();
     rsx! {
@@ -156,7 +157,7 @@ pub fn PreviewModal() -> Element {
                 class: "modal preview-modal",
                 onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                 h2 { class: "modal-title", "Preview" }
-                span { class: "preview-path", title: "{entry.input_path}", "{entry.input_path}" }
+                span { class: "preview-path", title: "{entry.mirror.input_path}", "{entry.mirror.input_path}" }
 
                 div { class: "preview-grid",
                     div { class: "preview-pane",
@@ -169,7 +170,7 @@ pub fn PreviewModal() -> Element {
                     }
                     div { class: "preview-pane",
                         span { class: "label", "{output_side_label}" }
-                        {render_output(output_url.clone(), output_is_video(&entry), show_loading)}
+                        {render_output(output_url.clone(), entry.mirror.is_video, show_loading)}
                     }
                 }
 
@@ -252,8 +253,8 @@ fn object_url_for(mime: &str, bytes: &[u8]) -> String {
 
 /// 对比行文案：未转码 / 达标 / 超限。
 fn compare_text(entry: &TaskEntry, ratio: Option<f64>) -> String {
-    let input = kb(entry.input_size);
-    let Some(out) = entry.output_size else {
+    let input = kb(entry.mirror.input_size);
+    let Some(out) = entry.mirror.output_size else {
         return format!("{input} \u{2192} not transcoded");
     };
     let arrow = format!("{input} \u{2192} {}", kb(out));
@@ -263,11 +264,6 @@ fn compare_text(entry: &TaskEntry, ratio: Option<f64>) -> String {
         Some(r) => format!("{arrow}  \u{2713} within limit ({r:.2}x)"),
         None => arrow,
     }
-}
-
-/// 输出侧内容类型：视频输入 → webm 输出；图片输入 → png 输出。
-fn output_is_video(entry: &TaskEntry) -> bool {
-    entry.is_video
 }
 
 #[cfg(test)]

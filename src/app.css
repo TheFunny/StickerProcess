@@ -409,6 +409,8 @@ body {
 
 .toast-text {
   word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 /* 设置面板（模态对话框） */
@@ -435,6 +437,7 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: toast-in 0.15s ease-out;
 }
 
 .modal-title {
@@ -508,6 +511,7 @@ body {
   max-width: 100%;
   max-height: 320px;
   object-fit: contain;
+  align-self: center;
   border: 1px solid var(--border-soft);
   border-radius: 4px;
   background:
@@ -561,20 +565,6 @@ body {
   background: var(--danger);
   border-color: var(--danger);
   color: #fff;
-}
-
-.toast-text {
-  max-height: 120px;
-  overflow-y: auto;
-}
-
-.modal {
-  animation: toast-in 0.15s ease-out;
-}
-
-.preview-pane img,
-.preview-pane video {
-  align-self: center;
 }
 
 .progress-track {
