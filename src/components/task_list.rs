@@ -14,12 +14,25 @@ use dioxus::prelude::*;
 pub fn TaskList() -> Element {
     let ctx = use_context::<UiState>();
     let count = ctx.tasks.read().len();
+    // 空状态是唯一一次"告诉用户这工具能吃什么、目标多大"的机会
+    let (limits, formats) = {
+        let s = ctx.settings.read();
+        (
+            (s.video_max_size_kb, s.image_max_size_kb),
+            crate::app::SUPPORTED.join(" · "),
+        )
+    };
 
     rsx! {
         div { class: "task-list grow", role: "list",
             if count == 0 {
                 div { class: "empty-hint",
-                    "No tasks yet. Click \"Add File\" or drop files here."
+                    p { class: "empty-lead", "Drop files here, or click \"Add File\"" }
+                    p { class: "empty-sub", "Video → webm · image → png, scaled to fit 512×512" }
+                    p { class: "empty-sub", "{formats}" }
+                    p { class: "empty-sub",
+                        "Target size: video ≤ {limits.0} KB · image ≤ {limits.1} KB"
+                    }
                 }
             }
             for index in 0..count {

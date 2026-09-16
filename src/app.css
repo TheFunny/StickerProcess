@@ -249,8 +249,22 @@ body {
 .empty-hint {
   margin: auto;
   padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   text-align: center;
   color: var(--fg-muted);
+}
+
+.empty-lead {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+.empty-sub {
+  margin: 0;
+  font-size: 12px;
 }
 
 .task-row {
