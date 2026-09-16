@@ -504,6 +504,20 @@ impl UiState {
         spawn(crate::runner::run_all(*self, progress_tx));
     }
 
+    /// 打开输出目录（桌面）。失败弹 toast 而不是只写日志——web 端没有日志后端，
+    /// 而桌面端用户也不看终端。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_output_dir(&mut self) {
+        let dir = self.settings.peek().output_dir.clone();
+        if let Err(e) = std::process::Command::new("explorer").arg(&dir).spawn() {
+            log::error!("failed to open output dir '{dir}': {e}");
+            self.push_toast(
+                ToastKind::Error,
+                format!("Failed to open output folder: {e}"),
+            );
+        }
+    }
+
     /// 选择输出目录对话框（HTML 无目录选择器，沿用 rfd）。
     /// 桌面专属：web 无文件系统，工具栏/设置面板在 wasm 下根本不渲染该行。
     #[cfg(not(target_arch = "wasm32"))]
@@ -579,6 +593,7 @@ pub fn App() -> Element {
         DropZone {
             Toolbar {}
             TaskList {}
+            crate::components::summary::SummaryBar {}
             ProgressBar {}
             SettingsPanel {}
             crate::components::preview::PreviewModal {}

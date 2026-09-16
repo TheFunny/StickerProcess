@@ -6,6 +6,7 @@ pub mod number_field;
 pub mod preview;
 pub mod progress_bar;
 pub mod settings_panel;
+pub mod summary;
 pub mod task_list;
 pub mod toast;
 pub mod toolbar;

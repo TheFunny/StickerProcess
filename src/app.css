@@ -355,6 +355,24 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 列表底部的结果汇总（12px 弱化；计数用语义色） */
+.summary {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.summary-item + .summary-item::before {
+  content: " · ";
+}
+
+.summary-over {
+  color: var(--warning);
+}
+
+.summary-failed {
+  color: var(--danger);
+}
+
 /* 任务行内的失败原因（一行，超出省略；完整文本在 title 与预览弹窗里） */
 .row-error {
   font-size: 12px;
