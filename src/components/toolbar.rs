@@ -152,6 +152,7 @@ pub fn Toolbar() -> Element {
         div { class: "row",
             label {
                 class: if running { "btn disabled" } else { "btn" },
+                title: "Add files (Ctrl+O)",
                 "Add File"
                 input {
                     id: "add-file-input",
@@ -201,14 +202,14 @@ pub fn Toolbar() -> Element {
             if running {
                 button {
                     class: "btn btn-danger run-slot",
-                    title: "Cancel the running job",
+                    title: "Cancel the running job (Ctrl+Enter)",
                     onclick: move |_| ctx.cancel.set(true),
                     "Cancel"
                 }
             } else {
                 button {
                     class: "btn btn-primary run-slot",
-                    title: "Transcode every task that is not done yet",
+                    title: "Transcode every task that is not done yet (Ctrl+Enter)",
                     disabled: !runnable,
                     onclick: move |_| ctx.start_run(),
                     "Run"

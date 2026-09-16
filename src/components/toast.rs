@@ -13,6 +13,8 @@ pub struct Toast {
     pub text: String,
     /// 消失前的渐出状态（由 push_toast 的定时器置位）。
     pub leaving: bool,
+    /// 带撤销按钮（删除任务的回执）。
+    pub undo: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,7 +47,7 @@ impl ToastKind {
 
 #[component]
 pub fn ToastContainer() -> Element {
-    let ctx = use_context::<UiState>();
+    let mut ctx = use_context::<UiState>();
     let toasts = ctx.toasts.cloned();
 
     rsx! {
@@ -56,6 +58,13 @@ pub fn ToastContainer() -> Element {
                     class: if toast.leaving { "{toast.kind.class()} leaving" } else { "{toast.kind.class()}" },
                     span { class: "toast-kind", "[{toast.kind.label()}]" }
                     span { class: "toast-text", "{toast.text}" }
+                    if toast.undo {
+                        button {
+                            class: "btn-link toast-undo",
+                            onclick: move |_| ctx.undo_remove(toast.id),
+                            "Undo"
+                        }
+                    }
                 }
             }
         }

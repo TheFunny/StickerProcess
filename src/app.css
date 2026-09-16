@@ -582,6 +582,13 @@ body {
   overflow-y: auto;
 }
 
+/* 删除回执上的撤销：链路按钮样式 + 加粗（唯一的可操作元素） */
+.toast-undo {
+  margin-left: auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* 设置面板（模态对话框） */
 .modal-backdrop {
   position: fixed;

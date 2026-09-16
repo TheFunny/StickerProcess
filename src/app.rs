@@ -98,6 +98,24 @@ impl TaskEntry {
     }
 }
 
+/// 最近一次删除的撤销槽（回插所需的一切都在条目里，含已转码产物）。
+#[derive(Clone)]
+pub struct UndoSlot {
+    /// 与之绑定的通知 id：通知被更晚的删除顶掉后，旧按钮不能再生效。
+    pub toast_id: u64,
+    /// (原下标, 任务)，按原下标升序。
+    pub removed: Vec<(usize, TaskEntry)>,
+}
+
+/// 把撤销槽里的条目按原下标升序回插。删除期间队列可能又变短（撤销前删了别的
+/// 任务），下标越界时贴到末尾——原位回插才能还原原序。
+fn reinsert_removed(list: &mut Vec<TaskEntry>, removed: Vec<(usize, TaskEntry)>) {
+    for (index, entry) in removed {
+        let at = index.min(list.len());
+        list.insert(at, entry);
+    }
+}
+
 /// 全部界面状态（signals）。`Signal<T>` 为 Copy，可按值传递。
 #[derive(Clone, Copy)]
 pub struct UiState {
@@ -113,6 +131,8 @@ pub struct UiState {
     /// 取消标记：runner 在每次尝试前检查；运行中的任务经 cancel_flag 中断 ffmpeg。
     pub cancel: Signal<bool>,
     pub toasts: Signal<Vec<Toast>>,
+    /// 最近一次删除的撤销槽（`undo_remove` 消费）。
+    pub undo: Signal<Option<UndoSlot>>,
 }
 
 impl UiState {
@@ -163,19 +183,31 @@ impl UiState {
         }
     }
 
-    /// 推送一条通知：停留 3.6 秒 → 0.4 秒渐出 → 移除。
-    pub fn push_toast(&mut self, kind: ToastKind, text: impl Into<String>) {
+    /// 推送一条通知：停留 3.6 秒 → 0.4 秒渐出 → 移除。返回通知 id。
+    pub fn push_toast(&mut self, kind: ToastKind, text: impl Into<String>) -> u64 {
+        self.push_toast_inner(kind, text, false)
+    }
+
+    /// `undo = true` 的通知带"Undo"按钮，停留更久（3.6s 对"我点错了"太短）。
+    fn push_toast_inner(&mut self, kind: ToastKind, text: impl Into<String>, undo: bool) -> u64 {
         let toast = Toast {
             id: TOAST_ID.fetch_add(1, Ordering::Relaxed),
             kind,
             text: text.into(),
             leaving: false,
+            undo,
         };
         let id = toast.id;
         self.toasts.push(toast);
+        if undo {
+            // 撤销槽只有一个：新删除顶掉旧的，旧通知上的 Undo 就成了假按钮
+            self.toasts
+                .with_mut(|list| list.iter_mut().for_each(|t| t.undo = t.id == id));
+        }
         let mut toasts = self.toasts;
+        let hold = if undo { 6000 } else { 3600 };
         spawn(async move {
-            crate::timers::sleep(std::time::Duration::from_millis(3600)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(hold)).await;
             toasts.with_mut(|list| {
                 if let Some(t) = list.iter_mut().find(|t| t.id == id) {
                     t.leaving = true;
@@ -184,6 +216,7 @@ impl UiState {
             crate::timers::sleep(std::time::Duration::from_millis(400)).await;
             toasts.with_mut(|list| list.retain(|t| t.id != id));
         });
+        id
     }
 
     /// 添加文件，仅保留受支持的扩展名。每个新任务在后台线程探测时长/编码。
@@ -237,15 +270,19 @@ impl UiState {
     fn report_skipped(&mut self, skipped: Vec<String>) {
         match skipped.as_slice() {
             [] => {}
-            [one] => self.push_toast(ToastKind::Warn, format!("Skipped unsupported file: {one}")),
-            many => self.push_toast(
-                ToastKind::Warn,
-                format!(
-                    "Skipped {} unsupported files (e.g. {})",
-                    many.len(),
-                    many[0]
-                ),
-            ),
+            [one] => {
+                self.push_toast(ToastKind::Warn, format!("Skipped unsupported file: {one}"));
+            }
+            many => {
+                self.push_toast(
+                    ToastKind::Warn,
+                    format!(
+                        "Skipped {} unsupported files (e.g. {})",
+                        many.len(),
+                        many[0]
+                    ),
+                );
+            }
         }
     }
 
@@ -338,12 +375,6 @@ impl UiState {
         }
     }
 
-    /// 移除已完成（Done）的任务。
-    pub fn clear_done(&mut self) {
-        self.tasks
-            .with_mut(|list| list.retain(|task| task.mirror.status != Status::Done));
-    }
-
     /// 一键下载全部 Done 任务的产物（web：字节驻内存，顺序触发浏览器下载，
     /// 400ms 间隔防多文件拦截）。无锁镜像名 + 锁内克隆字节（单线程 wasm，
     /// 与 task_list 行内下载同法）。
@@ -378,11 +409,91 @@ impl UiState {
         self.with_task(index, |t| t.status = Status::Pending);
     }
 
-    /// 移除单个任务（任意状态）。
+    /// 移除单个任务（任意状态）。删除一律留撤销槽——误点 ✕ 与按 Delete 同一个口。
     pub fn remove_task(&mut self, index: usize) {
+        let removed = self
+            .tasks
+            .with_mut(|list| (index < list.len()).then(|| (index, list.remove(index))));
+        let Some((index, entry)) = removed else {
+            return;
+        };
+        let name = entry.mirror.input_path.clone();
+        let id = self.push_toast_inner(ToastKind::Info, format!("Removed {name}"), true);
+        self.undo.set(Some(UndoSlot {
+            toast_id: id,
+            removed: vec![(index, entry)],
+        }));
+    }
+
+    /// 移除全部已完成（Done）任务。一次删一批，同样可撤销。
+    pub fn clear_done(&mut self) {
+        let mut removed = Vec::new();
         self.tasks.with_mut(|list| {
-            if index < list.len() {
-                list.remove(index);
+            // retain 会压缩下标，撤销要按原位回插——自己过一遍
+            let old = std::mem::take(list);
+            for (pos, entry) in old.into_iter().enumerate() {
+                if entry.mirror.status == Status::Done {
+                    removed.push((pos, entry));
+                } else {
+                    list.push(entry);
+                }
+            }
+        });
+        if removed.is_empty() {
+            return;
+        }
+        let id = self.push_toast_inner(
+            ToastKind::Info,
+            format!("Removed {} finished task(s)", removed.len()),
+            true,
+        );
+        self.undo.set(Some(UndoSlot {
+            toast_id: id,
+            removed,
+        }));
+    }
+
+    /// 撤销最近一次删除。按钮只挂在对应通知上，故必须核对通知 id：
+    /// 3.6 秒内删了两次时，旧通知上的撤销不能把新删的任务放回去。
+    pub fn undo_remove(&mut self, toast_id: u64) {
+        let Some(slot) = self.undo.cloned() else {
+            return;
+        };
+        if slot.toast_id != toast_id {
+            return;
+        }
+        self.undo.set(None);
+        // removed 按原下标升序，逐个回插即还原原序
+        self.tasks
+            .with_mut(|list| reinsert_removed(list, slot.removed));
+        // 撤销后这条通知立刻退场（它的定时器随后找不到 id，自然空转）
+        self.toasts
+            .with_mut(|list| list.retain(|t| t.id != toast_id));
+    }
+
+    /// Ctrl+Enter：运行中 → 取消；否则开跑（与工具栏 Run/Cancel 同一状态机）。
+    pub fn start_run_or_cancel(&mut self) {
+        if self.running.cloned() {
+            self.cancel.set(true);
+        } else {
+            self.start_run();
+        }
+    }
+
+    /// Ctrl+O：原生多选框，入队口仍是 `add_files`（与 Add File 按钮同一条路）。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn pick_input_files(&mut self) {
+        let mut ctx = *self;
+        spawn(async move {
+            let exts: Vec<String> = SUPPORTED.iter().map(|e| format!(".{e}")).collect();
+            let picked = rfd::AsyncFileDialog::new()
+                .add_filter("Supported media", &exts)
+                .pick_files()
+                .await;
+            if let Some(files) = picked {
+                let paths: Vec<PathBuf> =
+                    files.into_iter().map(|f| f.path().to_path_buf()).collect();
+                ctx.add_files(paths);
             }
         });
     }
@@ -542,6 +653,82 @@ impl UiState {
     }
 }
 
+/// 全局快捷键的原生监听（只装一次）。web 端不接管 Ctrl+O：浏览器自身的
+/// "打开文件"拦不住（同步默认动作），两条路径同时弹框更糟，而浏览器那个行为
+/// 本身可接受。末尾永不 resolve —— eval 通道在 JS 代码返回后会被关闭，留着
+/// 挂起的 Promise 才能一直 `dioxus.send` 回来。
+fn key_bridge_js() -> String {
+    #[cfg(target_arch = "wasm32")]
+    let open_branch = "";
+    #[cfg(not(target_arch = "wasm32"))]
+    let open_branch =
+        "else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); dioxus.send('open'); }";
+    format!(
+        r#"
+if (!window.__stp_keys) {{
+    window.__stp_keys = true;
+    window.addEventListener('keydown', (e) => {{
+        if (!e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+        if (e.key === 'Enter') {{ e.preventDefault(); dioxus.send('run'); }}
+        {open_branch}
+    }}, true);
+    dioxus.send('ready');
+}}
+await new Promise(() => {{}});
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TaskEntry, reinsert_removed};
+    use crate::media::MediaFile;
+    use std::path::Path;
+
+    /// 路径即身份（mirror.input_path 就是 display_name）。
+    fn entries(names: &[&str]) -> Vec<TaskEntry> {
+        names
+            .iter()
+            .map(|n| TaskEntry::new(MediaFile::new(Path::new(n))))
+            .collect()
+    }
+
+    fn names(list: &[TaskEntry]) -> Vec<String> {
+        list.iter().map(|e| e.mirror.input_path.clone()).collect()
+    }
+
+    #[test]
+    fn undo_reinsert_restores_original_order() {
+        // 与 clear_done 同一收集算法（记的是**原**下标），免得测试自己手算下标
+        let mut list = Vec::new();
+        let mut removed = Vec::new();
+        for (pos, entry) in entries(&["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"])
+            .into_iter()
+            .enumerate()
+        {
+            if pos == 1 || pos == 3 {
+                removed.push((pos, entry));
+            } else {
+                list.push(entry);
+            }
+        }
+        assert_eq!(names(&list), ["a.mp4", "c.mp4", "e.mp4"]);
+        reinsert_removed(&mut list, removed);
+        assert_eq!(names(&list), ["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"]);
+    }
+
+    #[test]
+    fn undo_reinsert_clamps_stale_index() {
+        let mut list = entries(&["a.mp4"]);
+        // 槽里的下标来自更长的队列（撤销前又删过任务）——贴到末尾，不 panic
+        reinsert_removed(
+            &mut list,
+            vec![(7, TaskEntry::new(MediaFile::new(Path::new("x.mp4"))))],
+        );
+        assert_eq!(names(&list), ["a.mp4", "x.mp4"]);
+    }
+}
+
 #[component]
 pub fn App() -> Element {
     let ctx = UiState {
@@ -553,6 +740,7 @@ pub fn App() -> Element {
         overall_progress: use_signal(|| 0.0f32),
         cancel: use_signal(|| false),
         toasts: use_signal(Vec::new),
+        undo: use_signal(|| None),
     };
 
     // 主题属性挂到 <html>，CSS 变量按 [data-theme="dark"] 覆盖；随设置持久化。
@@ -588,6 +776,38 @@ pub fn App() -> Element {
     });
 
     use_context_provider(move || ctx);
+
+    // 全局快捷键走 window 级原生监听 + eval 通道回传，而不是挂在 DOM 上：
+    // 点掉一个按钮/关掉弹窗后焦点会落到 body，事件就不再经过 .app，挂根的
+    // 方案会静默失效；原生监听还顺带能**同步** preventDefault（dioxus 事件
+    // 管线的 prevent_default 是异步的，拦不住浏览器默认动作）。
+    use_effect(move || {
+        let mut ctx = ctx;
+        let mut keys = document::eval(&key_bridge_js());
+        spawn(async move {
+            loop {
+                let msg = match keys.recv::<String>().await {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        log::error!("key bridge closed: {e}");
+                        break;
+                    }
+                };
+                // 弹窗打开时不代理快捷键（此刻 Run 按钮也是禁用的）
+                if ctx.show_settings.cloned() || ctx.show_preview.cloned().is_some() {
+                    continue;
+                }
+                match msg.as_str() {
+                    "run" => ctx.start_run_or_cancel(),
+                    // 装没装上只能靠这一行确认：桥断了快捷键就是静默失效
+                    "ready" => log::info!("key bridge installed"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    "open" => ctx.pick_input_files(),
+                    _ => {}
+                }
+            }
+        });
+    });
 
     rsx! {
         // 浏览器标签页 + 分享卡片（OG）：资源路径全部相对页面 base（同 glue

@@ -135,9 +135,14 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                 }
                 ctx.show_preview.set(Some(index));
             },
-            // 键盘等价物：行可 Tab 到，Enter/Space 打开预览（子控件自行吞掉按键）
+            // 键盘等价物：行可 Tab 到，Enter/Space 打开预览、Delete 移除（子控件自行吞掉按键）
             onkeydown: move |evt: Event<KeyboardData>| {
                 let key = evt.data.key();
+                if key == dioxus::html::Key::Delete && !running {
+                    evt.prevent_default();
+                    ctx.remove_task(index);
+                    return;
+                }
                 if key == dioxus::html::Key::Enter
                     || matches!(&key, dioxus::html::Key::Character(s) if s.as_str() == " ")
                 {
@@ -182,10 +187,9 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                                             )
                                             .is_ok() => {}
                                         // 失败原先只写 log（wasm 无日志后端 = 静默），给用户看得见的反馈
-                                        _ => ctx.push_toast(
-                                            ToastKind::Error,
-                                            "Download failed",
-                                        ),
+                                        _ => {
+                                            ctx.push_toast(ToastKind::Error, "Download failed");
+                                        }
                                     }
                                 }
                             },
