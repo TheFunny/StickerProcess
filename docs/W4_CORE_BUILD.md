@@ -58,6 +58,17 @@ cp ~/ffmpeg-wasm-build/packages/core/dist/umd/ffmpeg-core.wasm assets/ffmpeg-cor
 #    部署到构建目录（dx 不拷 assets/，且 python http.server 无缓存头，
 #    测前浏览器硬刷新/禁缓存）：
 cp assets/ffmpeg-core-st.{js,wasm} target/dx/StickerProcess/debug/web/public/
+
+# 6) wasm-opt 收尾（binaryen，实测 -11%）：core 的 code 段占 84%，上游 make prd
+#    的 -O3 是**速度**向，binaryen -Oz 能把 code 段再压掉 13%（data 段不动、
+#    15 个 export 与 memory 声明完全一致）。实测（binaryen 132）：
+wasm-opt -Oz --strip-debug assets/ffmpeg-core-st.wasm -o assets/ffmpeg-core-st.wasm.opt
+mv assets/ffmpeg-core-st.wasm.opt assets/ffmpeg-core-st.wasm
+#    raw 33,197,190 → 29,545,000 (-11.0%)  gzip 10,272,653 → 9,904,806 (-3.6%)
+#    sha256 3c604655…238fa8 → 512d94ee…3d4e
+#    换入后必须跑一遍下面的验证清单（GIF 转码 Done 41.30KB，与未优化 core 字节
+#    数一致；耗时同量级 —— 4s vs 6s，无头 Chromium 冷缓存）。
+#    注意：-O3 只 -0.3%，-O4 反而更大；要省体积就用 -Oz。
 ```
 
 ## 版本钉与依赖面

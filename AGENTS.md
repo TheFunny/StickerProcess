@@ -255,6 +255,16 @@ inprocess/runner/number_field, plus 5 integration smoke tests (`inprocess_video_
 ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
 `SMOKE_INPUT` env var to transcode an arbitrary input.
 
+### wasm 体积（实测，别重复测）
+
+`dx build --release --platform web` **不会**自动过 wasm-opt（日志里没有
+"Optimizing WASM" 那行；`Dioxus.toml` 缺 `[web.wasm_opt]` 段即关），但给 app
+wasm 开这个开关是白费：当前产物 638KB（rustc `opt-level="s"` + LTO fat + strip，
+无 name 段），binaryen 132 `-Oz` 只再省 1.2KB（-0.2%），`-O3`/`-O4` 反而更大
+（+0.6%/+0.8%）。**别加 `[web.wasm_opt]`**。真正的体积杠杆是 33MB 的 ffmpeg
+core：`-Oz` → 29.5MB（-11%，gzip -3.6%，export/memory 声明不变，转码实测正常），
+见 `docs/W4_CORE_BUILD.md` 配方步骤 6。
+
 ### ffmpeg environment
 
 The lib dir is resolved in `build.rs` in this order:
