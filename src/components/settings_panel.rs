@@ -114,24 +114,29 @@ pub fn SettingsPanel() -> Element {
     let output_dir_row = rsx! {
         div { class: "settings-row",
             span { class: "label", "Save to" }
-            input {
-                class: if ctx.settings.read().output_dir_state() == OutputDirState::Ok {
-                    "input grow"
-                } else {
-                    "input grow invalid-dir"
-                },
-                r#type: "text",
-                "aria-label": "Output folder",
-                value: "{ctx.settings.read().output_dir}",
-                oninput: move |evt: Event<FormData>| {
-                    let value = evt.data.value();
-                    ctx.update_settings(move |s| s.output_dir = value);
-                },
-            }
-            button {
-                class: "btn",
-                onclick: move |_| ctx.pick_output_dir(),
-                "Select"
+            // 与工具栏同一套：选择按钮做进输入框内，面板里也保持一致
+            div { class: "dir-field",
+                input {
+                    class: if ctx.settings.read().output_dir_state() == OutputDirState::Ok {
+                        "input grow"
+                    } else {
+                        "input grow invalid-dir"
+                    },
+                    r#type: "text",
+                    "aria-label": "Output folder",
+                    value: "{ctx.settings.read().output_dir}",
+                    oninput: move |evt: Event<FormData>| {
+                        let value = evt.data.value();
+                        ctx.update_settings(move |s| s.output_dir = value);
+                    },
+                }
+                button {
+                    class: "btn icon dir-pick",
+                    title: "Choose output folder",
+                    "aria-label": "Choose output folder",
+                    onclick: move |_| ctx.pick_output_dir(),
+                    crate::components::icon::IconFolder {}
+                }
             }
         }
     };
@@ -160,18 +165,25 @@ pub fn SettingsPanel() -> Element {
                 onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                 h2 { class: "modal-title", "Settings" }
 
+                div { class: "settings-section", "Output" }
                 {output_dir_row}
 
                 div { class: "settings-row",
-                    span { class: "label", "Max retry" }
-                    NumberInput<u8> {
-                        value: ctx.settings.read().max_retry,
-                        min: 0u8,
-                        max: 10u8,
+                    span { class: "label", "Keep input file name" }
+                    input {
+                        class: "input check",
+                        r#type: "checkbox",
                         disabled: false,
-                        on_change: move |v| ctx.update_settings(move |s| s.max_retry = v),
+                        checked: ctx.settings.read().keep_input_name,
+                        onchange: move |evt: Event<FormData>| {
+                            let on = evt.data.checked();
+                            ctx.update_settings(move |s| s.keep_input_name = on);
+                        },
                     }
+                    span { class: "hint", "Output: input-name-timestamp.webm (off = timestamp only)" }
                 }
+
+                div { class: "settings-section", "Size limits & retries" }
 
                 div { class: "settings-row",
                     span { class: "label", "Video max size (KB)" }
@@ -182,6 +194,7 @@ pub fn SettingsPanel() -> Element {
                         disabled: false,
                         on_change: move |v| ctx.update_settings(move |s| s.video_max_size_kb = v),
                     }
+                    span { class: "hint", "Telegram's own limit is 256 KB" }
                 }
 
                 div { class: "settings-row",
@@ -193,6 +206,19 @@ pub fn SettingsPanel() -> Element {
                         disabled: false,
                         on_change: move |v| ctx.update_settings(move |s| s.image_max_size_kb = v),
                     }
+                    span { class: "hint", "Telegram's own limit is 512 KB" }
+                }
+
+                div { class: "settings-row",
+                    span { class: "label", "Max retry" }
+                    NumberInput<u8> {
+                        value: ctx.settings.read().max_retry,
+                        min: 0u8,
+                        max: 10u8,
+                        disabled: false,
+                        on_change: move |v| ctx.update_settings(move |s| s.max_retry = v),
+                    }
+                    span { class: "hint", "Extra attempts while the result is still over the limit" }
                 }
 
                 div { class: "settings-row",
@@ -204,6 +230,7 @@ pub fn SettingsPanel() -> Element {
                         disabled: false,
                         on_change: move |v| ctx.update_settings(move |s| s.retry_shrink_factor = v),
                     }
+                    span { class: "hint", "factor ÷ excess × this, applied per retry" }
                 }
 
                 div { class: "settings-group",
@@ -225,6 +252,7 @@ pub fn SettingsPanel() -> Element {
                             }
                         }
                     }
+                    span { class: "hint", "Starting size factor by clip length; GIF gets ×0.75 on top" }
                 }
 
                 div { class: "settings-row",
@@ -236,23 +264,10 @@ pub fn SettingsPanel() -> Element {
                         disabled: false,
                         on_change: move |v| ctx.update_settings(move |s| s.target_fps = v),
                     }
+                    span { class: "hint", "0 keeps the source frame rate" }
                 }
 
-                div { class: "settings-row",
-                    span { class: "label", "Keep input file name" }
-                    input {
-                        class: "input check",
-                        r#type: "checkbox",
-                        disabled: false,
-                        checked: ctx.settings.read().keep_input_name,
-                        onchange: move |evt: Event<FormData>| {
-                            let on = evt.data.checked();
-                            ctx.update_settings(move |s| s.keep_input_name = on);
-                        },
-                    }
-                    span { class: "hint", "Output: input-name-timestamp.webm (off = timestamp only)" }
-                }
-
+                div { class: "settings-section", "Engine & theme" }
                 div { class: "settings-row",
                     span { class: "label", "Engine" }
                     {engine_select}

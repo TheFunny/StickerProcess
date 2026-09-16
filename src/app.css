@@ -219,7 +219,8 @@ body {
 }
 
 .input.num {
-  width: 64px;
+  /* 上限是 102400（6 位数），64px 太紧 */
+  width: 72px;
   text-align: center;
 }
 
@@ -622,6 +623,22 @@ body {
 .settings-row .label {
   flex-shrink: 0;
   min-width: 150px;
+}
+
+/* 分组标题：9 行平铺读不动，按"输出 / 尺寸与重试 / 引擎与外观"切开 */
+.settings-section {
+  margin-top: 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* 两个下拉（Engine / Theme）宽度对齐：都占满标签列右侧的剩余宽度 */
+.settings-row select.input {
+  flex: 1;
+  min-width: 0;
 }
 
 .modal-actions {

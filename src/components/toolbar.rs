@@ -66,6 +66,10 @@ pub fn Toolbar() -> Element {
     // 输出目录状态（桌面）：红框与提示文案都从它派生；可写性只在失焦时真写一次
     #[cfg(not(target_arch = "wasm32"))]
     let mut dir_write_ok = use_signal(|| None::<bool>);
+    // 正在编辑路径时不弹说明行——逐键变化会让提示反复出现/消失，把下面的
+    // 任务列表顶来顶去（红框不引起重排，编辑期间保留）。
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut dir_editing = use_signal(|| false);
     #[cfg(not(target_arch = "wasm32"))]
     let dir_state = ctx.settings.read().output_dir_state();
     #[cfg(not(target_arch = "wasm32"))]
@@ -77,6 +81,11 @@ pub fn Toolbar() -> Element {
         }
         OutputDirState::WillCreate => (false, Some(("Will be created when you run", ""))),
         OutputDirState::Ok => (false, None),
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let dir_hint = match dir_editing() {
+        true => None,
+        false => dir_hint,
     };
 
     // 输出目录仅桌面有意义（web 无文件系统），整行 let 双分支。
@@ -101,7 +110,9 @@ pub fn Toolbar() -> Element {
                         let value = evt.data.value();
                         ctx.update_settings(move |s| s.output_dir = value);
                     },
+                    onfocus: move |_| dir_editing.set(true),
                     onblur: move |_| {
+                        dir_editing.set(false);
                         // 真写一个临时文件才算数；有副作用，故只挂失焦而不是每键
                         let ok = ctx.settings.peek().output_dir_writable();
                         dir_write_ok.set(Some(ok));
