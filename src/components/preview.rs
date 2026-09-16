@@ -276,6 +276,7 @@ fn output_mime(path: &Path) -> &'static str {
 }
 
 /// 输入侧 MIME（按扩展名；与 src/preview.rs 的映射一致，wasm 无该模块）。
+#[cfg(target_arch = "wasm32")]
 fn input_mime(name: &str) -> &'static str {
     match path_ext_str(Path::new(name)).as_str() {
         "jpg" | "jpeg" => "image/jpeg",

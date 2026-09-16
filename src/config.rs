@@ -73,6 +73,8 @@ impl Settings {
     }
 
     /// 输出目录是否可用（已存在，或父目录存在可创建）。
+    /// 桌面专属：web 无文件系统，该行在 wasm 下不渲染。
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn output_dir_valid(&self) -> bool {
         let path = std::path::Path::new(&self.output_dir);
         path.is_dir() || (!self.output_dir.is_empty() && path.parent().is_some_and(|p| p.is_dir()))

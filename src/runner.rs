@@ -12,7 +12,9 @@
 use crate::app::{TaskEntry, UiState};
 use crate::components::toast::ToastKind;
 use crate::media::MediaType;
-use crate::transcoder::{Engine, Status, TranscodeError, Transcoder, excess_ratio, shrunk_factor};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::transcoder::Engine;
+use crate::transcoder::{Status, TranscodeError, Transcoder, excess_ratio, shrunk_factor};
 use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,8 +26,9 @@ pub struct ProgressUpdate {
     pub pct: f32,
 }
 
-/// 平台无关的阻塞执行桥：桌面走 tokio spawn_blocking 线程池；
-/// wasm 单线程直接执行（阻塞 UI —— 下一阶段换 web worker）。
+/// 平台无关的阻塞执行桥：桌面走 tokio spawn_blocking 线程池。
+/// wasm 侧没有独立线程（直接同步执行即可），故本函数只在桌面存在——
+/// 网页端的探测/转码路径各自同步调用，不经过这里。
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn run_blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
@@ -35,17 +38,13 @@ pub(crate) async fn run_blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) async fn run_blocking<T>(f: impl FnOnce() -> T) -> Result<T, String> {
-    Ok(f())
-}
-
 /// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎。
 /// - 非法值（parse 失败）→ 回落 inprocess（config.load 已兜底，此处是运行期保险）
 /// - webcodecs 且浏览器不支持（`web_supported=false`）→ 回落 inprocess
 /// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
 ///
-/// 桌面端 `web_supported` 恒为 false；wasm 侧由 JS 探测结果传入。
+/// 桌面专属：web 端忽略 `Settings.engine`（矩阵即策略，`Engine::for_web` 决定）。
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> Engine {
     let engine = match Engine::parse(setting) {
         Some(e) => e,
@@ -67,15 +66,10 @@ pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> Engine {
     }
 }
 
-/// sidecar 可用性：桌面查探测缓存；wasm 恒 false（无子进程）。
-#[cfg(feature = "desktop")]
+/// sidecar 可用性：查启动时的探测缓存（仅桌面有子进程）。
+#[cfg(not(target_arch = "wasm32"))]
 fn sidecar_vp9_available() -> bool {
     crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9)
-}
-
-#[cfg(not(feature = "desktop"))]
-fn sidecar_vp9_available() -> bool {
-    false
 }
 
 /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。

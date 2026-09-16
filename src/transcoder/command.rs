@@ -13,13 +13,16 @@ use ffmpeg_sidecar::command::FfmpegCommand;
 const BITRATE_BASE_BYTES: f64 = 256.0 * 1024.0;
 
 /// VP9 恒定质量模式的目标质量（越低质量越高、体积越大）。
+#[cfg(feature = "desktop")]
 pub(super) const VP9_CRF: u32 = 26;
 
 /// `-bufsize` 与 `-b:v` 的比值（解码器缓冲时长，越大码率越平稳）。
+#[cfg(feature = "desktop")]
 pub(super) const BUFSIZE_RATIO: f64 = 1.5;
 
-/// 缩放滤镜规格：三引擎唯一出处（sidecar CLI / inprocess 滤镜图 / 文档化契约）。
-/// 改这里，别在引擎里各写一份。
+/// 缩放滤镜规格：桌面两引擎（sidecar CLI / inprocess 滤镜图）唯一出处。
+/// web 端的 scale 规格在 JS 胶水里（浏览器侧没有 ffmpeg 滤镜串）。
+#[cfg(feature = "desktop")]
 pub(super) const SCALE_FILTER: &str =
     "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos";
 
@@ -51,6 +54,8 @@ pub(super) fn quantized_bitrate(base_bps: f64, factor: f64) -> u32 {
 }
 
 /// 把 ffmpeg 进度行的 `time`（如 `00:03:29.04`）解析为秒数；解析失败返回 0。
+/// 桌面专属：进度行来自 sidecar 的 stderr，web 端进度由 JS 直接给比例。
+#[cfg(feature = "desktop")]
 pub fn parse_progress_time(time: &str) -> f64 {
     let mut seconds = 0f64;
     for part in time.trim().split(':') {

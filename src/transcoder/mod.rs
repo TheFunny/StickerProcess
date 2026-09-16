@@ -79,6 +79,8 @@ impl Engine {
         }
     }
 
+    /// wasm 分发表按字符串匹配引擎（`job.engine`）时用；桌面已全程类型化。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Sidecar => "sidecar",
@@ -94,6 +96,7 @@ impl Engine {
     /// 返回 (engine, glue kind, ffmpeg-wasm 分支的 pix_fmt)。
     /// `Video(AnimatedWebP)` 仅桌面存在（probe 纠正产物）；web 端动画 webp
     /// 恒为 Image(Webp)（输出首帧 PNG），兜底臂纯防编译期不穷尽。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))] // 桌面单测覆盖矩阵
     pub fn for_web(
         media_type: &MediaType,
         webcodecs_ok: bool,
@@ -259,8 +262,12 @@ impl Transcoder {
         outcome
     }
 
-    /// 执行转码（按 engine 设置分发 sidecar / inprocess / webcodecs）；
-    /// 进度经回调上报（0..=1）。取消经 `cancel_flag` 中断。
+    /// 执行转码（按 engine 设置分发 sidecar / inprocess）；进度经回调上报（0..=1）。
+    /// 取消经 `cancel_flag` 中断。
+    ///
+    /// 桌面专属：web 端两段式路径（`prepare_web_job` → JS 引擎 → `finish_web_job`）
+    /// 在 runner 的 wasm 分支里分发，不经过本函数。
+    #[cfg(feature = "desktop")]
     pub fn run_with_progress(
         &mut self,
         engine: Engine,

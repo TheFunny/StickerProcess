@@ -187,6 +187,8 @@ impl UiState {
     }
 
     /// 添加文件，仅保留受支持的扩展名。每个新任务在后台线程探测时长/编码。
+    /// 桌面专属（web 走 `add_file_bytes`：浏览器只给字节，没有路径）。
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn add_files(&mut self, files: Vec<PathBuf>) {
         let mut added = Vec::new();
         let mut skipped = Vec::new();
@@ -215,6 +217,7 @@ impl UiState {
     }
 
     /// 网页端：前端文件字节直接入队（扩展名过滤与 add_files 一致）。
+    #[cfg(target_arch = "wasm32")]
     pub fn add_file_bytes(&mut self, name: String, data: Vec<u8>) {
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
         if !ext.as_deref().is_some_and(|e| SUPPORTED.contains(&e)) {
@@ -502,7 +505,7 @@ impl UiState {
     }
 
     /// 选择输出目录对话框（HTML 无目录选择器，沿用 rfd）。
-    /// wasm：无目录选择，函数体为空（下一阶段 showSaveFilePicker / 下载）。
+    /// 桌面专属：web 无文件系统，工具栏/设置面板在 wasm 下根本不渲染该行。
     #[cfg(not(target_arch = "wasm32"))]
     pub fn pick_output_dir(&mut self) {
         let mut ctx = *self;
@@ -513,9 +516,6 @@ impl UiState {
             }
         });
     }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn pick_output_dir(&mut self) {}
 }
 
 #[component]

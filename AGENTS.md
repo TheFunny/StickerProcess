@@ -325,19 +325,15 @@ offline from the registry cache while `Cargo.lock` stays untouched.
 - Lint state: run clippy for **both** targets —
   `cargo clippy` and
   `cargo clippy --target wasm32-unknown-unknown --no-default-features --features web`.
-  Each target sees the other's platform-only items as `never used` /
-  `never constructed` (desktop target: `app::add_file_bytes`,
-  `components/preview::input_mime`, `media::Source::Bytes` + `from_bytes`/`bytes`/
-  `set_duration`/`set_type`, `Engine::for_web`, `Engine::as_str` (only the wasm
-  dispatch stringifies it now), `TranscodeError::Engine` (produced
-  only by the wasm glue bridge); wasm target: `add_files`,
-  `pick_output_dir`, `output_dir_valid`, `Source::Path`, `VideoType::AnimatedWebP`,
-  `run_blocking`, `resolve_engine`, `sidecar_vp9_available`, `run_with_progress`,
-  `VP9_CRF`, `BUFSIZE_RATIO`, `SCALE_FILTER`, `parse_progress_time`, some
-  `TranscodeError` variants).
-  **These are false positives, not dead code** — `for_web` and `from_bytes` are
-  exercised by desktop unit tests, so cfg-gating them would delete coverage;
-  leave them until/unless clippy becomes a CI gate.
+  Both are **warning-free**: platform-only API surface is either cfg-gated to the
+  platform that uses it (`#[cfg(feature = "desktop")]` / `#[cfg(not(target_arch =
+  "wasm32"))]`) or, where the other platform's unit tests need it (e.g.
+  `Engine::for_web`, `MediaFile::from_bytes`), explicitly marked
+  `#[cfg_attr(<other target>, allow(dead_code))]` with a reason. Don't reintroduce
+  a hand-maintained "these warnings are false positives" list — if a new
+  cross-platform item trips it, use one of those two forms.
+  `cargo clippy --all-targets` is *not* a substitute: it adds a second target
+  whose own dead-code view differs (measured: 6 → 7 warnings).
 - New media types must be wired in **four** places:
   1. `src/app.rs` — `SUPPORTED` (the single extension list; `file_accept()` and
      the drop/upload filter both derive from it, and

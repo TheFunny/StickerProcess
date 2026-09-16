@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 /// 媒体来源：桌面为文件路径；网页端为前端读入内存的字节 + 文件名。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
+    /// 桌面专属（web 只有字节源）：如实标注，避免 wasm 端把它当成可疑死代码。
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Path(PathBuf),
-    /// 网页端：前端已读入内存的文件字节 + 原始文件名（扩展名判定用）
-    Bytes {
-        data: Vec<u8>,
-        name: String,
-    },
+    /// 网页端：前端已读入内存的文件字节 + 原始文件名（扩展名判定用）。
+    /// 桌面端不构造它，但 desktop 单测（bitrate 链）会用，故不能按平台裁掉。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Bytes { data: Vec<u8>, name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -22,11 +23,15 @@ pub struct MediaFile {
 }
 
 impl MediaFile {
+    /// 桌面构造入口（web 用 `from_bytes`）。
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn new(path: &Path) -> Self {
         Self::from_source(Source::Path(path.to_path_buf()))
     }
 
-    /// 网页端：前端读入内存的字节 + 原始文件名（扩展名判定类型）。
+    /// 网页端：前端读入内存的字节 + 文件名（扩展名判定类型）。
+    /// 桌面端不调用，但 desktop 单测用它构造 MediaFile，故不能按平台裁掉。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn from_bytes(data: Vec<u8>, name: String) -> Self {
         Self::from_source(Source::Bytes { data, name })
     }
@@ -60,6 +65,7 @@ impl MediaFile {
     }
 
     /// 桌面专属：文件路径。Bytes 源返回 None（网页端无文件系统路径）。
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn path(&self) -> Option<&Path> {
         match &self.source {
             Source::Path(p) => Some(p.as_path()),
@@ -99,6 +105,7 @@ impl MediaFile {
     }
 
     /// Bytes 源的字节引用；Path 源 None。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn bytes(&self) -> Option<&[u8]> {
         match &self.source {
             Source::Bytes { data, .. } => Some(data),
@@ -115,6 +122,7 @@ impl MediaFile {
     }
 
     /// 回填探测时长（网页端由 JS 元数据填充；桌面 probe_desktop 自动填）。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn set_duration(&mut self, duration: f64) {
         if duration > 0.0 {
             self.duration = Some(duration);
@@ -122,6 +130,7 @@ impl MediaFile {
     }
 
     /// 回填探测类型（网页端 APNG 检测：扩展名 png 但 ImageDecoder 报多帧）。
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn set_type(&mut self, media_type: MediaType) {
         self.r#type = Some(media_type);
     }
@@ -246,6 +255,8 @@ pub enum VideoType {
     Apng,
     /// 动画 webp（仅桌面：probe 把扩展名阶段的 Image(Webp) 纠正至此；
     /// 网页端无 probe 纠正路径，恒 Image(Webp) 输出首帧 PNG）。
+    /// wasm 侧只有 `for_web` 的兜底 match 臂引用它。
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     AnimatedWebP,
 }
 
