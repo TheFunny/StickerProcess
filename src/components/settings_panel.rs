@@ -161,12 +161,22 @@ pub fn SettingsPanel() -> Element {
             },
             onclick: move |_| ctx.show_settings.set(false),
             div {
-                class: "modal",
+                class: "modal modal-settings",
                 onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
-                h2 { class: "modal-title", "Settings" }
-
-                div { class: "settings-section", "Output" }
-                {output_dir_row}
+                // 标题固定在顶、只有正文滚动；关闭收进右上角的 X（原底部 Close 按钮）
+                div { class: "modal-head",
+                    h2 { class: "modal-title", "Settings" }
+                    button {
+                        class: "btn icon",
+                        title: "Close",
+                        "aria-label": "Close settings",
+                        onclick: move |_| ctx.show_settings.set(false),
+                        crate::components::icon::IconClose {}
+                    }
+                }
+                div { class: "modal-body",
+                    div { class: "settings-section", "Output" }
+                    {output_dir_row}
 
                 div { class: "settings-row",
                     span { class: "label", "Keep input file name" }
@@ -310,12 +320,7 @@ pub fn SettingsPanel() -> Element {
                         },
                         if reset_armed() { "Confirm reset?" } else { "Reset Defaults" }
                     }
-                    div { class: "spacer" }
-                    button {
-                        class: "btn btn-primary",
-                        onclick: move |_| ctx.show_settings.set(false),
-                        "Close"
-                    }
+                }
                 }
             }
         }

@@ -614,6 +614,27 @@ body {
   font-size: 16px;
 }
 
+/* 设置面板：标题固定在顶、只有正文滚动（预览弹窗不套这层，仍整体滚动） */
+.modal-settings {
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* flex 子项默认 min-height:auto，不置 0 会被内容撑开而不是滚动 */
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .settings-row {
   display: flex;
   align-items: center;
