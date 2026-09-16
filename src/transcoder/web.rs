@@ -47,10 +47,20 @@ extern "C" {
     /// 必经）。`catch`：glue 缺失/JS 异常转 Err 而非 trap 炸应用上下文。
     #[wasm_bindgen(catch, js_name = stickerDownload)]
     pub fn sticker_download(data: &[u8], filename: &str) -> Result<(), JsValue>;
-    #[wasm_bindgen(js_name = stickerFfmpegCancel)]
-    fn sticker_ffmpeg_cancel();
-    #[wasm_bindgen(js_name = stickerWebcodecsCancel)]
-    fn sticker_webcodecs_cancel();
+    /// `catch`：glue 尚未注入时 `window.sticker*Cancel` 还不存在，直接调用会抛
+    /// TypeError 并丢掉整个 wasm 上下文——转成 Err 由调用方忽略。
+    #[wasm_bindgen(catch, js_name = stickerFfmpegCancel)]
+    fn sticker_ffmpeg_cancel() -> Result<(), JsValue>;
+    #[wasm_bindgen(catch, js_name = stickerWebcodecsCancel)]
+    fn sticker_webcodecs_cancel() -> Result<(), JsValue>;
+}
+
+/// 主动取消当前网页端引擎（runner 的取消 watcher 直接调用，不经进度回调）。
+/// 引擎卡住时不会再有进度回调——取消必须能主动送达 JS 侧，否则"取消"只是把
+/// 标志置位，任务要等引擎自己退出。wasm 单线程、队列串行，全局取消即当前任务。
+pub fn cancel_active() {
+    let _ = sticker_ffmpeg_cancel();
+    let _ = sticker_webcodecs_cancel();
 }
 
 /// 已解出锁的任务参数（锁不跨 await）。engine/kind 决定运行期分发，
@@ -148,7 +158,7 @@ pub(crate) async fn exec_ffmpeg_wasm(
     let closure = Closure::new(move |pct: f32| {
         (*op_xfer.borrow_mut())(0.3 + pct * 0.7);
         if cancel_flag_probe.load(Ordering::Relaxed) {
-            sticker_ffmpeg_cancel();
+            let _ = sticker_ffmpeg_cancel();
         }
     });
 
@@ -192,7 +202,7 @@ pub(crate) async fn exec_webcodecs(
     let closure = Closure::new(move |pct: f32| {
         on_progress(pct);
         if cancel_flag_probe.load(Ordering::Relaxed) {
-            sticker_webcodecs_cancel();
+            let _ = sticker_webcodecs_cancel();
         }
     });
 

@@ -195,6 +195,10 @@ async fn run_single_task(
         loop {
             if *cancel_signal.read() {
                 cancel_flag_watcher.store(true, std::sync::atomic::Ordering::Relaxed);
+                // wasm：引擎卡住时不再有进度回调，取消必须主动送达 JS 侧
+                // （桌面 sidecar/inprocess 各自在循环里轮询该标志）
+                #[cfg(target_arch = "wasm32")]
+                crate::transcoder::web::cancel_active();
                 return;
             }
             crate::timers::sleep(std::time::Duration::from_millis(100)).await;

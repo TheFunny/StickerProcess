@@ -251,7 +251,9 @@ impl Transcoder {
             // 网页端引擎（分发在 runner.rs wasm 两段式路径）；桌面设置这两个值
             // → 明确 Alert（resolve_engine 只兜底 webcodecs，ffmpeg-wasm 漏到这）
             let _ = &mut on_progress;
-            return Err(TranscodeError::UnsupportedEngine(engine.as_str()));
+            return Err(TranscodeError::UnsupportedEngine(
+                "web engines (webcodecs / ffmpeg-wasm) require the web build",
+            ));
         }
         #[cfg(feature = "desktop")]
         if engine == Engine::Inprocess {
