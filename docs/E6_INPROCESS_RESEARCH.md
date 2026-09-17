@@ -118,17 +118,25 @@ exe，为 E6 第二阶段（删 sidecar）铺路。
    oleaut32、shlwapi、psapi、ncrypt、crypt32、zs，并加
    `/NODEFAULTLIB:{LIBCMT,LIBCMTD,MSVCRTD}` 抑制 CRT 冲突。
 
-### 7.4 CI 适配（待做）
+### 7.4 CI 适配（✅ 已完成 2026-09-17）
 
-当前 `build.rs` 的 avicap32 导入库路径硬编码 `D:/Tools/ffmpeg-static-extras/`。
-CI 化的两个选择：
-- **推荐**：把 `avicap32.def`（仅 5 行文本，见提交 2d78447 的 out/ 历史）
-  放进仓库，CI 里用 `lib.exe /def:avicap32.def /machine:x64
-  /out:<build-dir>/avicap32.lib` 生成——`lib.exe` 随 MSVC 必有，零外部依赖；
-  `build.rs` 改为生成到 `OUT_DIR` 并 `rustc-link-search` 指向它。
-- 备选：vcpkg manifest 模式（`vcpkg.json`）+ GitHub Actions 的
-  `lukka/run-vcpkg` action，binary cache（GitHub Cache backend）后
-  二次构建秒级。
+两块都落地了：
+
+- **avicap32**：`avicap32.def` 入库（`build/avicap32.def`），`build.rs` 用
+  `lib.exe /def … /out:<OUT_DIR>/avicap32.lib` 现场生成并 `rustc-link-search`
+  指向 `OUT_DIR`——零外部依赖，不再需要 `D:/Tools/ffmpeg-static-extras/`。
+- **静态包构建**：由 `TheFunny/ffmpeg-static-win` 的
+  `Build static ffmpeg` workflow（`windows-latest`）构建并发布 Release：
+  vcpkg 按 commit 钉死（tarball 解包，不用 runner 预装的旧 `C:\vcpkg`）、
+  manifest 模式一次解析 `ffmpeg[vpx,zlib,…]` + `libvpx[highbitdepth]`
+  （替代经典模式的 `--recurse` 二次安装）、`actions/cache` 缓存 vcpkg
+  downloads + 二进制缓存、产物前跑 `test/static_smoke.c`（MSVC 链接同一套库，
+  断言真 10-bit VP9 编码 + webm 封装 + 导入表无 ffmpeg DLL），发布后
+  `verify-app` job 再 clone 本仓库 `cargo build --release` 复核 `build.rs`
+  的链接表。配方与 tag 表见该仓库 README。
+
+消费侧：`scripts/fetch-ffmpeg-static.sh`（tag + sha256 唯一出处），
+`release-desktop.yml` / `ci.yml` 都调它；本地 vcpkg 配方（§7.3）保留为离线应急。
 
 ### 7.5 验证结果（✅ 全部通过）
 

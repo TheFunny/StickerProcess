@@ -33,10 +33,15 @@
 - **vcpkg 静态**（产出自包含 exe，零 DLL）：
 
 ```bash
+bash scripts/fetch-ffmpeg-static.sh          # 推荐：取 CI 构建好的静态包到 ffmpeg-dist/
+set FFMPEG_DIR=%CD%\ffmpeg-dist              # …或本地自建（见下）
 vcpkg install "ffmpeg[avdevice,avformat,avfilter,swscale,swresample,vpx,zlib]" --triplet x64-windows-static
 vcpkg install "libvpx[highbitdepth]" --triplet x64-windows-static --recurse
 set FFMPEG_DIR=<vcpkg>/installed/x64-windows-static
 ```
+
+静态包由 [TheFunny/ffmpeg-static-win](https://github.com/TheFunny/ffmpeg-static-win)
+的 CI 构建并发布（tag + sha256 钉在取件脚本里）；本地 vcpkg 配方保留为离线应急。
 
 `FFMPEG_DIR` 也可写到项目 `.cargo/config.toml` 的 `[env]`（一次配置）或由
 `VCPKG_ROOT` 自动推导；两者皆缺时构建报错并给出指引。

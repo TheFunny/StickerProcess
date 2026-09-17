@@ -44,6 +44,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
 | `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
 |`scripts/fetch-ffmpeg-core.sh`|从 `TheFunny/ffmpeg-core-st` 的 Release 取回自建 ffmpeg.wasm core（`assets/ffmpeg-core-st.{js,wasm}`）：core 版本与 sha256 的唯一出处，CI 与本地开发共用 |
+|`scripts/fetch-ffmpeg-static.sh`|从 `TheFunny/ffmpeg-static-win` 的 Release 取回静态 ffmpeg（解包到 `ffmpeg-dist/` 当 `FFMPEG_DIR`）：tag 与 sha256 的唯一出处，`release-desktop.yml` / `ci.yml` 与本地开发共用 |
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
@@ -52,8 +53,8 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
 | `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 跑 `scripts/fetch-ffmpeg-core.sh` 从 ffmpeg-core-st Release 取 29.5MB core（sha256 校验） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
-| `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
-| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（缓存 `ffmpeg-dist`）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
+| `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 跑 `scripts/fetch-ffmpeg-static.sh` 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
+| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
@@ -293,9 +294,13 @@ Two supported setups (see `docs/E6_INPROCESS_RESEARCH.md` §7 for the full recor
   (with `include/` + `lib/`), `bin/` on `PATH`. `ffmpeg-the-third` links
   libav at build time (probe + inprocess engine); `ffmpeg-sidecar` calls the
   CLI at runtime (sidecar engine). Update BOTH when updating ffmpeg.
-- **Static (vcpkg)**: `FFMPEG_DIR` → `vcpkg/installed/x64-windows-static`
-  (`ffmpeg[avdevice,avformat,avfilter,swscale,swresample,vpx,zlib]` +
-  `libvpx[highbitdepth]`). Produces an exe with zero ffmpeg DLL imports.
+- **Static (vcpkg)**: `FFMPEG_DIR` → the package from
+  [TheFunny/ffmpeg-static-win](https://github.com/TheFunny/ffmpeg-static-win)
+  releases (unpacked: `lib/` + `include/` + `share/`), fetched by
+  `scripts/fetch-ffmpeg-static.sh` — that repo's CI builds it from a pinned
+  vcpkg tree with `ffmpeg[avcodec,avdevice,avfilter,avformat,swresample,swscale,vpx,zlib]`
+  + `libvpx[highbitdepth]` and smoke tests it. Produces an exe with zero ffmpeg
+  DLL imports. Local rebuild recipe (emergency): `docs/E6_INPROCESS_RESEARCH.md` §7.3.
   Requires `ffmpeg-sys` feature `static` (enabled via the `ffmpeg-the-third`
   `static` feature) — see `build.rs` for the extra link libs. `engine`
   setting must be `inprocess` in this mode (no `ffmpeg.exe` on PATH).

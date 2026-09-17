@@ -12,3 +12,7 @@
 # 自建 ffmpeg.wasm core：两份都由 scripts/fetch-ffmpeg-core.sh 从 Release 取
 /assets/ffmpeg-core-st.js
 /assets/ffmpeg-core-st.wasm
+# 静态 ffmpeg 包：scripts/fetch-ffmpeg-static.sh 解包到 ffmpeg-dist/（下载中的
+# tarball 落在仓库根，正常路径会删掉——万一被中断别误提交）
+/ffmpeg-dist/
+/ffmpeg-static-x64-win.tar.xz

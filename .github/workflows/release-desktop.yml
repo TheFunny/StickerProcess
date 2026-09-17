@@ -36,16 +36,12 @@ jobs:
           unzip -o dx.zip -d "$CARGO_HOME/bin"
           dx --version
 
-      # 预构建静态 ffmpeg（过渡：手工 vcpkg 构建存于 ffmpeg-static-win Releases；
-      # 阶段2：该仓库 CI 自建后替换此处 tag 即可）。
+      # 预构建静态 ffmpeg：由 ffmpeg-static-win 仓库的 CI 构建并发布（tag + sha256
+      # 钉在 scripts/fetch-ffmpeg-static.sh，唯一出处）。
       - name: Fetch prebuilt ffmpeg static libs
         shell: bash
         run: |
-          mkdir -p ffmpeg-dist
-          curl -sSL -o ff.tar.xz \
-            https://github.com/TheFunny/ffmpeg-static-win/releases/download/ffmpeg-static-v1/ffmpeg-static-x64-win.tar.xz
-          tar xJf ff.tar.xz -C ffmpeg-dist
-          test -f ffmpeg-dist/lib/avcodec.lib
+          bash scripts/fetch-ffmpeg-static.sh
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Test

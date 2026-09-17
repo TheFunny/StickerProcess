@@ -60,24 +60,19 @@ jobs:
           restore-keys: |
             clippy-desktop-${{ runner.os }}-
 
-      # 与 release-desktop.yml 同一份预构建静态库（clippy 也要过 build.rs）
+      # 与 release-desktop.yml 同一份预构建静态库（clippy 也要过 build.rs）；
+      # key 跟着取件脚本走，改 pin 就自动换缓存。
       - name: Cache ffmpeg static libs
         uses: actions/cache@v4
         with:
           path: ffmpeg-dist
-          key: ffmpeg-static-x64-win-v1
+          key: ffmpeg-static-win-${{ hashFiles('scripts/fetch-ffmpeg-static.sh') }}
 
       - name: Fetch prebuilt ffmpeg static libs
         shell: bash
         run: |
-          if [ -f ffmpeg-dist/lib/avcodec.lib ]; then
-            echo "cached"
-          else
-            mkdir -p ffmpeg-dist
-            curl -sSL -o ff.tar.xz \
-              https://github.com/TheFunny/ffmpeg-static-win/releases/download/ffmpeg-static-v1/ffmpeg-static-x64-win.tar.xz
-            tar xJf ff.tar.xz -C ffmpeg-dist
-            test -f ffmpeg-dist/lib/avcodec.lib
+          if [ ! -f ffmpeg-dist/lib/avcodec.lib ]; then
+            bash scripts/fetch-ffmpeg-static.sh
           fi
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
