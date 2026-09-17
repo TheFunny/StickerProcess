@@ -224,10 +224,12 @@ async fn run_single_task(
         let duration_factors = settings.duration_factors;
         let target_fps = settings.target_fps;
         let retry_shrink = settings.retry_shrink_factor;
+        let duration_patch = settings.webm_duration_patch;
 
         ctx.with_task(index, |t| {
             t.duration_factors = duration_factors;
             t.target_fps = target_fps;
+            t.duration_patch = duration_patch;
             t.status = Status::Processing;
         });
         ctx.touch_entry(index, |e| {

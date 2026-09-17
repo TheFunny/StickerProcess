@@ -11,10 +11,15 @@ use std::io::Read;
 use std::sync::atomic::Ordering;
 
 impl Transcoder {
-    /// webm 时长补丁（桌面 Path 源）：只读头部定位 Duration，原地覆写 8 字节。
+    /// webm 时长补丁（桌面 Path 源）：只读头部定位 Duration，原地覆写 8 字节
+    /// （载荷值语义见 `patch_webm_bytes`）。
     /// 旧实现读全文件 + 整写一遍——每次尝试为改 8 字节多一轮全量 I/O。
+    /// 设置关掉补丁时直接返回（产物保留编码器给的原始 Duration）。
     #[cfg(feature = "desktop")]
     pub(super) fn run_video(&mut self) -> Result<(), TranscodeError> {
+        if !self.duration_patch {
+            return Ok(());
+        }
         let path = self
             .get_output()
             .ok_or(TranscodeError::OutputNotSet)?
@@ -62,6 +67,9 @@ fn find_duration_payload(data: &[u8]) -> Result<usize, TranscodeError> {
 }
 
 /// 内存字节补丁（网页端 Bytes 源）。
+///
+/// 载荷写成 100 **Segment Ticks**：TimestampScale 恒为 1e6 ns（1 tick = 1 ms），
+/// 即对外声称 0.1 s，让产物绕过 Telegram 的贴纸时长检测（超长文件会被拒收）。
 pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     let at = find_duration_payload(&data)?;
     data[at..at + 8].copy_from_slice(&100f64.to_be_bytes());
@@ -167,6 +175,24 @@ mod tests {
         assert_eq!(&got[13..21], &100f64.to_be_bytes());
         assert_eq!(&got[..10], &data[..10]);
         assert_eq!(&got[21..], &data[21..]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 回归：设置关掉补丁时产物必须原样保留（不再因缺标记把任务打成 Alert）。
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn duration_patch_disabled_leaves_file_untouched() {
+        // 刻意不含标记字节：补丁若仍执行会返回 "not found" 错误
+        let data = vec![7u8; 300];
+        let path = std::env::temp_dir().join(format!("sp_nopatch_{}.webm", std::process::id()));
+        std::fs::write(&path, &data).unwrap();
+        let mut t = super::super::Transcoder::new(crate::media::MediaFile::new(
+            std::path::Path::new("input/clip.mp4"),
+        ));
+        t.set_output(&path);
+        t.duration_patch = false;
+        t.run_video().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), data);
         let _ = std::fs::remove_file(&path);
     }
 }

@@ -70,7 +70,9 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `toasts`) provided to components via context.
 - **Settings (Phase B)**: `config::Settings` is the single source of truth for all
   config (output dir, max retry, video/image size limits, retry shrink factor,
-  duration factor table, forced FPS, theme, transcode `engine`). Mutate only via
+  duration factor table, forced FPS, theme, transcode `engine`, webm 时长补丁开关
+  `webm_duration_patch` (默认 true；关掉则产物保留编码器原始 Duration，
+  即不再谎报 100 ms 骗过 Telegram 的时长检测)). Mutate only via
   `UiState::update_settings(…)` — it applies the closure, then **synchronously**
   saves to `%APPDATA%/StickerProcess/settings.toml` (file is ~200 B, sub-ms write;
   sync execution prevents torn/out-of-order writes from per-keystroke async saves).
@@ -192,7 +194,9 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     Same rule for `command::SCALE_FILTER` (the `scale=512:512:…:flags=lanczos`
     spec) and `media::VideoType::pix_fmt()` — both were hand-copied three times
     before.
-    All engines run the webm duration patch after muxing.
+    All engines run the webm duration patch after muxing unless the
+    `webm_duration_patch` setting is off (`Transcoder::duration_patch`, synced
+    per attempt by the runner like the other settings).
   - *cancel*: sidecar polls `cancel_flag` in its stderr event pump and its stdout
     image reader (100 ms), then kills + reaps the child; inprocess checks
     `cancel_flag` each frame and returns `Cancelled` (Drop chain releases
@@ -209,8 +213,12 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
 - **Webm duration patch** (`transcoder::steps`): after encoding, the Duration
   element (EBML ID `0x4489` + 1-byte size vint `0x88`, i.e. marker bytes
-  `44 89 88`) has its 8-byte payload overwritten with `100f64` (big-endian) to
-  force a fixed/fake duration. The scan **stops at the first Cluster ID**
+  `44 89 88`) has its 8-byte payload overwritten with `100.0f64` (big-endian).
+  The value is in **Segment Ticks**, and `TimestampScale` is 1e6 ns (1 tick =
+  1 ms), so the clip claims a **100 ms** duration — the point is to slip past
+  Telegram's sticker length check (over-long clips get rejected), not to change
+  the actual playback. Toggle: setting `webm_duration_patch` (default true).
+  The scan **stops at the first Cluster ID**
   (`1F 43 B6 75`; Duration lives in Info, always before any Cluster) — an
   unbounded search would hit a false `44 89 88` inside VP9 payload and silently
   corrupt 8 bytes of video. Shared locator `find_duration_payload` backs both

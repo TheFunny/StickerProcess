@@ -111,14 +111,14 @@ impl Transcoder {
 
     // 码率链共享 command.rs::video_bitrate（三引擎唯一出处）
 
-    /// 阶段 2（锁内，同步）：视频走 webm 时长补丁，图片（PNG）原样
-    /// → store_output（Bytes 源写内存）。
+    /// 阶段 2（锁内，同步）：视频走 webm 时长补丁（设置关掉则原样），
+    /// 图片（PNG）原样 → store_output（Bytes 源写内存）。
     // ponytail: web 图片不跑 oxipng——libdeflate-sys 需 wasm C 工具链（clang）；
     // 浏览器 convertToBlob 的 PNG 已合法且贴纸远小于 512KB 上限。web 图片若超限
     // 再接 wasm 版 oxipng 或后端压缩。
     pub fn finish_web_job(&mut self, out: Vec<u8>) -> Result<(), TranscodeError> {
         let out = match self.media_file.r#type() {
-            Some(MediaType::Video(_)) => steps::patch_webm_bytes(out)?,
+            Some(MediaType::Video(_)) if self.duration_patch => steps::patch_webm_bytes(out)?,
             _ => out,
         };
         self.store_output(out)

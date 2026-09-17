@@ -266,6 +266,21 @@ pub fn SettingsPanel() -> Element {
                 }
 
                 div { class: "settings-row",
+                    span { class: "label", "Patch webm duration" }
+                    input {
+                        class: "input check",
+                        r#type: "checkbox",
+                        disabled: false,
+                        checked: ctx.settings.read().webm_duration_patch,
+                        onchange: move |evt: Event<FormData>| {
+                            let on = evt.data.checked();
+                            ctx.update_settings(move |s| s.webm_duration_patch = on);
+                        },
+                    }
+                    span { class: "hint", "Reports a 100 ms duration so Telegram's length check passes; off keeps the encoder's value" }
+                }
+
+                div { class: "settings-row",
                     span { class: "label", "Force FPS (0 = auto)" }
                     NumberInput<f64> {
                         value: ctx.settings.read().target_fps,

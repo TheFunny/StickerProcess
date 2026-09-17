@@ -128,6 +128,8 @@ pub struct Transcoder {
     /// 内存输出（网页端契约）：Bytes 源任务转码产物写这里而非磁盘。
     /// 桌面 Path 源恒为 None（走 output 路径）。
     pub output_bytes: Option<Vec<u8>>,
+    /// 是否在封装后给 webm 打时长补丁（设置 `webm_duration_patch`，默认 true）。
+    pub duration_patch: bool,
 }
 
 impl Transcoder {
@@ -142,6 +144,7 @@ impl Transcoder {
             duration_factors: command::DEFAULT_DURATION_FACTORS,
             target_fps: 0.0,
             output_bytes: None,
+            duration_patch: true,
         }
     }
 

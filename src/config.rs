@@ -47,10 +47,19 @@ pub struct Settings {
     /// 产物文件名是否带上输入文件名（`输入名-时间戳.webm`）；默认 false = 只有时间戳。
     #[serde(default)]
     pub keep_input_name: bool,
+    /// 是否给 webm 打时长补丁（Duration 覆写成 100 ms，绕过 Telegram 的时长检测）。
+    /// 默认 true = 历史行为；serde 的 bool 默认是 false，老设置文件缺这个键会
+    /// **静默关掉**补丁，故显式默认 true。
+    #[serde(default = "default_true")]
+    pub webm_duration_patch: bool,
 }
 
 fn default_engine() -> String {
     "sidecar".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_retry_shrink_factor() -> f64 {
@@ -75,6 +84,7 @@ impl Default for Settings {
             target_fps: 0.0,
             theme: "system".into(),
             keep_input_name: false,
+            webm_duration_patch: true,
         }
     }
 }
@@ -303,6 +313,8 @@ mod tests {
         assert_eq!(parsed.duration_factors, default_duration_factors());
         assert_eq!(parsed.target_fps, 0.0);
         assert_eq!(parsed.retry_shrink_factor, default_retry_shrink_factor());
+        // 旧文件缺键时必须仍是"打补丁"（serde bool 默认 false 会静默改行为）
+        assert!(parsed.webm_duration_patch);
     }
 
     #[test]
