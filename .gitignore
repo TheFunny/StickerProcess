@@ -9,4 +9,6 @@
 /docs/notes.md
 /.cargo/config.toml
 /wasm-demo
+# 自建 ffmpeg.wasm core：两份都由 scripts/fetch-ffmpeg-core.sh 从 Release 取
+/assets/ffmpeg-core-st.js
 /assets/ffmpeg-core-st.wasm

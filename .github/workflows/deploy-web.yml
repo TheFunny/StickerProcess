@@ -55,12 +55,10 @@ jobs:
           fi
           dx --version
 
-      # 29.5MB core 不入库（.gitignore）；从 wasm-core 孤儿分支取回。
+      # core 不入库（.gitignore）；从 TheFunny/ffmpeg-core-st 的 Release 取回，
+      # 版本与 sha256 钉在 scripts/fetch-ffmpeg-core.sh（唯一出处）。
       - name: Fetch ffmpeg core wasm
-        run: |
-          git fetch --depth 1 origin wasm-core
-          git show origin/wasm-core:ffmpeg-core-st.wasm > assets/ffmpeg-core-st.wasm
-          test -s assets/ffmpeg-core-st.wasm
+        run: bash scripts/fetch-ffmpeg-core.sh
 
       - name: Build web bundle (release)
         run: dx build --platform web --release --base-path /StickerProcess/

@@ -43,15 +43,15 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
 | `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
-| `build-wasmcore-branch.sh` | 把 `assets/ffmpeg-core-st.wasm` 灌成 `wasm-core` 孤儿分支并推送（core 的远端唯一出处，CI 取件处） |
+|`scripts/fetch-ffmpeg-core.sh`|从 `TheFunny/ffmpeg-core-st` 的 Release 取回自建 ffmpeg.wasm core（`assets/ffmpeg-core-st.{js,wasm}`）：core 版本与 sha256 的唯一出处，CI 与本地开发共用 |
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
 | `docs/WEB_DEMO_FINDINGS_C.md` | Route C spike: WebCodecs in-block alpha webm **not feasible** (encoder accepts I420A but emits no alpha bitstream) — kills dual-track plan |
-| `docs/W4_CORE_BUILD.md` | Self-built ffmpeg.wasm core recipe (Docker/WSL), rollback record; the built wasm lives ONLY on the `wasm-core` orphan branch |
+|`docs/W4_CORE_BUILD.md`|Self-built ffmpeg.wasm core recipe (built by CI in `TheFunny/ffmpeg-core-st`, published as release assets), rollback record |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
-| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 从 `wasm-core` 孤儿分支取 29.5MB core（wasm-opt -Oz） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
+| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 跑 `scripts/fetch-ffmpeg-core.sh` 从 ffmpeg-core-st Release 取 29.5MB core（sha256 校验） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
 | `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（缓存 `ffmpeg-dist`）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
@@ -61,7 +61,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/` | App icon：`icon.ico`（5-image PNG-in-ICO，tracked——CI 打包需要）；其余尺寸 png gitignored。`input/`/`out/`/`output/`/`target/` 全 gitignored |
-| `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker + core js/wasm）、`favicon.png`（tab 图标）与 `og-image.png`（分享卡片图；两者 App rsx `document::Link`/`Meta` 相对路径引用）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；32MB `.wasm` gitignore，远端唯一出处 = `wasm-core` 孤儿分支（`build-wasmcore-branch.sh` 重建后 push -f，CI 从此取），配方与实测数据见 docs/W4_CORE_BUILD.md |
+| `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker 入库；`ffmpeg-core-st.{js,wasm}` 由 `scripts/fetch-ffmpeg-core.sh` 取）、`favicon.png`（tab 图标）与 `og-image.png`（分享卡片图；两者 App rsx `document::Link`/`Meta` 相对路径引用）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；两份都 gitignore，远端唯一出处 = `TheFunny/ffmpeg-core-st` 的 Release（CI 构建 + headless Chromium 冒烟 + sha256，见 `docs/W4_CORE_BUILD.md`）|
 
 ## Architecture
 
@@ -271,7 +271,8 @@ wasm 开这个开关是白费：当前产物 638KB（rustc `opt-level="s"` + LTO
 无 name 段），binaryen 132 `-Oz` 只再省 1.2KB（-0.2%），`-O3`/`-O4` 反而更大
 （+0.6%/+0.8%）。**别加 `[web.wasm_opt]`**。真正的体积杠杆是 ffmpeg core：
 33MB → 29.5MB（`-Oz`，-11%，gzip -3.6%，export/memory 声明不变，转码实测正常），
-产物已推到 `wasm-core` 孤儿分支，见 `docs/W4_CORE_BUILD.md` 配方步骤 6。
+产物由 `TheFunny/ffmpeg-core-st` 的 CI 构建并发布为 Release（配方见
+`docs/W4_CORE_BUILD.md`）。
 
 ### ffmpeg environment
 
@@ -388,7 +389,8 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
 - **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core + 图标全套
   （`ffmpeg.js` wrapper、`814.ffmpeg.js` classic worker、`ffmpeg-core-st.{js,wasm}`
-  29.5MB gitignore（wasm-opt -Oz 后）、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`、
+  ——这两份不入库，先跑 `scripts/fetch-ffmpeg-core.sh` 取回（29.5MB wasm-opt -Oz 后，
+  sha256 校验）、`ffmpeg-engine.js`、`webcodecs-engine.js`、`webm-muxer.js`、
   `favicon.png`、`og-image.png`）。
   **dx（serve 与 build 皆然）不会把项目 `assets/` 拷进 `target/dx/.../web/public/`**——
   构建/跑起来前必须手动 cp 到该目录根，改过任一 JS 再 cp 一次（否则用的是旧副本）。
@@ -403,8 +405,8 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   运行内才切成 workflow，自动建的 `github-pages` environment 带残留分支限制），
   **再跑一次即绿**（Run #1 失败 → #3 成功实证）。用户 PAT 对 Pages/env 设置 API
   是 404——但 workflow 的 `pages: write` 权限够用。core 的 CI 来源 =
-  `wasm-core` 孤儿分支（唯一远端出处；重建 core 后跑 `build-wasmcore-branch.sh`
-  再 `git push -f origin wasm-core`，否则 CI 吃旧 core）。
+  `TheFunny/ffmpeg-core-st` 的 Release（"Build ST core" workflow 产出；
+  版本 tag 与两份 sha256 钉在 `scripts/fetch-ffmpeg-core.sh`，发新 core 就改这三处）。
 - **python http.server 无 Cache-Control → 浏览器启发式缓存 wasm/loader JS**：改过 Rust
   重 `dx build` 后页面仍"不挂载"（`#main` 空、无 console 错误——`__wbg_init` 的 Promise
   reject 无人 catch），实为吃到旧 `StickerProcess.js` 与新 `StickerProcess_bg.wasm`

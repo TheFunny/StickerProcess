@@ -65,16 +65,21 @@ dx build --platform web --release --base-path /<repo>/    # 子路径部署必�
 
 ⚠ 两个坑：
 
-1. **dx 不拷贝项目 `assets/` 到产物目录**（serve/build 皆然），需手动补齐：
+1. **dx 不拷贝项目 `assets/` 到产物目录**（serve/build 皆然），需手动补齐（core 先取，
+   见下条）：
 
 ```bash
+bash scripts/fetch-ffmpeg-core.sh   # 下载 ffmpeg-core-st.{js,wasm} 到 assets/ 并校验 sha256
 cp assets/{ffmpeg.js,814.ffmpeg.js,ffmpeg-core-st.js,ffmpeg-core-st.wasm,\
 ffmpeg-engine.js,webcodecs-engine.js,webm-muxer.js,favicon.png,og-image.png} \
    target/dx/StickerProcess/release/web/public/
 ```
 
-2. **`ffmpeg-core-st.wasm`（32 MB）不入库**（`.gitignore`）。本地获取/重建配方见
-   [docs/W4_CORE_BUILD.md](docs/W4_CORE_BUILD.md)；CI 从 `wasm-core` 孤儿分支取件。
+2. **自建 core 不入库**（`.gitignore` 掉 `assets/ffmpeg-core-st.{js,wasm}`，29.5 MB）。
+   `scripts/fetch-ffmpeg-core.sh` 从
+   [TheFunny/ffmpeg-core-st](https://github.com/TheFunny/ffmpeg-core-st) 的 Release 取件，
+   版本与 sha256 钉在该脚本里（唯一出处）；重建配方见
+   [docs/W4_CORE_BUILD.md](docs/W4_CORE_BUILD.md)。
 
 线上发布全自动：push `master` → GitHub Actions（`.github/workflows/deploy-web.yml`）
 构建并部署到 Pages。手动流程与所有踩坑记录（gh-pages 迁移、OG 注入、缓存策略）
