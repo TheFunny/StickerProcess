@@ -48,6 +48,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
 | `docs/COMPAT_REPORT_PLAN.md` | Compatibility Report 按钮：开工前可行性报告（数据源盘点）+ 实测差异与验证记录 |
+| `docs/MOTION_REVIEW.md` | 弹窗/Toast 动画评审：实测数据（丢帧、时长、重启、reduced-motion）+ 建议与实施记录 |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
 | `docs/WEB_DEMO_FINDINGS_C.md` | Route C spike: WebCodecs in-block alpha webm **not feasible** (encoder accepts I420A but emits no alpha bitstream) — kills dual-track plan |
 |`docs/W4_CORE_BUILD.md`|Self-built ffmpeg.wasm core recipe (built by CI in `TheFunny/ffmpeg-core-st`, published as release assets), rollback record |

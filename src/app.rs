@@ -22,6 +22,11 @@ pub const SUPPORTED: [&str; 7] = ["mp4", "gif", "apng", "jpg", "jpeg", "png", "w
 
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Toast 淡出时长（ms）。**与 `app.css` 里 `.toast` 的 transition 时长必须是同一个数**
+/// ——两处各持一份，跨文件共享不了：比 CSS 长则通知已全透明却继续占着 DOM（实测差
+/// 50ms 时约 67ms 空窗），比 CSS 短则淡出被硬切断。
+const TOAST_FADE_MS: u64 = 350;
+
 /// 显示镜像：任务行/预览渲染所需的全部字段（不含共享的 Transcoder）。
 ///
 /// 刻意派生 `PartialEq`——手写 eq 漏一个字段会让 dioxus memo **静默**跳过重渲染
@@ -215,7 +220,7 @@ impl UiState {
                     t.leaving = true;
                 }
             });
-            crate::timers::sleep(std::time::Duration::from_millis(400)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(TOAST_FADE_MS)).await;
             toasts.with_mut(|list| list.retain(|t| t.id != id));
         });
         id

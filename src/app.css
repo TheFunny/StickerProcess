@@ -613,7 +613,20 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  animation: toast-in 0.15s ease-out;
+  /* 弹窗自己的入场：居中对话框从下方 4px 浮起 + 轻微放大，别复用 toast 的
+     水平滑入（那条曲线是为右下角通知写的，改它会连带改弹窗）。 */
+  animation: modal-in 0.15s ease-out;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .modal-title {
@@ -947,4 +960,24 @@ body {
   font-size: 12px;
   color: var(--fg-muted);
   word-break: break-word;
+}
+
+/* 减少动态效果（系统级无障碍开关）：入场动画与进度条过渡全部关掉，进度条宽度
+ * 直接跳变。必须放在文件末尾——同特异性下靠位置压过上面的 animation/transition。
+ * 转码中的旋转指示器也停：徽标文字 [Transcoding] 仍在，信息不丢。 */
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .modal {
+    animation: none;
+  }
+
+  .toast,
+  .row-progress-fill,
+  .progress-fill {
+    transition: none;
+  }
+
+  .badge.processing::before {
+    animation: none;
+  }
 }
