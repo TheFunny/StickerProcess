@@ -178,7 +178,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `runner::run_blocking`. Re-check keeps the previous rows on screen (only the
   button flips to "Re-checking…" and is disabled while probing) — clearing the
   report first collapses the modal to one line and back, which reads as a flash.
-  Opening it must be added to the `key_bridge_js` modal gate (`ctx.show_compat`)
+  Opening it must be added to the `native_bridge_js` modal gate (`ctx.show_compat`)
   or Ctrl+Enter would start a run behind the modal.
 - **Transcoding**:
   - Video bitrate (both engines): `-b:v` computed from target size and
@@ -403,13 +403,21 @@ offline from the registry cache while `Cargo.lock` stays untouched.
      preventDefault（dragover+drop）+ thread_local 队列 + dioxus 排空任务。
   3. 经 wasm-bindgen 传出的 `&[u8]` 背靠 wasm 内存、**不可 detach**——ffmpeg.wasm
      `writeFile` 会 transfer 所有权，glue 必须先 `new Uint8Array(data).slice()`。
-- **全局快捷键/弹窗焦点陷阱走 window 级原生监听 + eval 通道**（`app.rs::key_bridge_js`
+- **全局快捷键 / 弹窗焦点陷阱走 window 级原生监听 + eval 通道**（`app.rs::native_bridge_js`
   的 JS + `Eval::recv` 循环），别改回"根节点 tabindex + onkeydown"：点掉一个按钮或
   关掉弹窗后焦点落到 `body`，事件就不再经过 `.app`，快捷键会**静默失效**（实测：
   关掉设置面板后 Ctrl+Enter 彻底不响应）。同理，键盘默认动作只能靠原生监听里
   **同步** 的 `preventDefault` 拦（dioxus 管线是异步的，见上条）。桥的 JS 末尾必须
   永不 resolve（`await new Promise(() => {})`）：eval 通道在 JS 返回后即关闭，
   `dioxus.send` 会全部丢失；启动日志里的 `key bridge installed` 就是它的心跳。
+- **弹窗的滚动容器是弹窗自身**（`.modal-settings`，设置面板 + 兼容性报告共用）：
+  头/脚 sticky，正文 `flex: none; overflow: visible; padding: 0 18px`，弹窗
+  `padding: 0; gap: 0; overflow-y: auto`。曾经让 `.modal-body` 独占滚动区——那时
+  标题+动作行+内边距+间距共 ~127px 是**滚轮死区**，而默认窗口（960×680）下兼容性
+  报告只溢出 ~39px，指针自然落在下沿/动作行上，于是"只剩半行却滚不动"（实测死区
+  内 deltaY 全丢、正文内正常）。改用原生滚动容器后弹窗内任意位置都能滚，也不必
+  用脚本转发滚轮（转发还要猜 deltaMode/缩放，手感与原生不一致）。sticky 背景必须
+  不透明——`padding`/`gap` 一旦留在弹窗上，滚上来的内容会从半透明间隙里漏出来。
 - **dragover 期间 `dataTransfer.files` 恒空**（规范保护模式，文件仅 drop 时可见）——
   判断“文件拖拽”看 `types` 是否含 `"Files"`。
 - **ffmpeg.wasm / webcodecs 资产需手动 cp**：`assets/` 下 glue + core + 图标全套

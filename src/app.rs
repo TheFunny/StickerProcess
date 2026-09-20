@@ -655,7 +655,7 @@ impl UiState {
     }
 }
 
-/// 全局按键的原生监听（只装一次）：弹窗焦点陷阱 + 全局快捷键。
+/// 窗口级原生监听桥（只装一次）：弹窗焦点陷阱 + 全局快捷键。
 ///
 /// 陷阱用原生 Tab 循环手写，而不是把背景设 `inert`：背景内容散在 .app 的多个
 /// 兄弟节点上，得为它加一层 `display: contents` 包装，而 inert 用在这里还要求
@@ -667,7 +667,9 @@ impl UiState {
 /// 浏览器自身的"打开文件"拦不住，两条路径同时弹框更糟，而浏览器那个行为本身
 /// 可接受。末尾永不 resolve —— eval 通道在 JS 代码返回后会被关闭，留着挂起的
 /// Promise 才能一直 `dioxus.send` 回来。
-fn key_bridge_js() -> String {
+///
+/// （弹窗内滚轮不做转发：滚动容器是弹窗自身，见 app.css 的 `.modal-settings`。）
+fn native_bridge_js() -> String {
     #[cfg(target_arch = "wasm32")]
     let open_branch = "";
     #[cfg(not(target_arch = "wasm32"))]
@@ -810,7 +812,7 @@ pub fn App() -> Element {
     // 管线的 prevent_default 是异步的，拦不住浏览器默认动作）。
     use_effect(move || {
         let mut ctx = ctx;
-        let mut keys = document::eval(&key_bridge_js());
+        let mut keys = document::eval(&native_bridge_js());
         spawn(async move {
             loop {
                 let msg = match keys.recv::<String>().await {

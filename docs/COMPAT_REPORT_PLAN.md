@@ -13,6 +13,9 @@
 > - Re-check 最初清空报告再重探，弹窗高度从满屏塌成一行再撑开 = 肉眼明显闪烁；
 >   改为**保留旧行**、按钮切 `Re-checking…`（探测期间禁用），高度全程不变
 >   （实测 web 570px / 桌面 558px 恒定）。
+> - 弹窗滚轮死区（标题/动作行/内边距 ~127px）：把滚动容器从 `.modal-body` 换成
+>   弹窗自身 + 头脚 sticky（见 app.css 的 `.modal-settings`）。默认窗口 960×680 下
+>   报告只溢出 ~39px，指针自然落在下沿/动作行 → 旧结构"只剩半行却滚不动"。
 
 **结论**：可行，且绝大部分数据**已经存在**（探测代码都已落地，只是散在设置面板/runner
 里、只输出一个 bool）。新增成本 ≈ 1 个弹窗组件 + 1 个桌面采集模块 + 1 个 JS 汇总函数，
@@ -121,7 +124,7 @@ Routing (policy)
 |---|---|---|
 | `src/components/compat.rs` | **新增**：`CompatModal` 组件 + 行渲染 + 每平台 `collect()` | ~120 行 |
 | `src/components/mod.rs` | `pub mod compat;` | +1 |
-| `src/app.rs` | `UiState.show_compat: Signal<bool>`；渲染 `<CompatModal/>`；**`key_bridge_js` 弹窗门禁（`app.rs:821`）加 `show_compat`** | ~6 行 |
+| `src/app.rs` | `UiState.show_compat: Signal<bool>`；渲染 `<CompatModal/>`；**`native_bridge_js` 弹窗门禁（`app.rs:821`）加 `show_compat`** | ~6 行 |
 | `src/components/toolbar.rs` | `⋯` 菜单加一项 | ~8 行 |
 | `src/compat.rs` | 新增：`CompatReport`/`CompatRow`/`CompatState` 类型 + 桌面采集（cfg 非 wasm） | ~90 行 |
 | `src/transcoder/web.rs` | `extern sticker_compat_report`；`webcodecs_supported()` 改为读明细对象（保持 bool 语义，**唯一实现仍在 JS**）；新增 `compat_report()` | ~40 行 |

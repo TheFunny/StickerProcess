@@ -621,9 +621,43 @@ body {
   font-size: 16px;
 }
 
-/* 设置面板：标题固定在顶、只有正文滚动（预览弹窗不套这层，仍整体滚动） */
+/* 设置面板 / 兼容性报告：标题与动作行固定，**滚动容器是弹窗自身**。
+ *
+ * 曾经让 .modal-body 独占滚动区（弹窗 overflow:hidden），结果是标题+动作行+内边距
+ * 合计 ~127px 的原生滚动死区——指针停在弹窗下沿（那里往往只剩半行内容）上滚轮完全
+ * 没反应。改成弹窗自己滚 + 头/脚 sticky 后，弹窗内任意位置（含内边距与间距）都能滚，
+ * 且不必用脚本转发滚轮（转发还得猜 deltaMode/缩放，手感会与原生不一致）。
+ *
+ * 三处配套：padding/gap 挪进头脚（sticky 的背景要盖住滚上来的内容，透明的间距会漏），
+ * .modal-body 不再收缩（flex:none）且不裁剪——留 min-height:0 会把正文压扁成弹窗高度并
+ * 让内容“溢出到弹窗外面”。 */
 .modal-settings {
-  overflow: hidden;
+  padding: 0;
+  gap: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.modal-settings .modal-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 18px 18px 12px;
+  background: var(--surface);
+}
+
+.modal-settings .modal-body {
+  flex: none;
+  overflow: visible;
+  padding: 0 18px;
+}
+
+.modal-settings .modal-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: 0;
+  padding: 12px 18px 18px;
+  background: var(--surface);
 }
 
 .modal-head {
