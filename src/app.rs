@@ -126,6 +126,8 @@ pub struct UiState {
     pub show_settings: Signal<bool>,
     /// 当前打开预览的任务下标。
     pub show_preview: Signal<Option<usize>>,
+    /// 兼容性报告弹窗开关。
+    pub show_compat: Signal<bool>,
     pub running: Signal<bool>,
     pub overall_progress: Signal<f32>,
     /// 取消标记：runner 在每次尝试前检查；运行中的任务经 cancel_flag 中断 ffmpeg。
@@ -760,6 +762,7 @@ pub fn App() -> Element {
         settings: use_signal(config::load),
         show_settings: use_signal(|| false),
         show_preview: use_signal(|| None),
+        show_compat: use_signal(|| false),
         running: use_signal(|| false),
         overall_progress: use_signal(|| 0.0f32),
         cancel: use_signal(|| false),
@@ -818,7 +821,10 @@ pub fn App() -> Element {
                     }
                 };
                 // 弹窗打开时不代理快捷键（此刻 Run 按钮也是禁用的）
-                if ctx.show_settings.cloned() || ctx.show_preview.cloned().is_some() {
+                if ctx.show_settings.cloned()
+                    || ctx.show_preview.cloned().is_some()
+                    || ctx.show_compat.cloned()
+                {
                     continue;
                 }
                 match msg.as_str() {
@@ -850,6 +856,7 @@ pub fn App() -> Element {
             crate::components::summary::SummaryBar {}
             ProgressBar {}
             SettingsPanel {}
+            crate::components::compat::CompatModal {}
             crate::components::preview::PreviewModal {}
             crate::components::toast::ToastContainer {}
         }

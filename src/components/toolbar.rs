@@ -238,6 +238,14 @@ pub fn Toolbar() -> Element {
                             "Clear Done"
                         }
                         {extra_btn}
+                        button {
+                            class: "menu-item",
+                            onclick: move |_| {
+                                menu_open.set(false);
+                                ctx.show_compat.set(true);
+                            },
+                            "Compatibility Report"
+                        }
                         div { class: "menu-sep" }
                         // 主题：三选一（原先是一个看不出档位的循环按钮）
                         for (value, label) in THEMES {

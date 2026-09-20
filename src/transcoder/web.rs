@@ -32,6 +32,9 @@ extern "C" {
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerWebcodecsProbeSupport)]
     fn sticker_webcodecs_probe_support() -> Result<js_sys::Promise, JsValue>;
+    /// 兼容性报告：引擎资产可达性（明细对象，见 glue 注释）。
+    #[wasm_bindgen(catch, js_name = stickerCompatAssets)]
+    fn sticker_compat_assets() -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerWebcodecsTranscode)]
     fn sticker_webcodecs_transcode(
         data: &[u8],
@@ -218,9 +221,28 @@ pub(crate) async fn exec_webcodecs(
     js_value_to_bytes(out)
 }
 
-/// WebCodecs VP9 编码能力（注入 B glue 后查 caps；不加载 ffmpeg core）。
-/// UI 置灰与 exec_webcodecs 视频路径共用。失败/不支持 → false。
-pub async fn webcodecs_supported() -> bool {
+/// WebCodecs 编码能力明细（glue 的 `stickerWebcodecsProbeSupport`）。
+/// 报告逐项展示；路由只看 [`ProbeDetails::supported`]。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProbeDetails {
+    pub video_encoder: bool,
+    pub muxer: bool,
+    pub rvfc: bool,
+    pub image_decoder: bool,
+    pub offscreen_canvas: bool,
+    pub vp9_8bit: bool,
+}
+
+impl ProbeDetails {
+    /// MP4 的 WebCodecs 快路径是否可用（原 `stickerWebcodecsProbeSupport` 的布尔
+    /// 语义：VideoEncoder + muxer + rVFC + VP9 8-bit caps 全真）。
+    pub fn supported(&self) -> bool {
+        self.video_encoder && self.muxer && self.rvfc && self.vp9_8bit
+    }
+}
+
+/// 注入 glue 并取能力明细（不加载 ffmpeg core）。注入失败/异常 → None。
+pub(crate) async fn probe_details() -> Option<ProbeDetails> {
     if inject_scripts(
         &["webm-muxer.js", "webcodecs-engine.js"],
         "stickerNativeProbe",
@@ -228,17 +250,60 @@ pub async fn webcodecs_supported() -> bool {
     .await
     .is_err()
     {
-        return false;
+        return None;
     }
-    let Ok(promise) = sticker_webcodecs_probe_support() else {
-        return false;
+    let v = sticker_webcodecs_probe_support().ok()?.await.ok()?;
+    if !v.is_object() {
+        return None;
+    }
+    let flag = |key: &str| {
+        js_sys::Reflect::get(&v, &JsValue::from_str(key))
+            .ok()
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false)
     };
-    promise
-        .await
-        .ok()
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    Some(ProbeDetails {
+        video_encoder: flag("videoEncoder"),
+        muxer: flag("muxer"),
+        rvfc: flag("rvfc"),
+        image_decoder: flag("imageDecoder"),
+        offscreen_canvas: flag("offscreenCanvas"),
+        vp9_8bit: flag("vp9_8bit"),
+    })
 }
+
+/// 引擎资产缺失清单（glue 的 `stickerCompatAssets`）。注入失败/异常 → None。
+pub(crate) async fn compat_assets() -> Option<(Vec<String>, Vec<String>)> {
+    if inject_scripts(
+        &["webm-muxer.js", "webcodecs-engine.js"],
+        "stickerNativeProbe",
+    )
+    .await
+    .is_err()
+    {
+        return None;
+    }
+    let v = sticker_compat_assets().ok()?.await.ok()?;
+    let list = |key: &str| {
+        js_sys::Reflect::get(&v, &JsValue::from_str(key))
+            .ok()
+            .and_then(|a| a.dyn_into::<js_sys::Array>().ok())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default()
+    };
+    Some((list("webcodecsMissing"), list("ffmpegMissing")))
+}
+
+/// WebCodecs VP9 编码能力（注入 B glue 后查 caps；不加载 ffmpeg core）。
+/// UI 置灰与 exec_webcodecs 视频路径共用。失败/不支持 → false。
+pub async fn webcodecs_supported() -> bool {
+    probe_details().await.is_some_and(|d| d.supported())
+}
+
 /// 原生探测结果（webcodecs glue 的 stickerNativeProbe，不加载任何引擎）。
 pub(crate) struct NativeProbe {
     pub duration: f64,

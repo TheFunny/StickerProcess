@@ -6,6 +6,7 @@
 // dx bundle 发布产物不弹终端窗口；debug 运行保留控制台看日志
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
+mod compat;
 mod components;
 mod config;
 mod media;

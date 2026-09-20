@@ -1,7 +1,8 @@
 // StickerProcess web engine glue (Route B: WebCodecs + webm-muxer).
 // Loaded by src/transcoder/web.rs via injected <script>; all functions on window.
 // Contract: stickerWebcodecsProbeSupport / stickerWebcodecsTranscode /
-//           stickerWebcodecsCancel / stickerNativeProbe / stickerDownload
+//           stickerWebcodecsCancel / stickerNativeProbe / stickerDownload /
+//           stickerCompatAssets（兼容性报告用，只发 HEAD）
 // 管线移植自 wasm-demo/webcodecs-demo：解码（<video>+rVFC / ImageDecoder）→
 // OffscreenCanvas 512 fit → VideoEncoder(vp9 8-bit) → webm-muxer。
 // 码率/factor 全由 Rust 侧算好传入（与桌面 command.rs 一致，JS 不重复实现）。
@@ -83,18 +84,59 @@
   // rVFC=132+、ImageDecoder=133+——Firefox 130/131 有 VP9 isConfigSupported=true
   // 却无 rVFC，caps 必须拦（否则 MP4 误路由本引擎、Run 必炸）；Firefox 133+
   // 三件齐 → caps 真、MP4 走 B 快路径属预期。图片路径（kind=image）不查 caps。
+  // 返回明细对象而不是单个 bool：路由只用 vp9 那一项（Rust 侧 webcodecs_supported
+  // 由明细算），兼容性报告要逐项展示——只回 bool 时用户看不到到底缺哪一项。
   window.stickerWebcodecsProbeSupport = async () => {
-    if (typeof VideoEncoder === "undefined" || typeof WebMMuxer === "undefined")
-      return false;
-    if (
-      typeof HTMLVideoElement === "undefined" ||
-      !("requestVideoFrameCallback" in HTMLVideoElement.prototype)
-    )
-      return false;
-    const r = await VideoEncoder.isConfigSupported({
-      codec: "vp09.00.10.08", width: 512, height: 512, bitrate: 500000,
-    }).catch(() => null);
-    return !!(r && r.supported);
+    const d = {
+      videoEncoder: typeof VideoEncoder !== "undefined",
+      muxer: typeof WebMMuxer !== "undefined",
+      rvfc:
+        typeof HTMLVideoElement !== "undefined" &&
+        "requestVideoFrameCallback" in HTMLVideoElement.prototype,
+      imageDecoder: typeof ImageDecoder !== "undefined",
+      offscreenCanvas:
+        typeof OffscreenCanvas !== "undefined" &&
+        typeof OffscreenCanvas.prototype.convertToBlob === "function",
+      vp9_8bit: false,
+    };
+    if (d.videoEncoder) {
+      const r = await VideoEncoder.isConfigSupported({
+        codec: "vp09.00.10.08", width: 512, height: 512, bitrate: 500000,
+      }).catch(() => null);
+      d.vp9_8bit = !!(r && r.supported);
+    }
+    return d;
+  };
+
+  // ---- 兼容性报告：引擎资产可达性（只发 HEAD，绝不加载 29.5MB 的 core）----
+  // 缺失路径在静态服务器/Pages 上常被兜底成 HTML 200（本仓库部署就用 404.html
+  // 兜 SPA），只看 res.ok 会把缺件报成可用——必须同时看 content-type 与长度。
+  window.stickerCompatAssets = async () => {
+    const base = location.href.replace(/\/[^/]*$/, "");
+    const reachable = async (file) => {
+      try {
+        const res = await fetch(`${base}/${file}`, { method: "HEAD" });
+        if (!res.ok) return false;
+        const type = res.headers.get("Content-Type") || "";
+        const len = Number(res.headers.get("Content-Length")) || 0;
+        return !type.includes("text/html") && len > 0;
+      } catch {
+        return false;
+      }
+    };
+    const missing = async (files) => {
+      const ok = await Promise.all(files.map(reachable));
+      return files.filter((_, i) => !ok[i]);
+    };
+    return {
+      webcodecsMissing: await missing(["webm-muxer.js", "webcodecs-engine.js"]),
+      ffmpegMissing: await missing([
+        "ffmpeg.js",
+        "814.ffmpeg.js",
+        "ffmpeg-core-st.js",
+        "ffmpeg-core-st.wasm",
+      ]),
+    };
   };
 
   // ---- 图片 → PNG：解码首帧 → canvas 512 fit → PNG 字节（无损）----

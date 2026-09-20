@@ -47,6 +47,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 |`scripts/fetch-ffmpeg-static.sh`|从 `TheFunny/ffmpeg-static-win` 的 Release 取回静态 ffmpeg（解包到 `ffmpeg-dist/` 当 `FFMPEG_DIR`）：tag 与 sha256 的唯一出处，`release-desktop.yml` / `ci.yml` 与本地开发共用 |
 | `docs/RELEASE.md` | NSIS installer upgrade semantics, current gaps, and future updater options |
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
+| `docs/COMPAT_REPORT_PLAN.md` | Compatibility Report 按钮：开工前可行性报告（数据源盘点）+ 实测差异与验证记录 |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
 | `docs/WEB_DEMO_FINDINGS_C.md` | Route C spike: WebCodecs in-block alpha webm **not feasible** (encoder accepts I420A but emits no alpha bitstream) — kills dual-track plan |
 |`docs/W4_CORE_BUILD.md`|Self-built ffmpeg.wasm core recipe (built by CI in `TheFunny/ffmpeg-core-st`, published as release assets), rollback record |
@@ -62,7 +63,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
 | `ico/` | App icon：`icon.ico`（5-image PNG-in-ICO，tracked——CI 打包需要）；其余尺寸 png gitignored。`input/`/`out/`/`output/`/`target/` 全 gitignored |
-| `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker 入库；`ffmpeg-core-st.{js,wasm}` 由 `scripts/fetch-ffmpeg-core.sh` 取）、`favicon.png`（tab 图标）与 `og-image.png`（分享卡片图；两者 App rsx `document::Link`/`Meta` 相对路径引用）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；两份都 gitignore，远端唯一出处 = `TheFunny/ffmpeg-core-st` 的 Release（CI 构建 + headless Chromium 冒烟 + sha256，见 `docs/W4_CORE_BUILD.md`）|
+| `assets/` | Web glue + **自建** ffmpeg.wasm core（**不**由 dx 复制——每次构建后手动 cp 到 `target/dx/.../web/public/` 根，见 Gotchas）：`ffmpeg-engine.js`（glue `stickerFfmpeg*`，pix_fmt 由 Rust 矩阵传入）、`webcodecs-engine.js`（glue `stickerWebcodecs*` + `stickerNativeProbe` + `stickerDownload` + `stickerCompatAssets`）、`webm-muxer.js`（webm-muxer@5 UMD）、ffmpeg.wasm ST core bundle（`ffmpeg.js` UMD wrapper + `814.ffmpeg.js` classic worker 入库；`ffmpeg-core-st.{js,wasm}` 由 `scripts/fetch-ffmpeg-core.sh` 取）、`favicon.png`（tab 图标）与 `og-image.png`（分享卡片图；两者 App rsx `document::Link`/`Meta` 相对路径引用）。core 为自建件（上游 `f876f90`，FFmpeg n5.1.4/emsdk 3.1.40 + libvpx `--enable-vp9-highbitdepth`，修复预构建的 10-bit 回退与 MP4 OOB 崩溃）；两份都 gitignore，远端唯一出处 = `TheFunny/ffmpeg-core-st` 的 Release（CI 构建 + headless Chromium 冒烟 + sha256，见 `docs/W4_CORE_BUILD.md`）|
 
 ## Architecture
 
@@ -161,6 +162,24 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 - **Theming**: CSS custom properties in `app.css`; `[data-theme="dark"]` on
   `<html>` overrides variables. Theme is part of `Settings` (persisted); toggles
   live in the toolbar and the settings panel.
+- **Compatibility Report** (toolbar `⋯` menu → `Compatibility Report`; UI in
+  `components/compat.rs`, data in `compat.rs`): read-only environment checkup —
+  engine availability, browser caps, engine-asset reachability, and the routing
+  policy for each media type. It reuses `Engine::for_web` for the routing rows
+  (never a second copy of the matrix), reads the cached `SidecarProbe`, and on
+  wasm calls the same caps probe as `webcodecs_supported()` (`probe_details`;
+  the glue returns a per-capability object, the bool is derived from it) plus
+  `stickerCompatAssets` (HEAD requests only — **never** loads the 29.5 MB core).
+  Asset rows are the sanctioned way to spot the "forgot to copy `assets/` to the
+  web root" trap: a missing file gets a 200-HTML SPA fallback on Pages, so the
+  check rejects `text/html` and empty `Content-Length` instead of trusting
+  `res.ok`. Desktop collection is blocking (spawns `ffmpeg -version`, writes a
+  probe file for output-dir writability) and therefore runs through
+  `runner::run_blocking`. Re-check keeps the previous rows on screen (only the
+  button flips to "Re-checking…" and is disabled while probing) — clearing the
+  report first collapses the modal to one line and back, which reads as a flash.
+  Opening it must be added to the `key_bridge_js` modal gate (`ctx.show_compat`)
+  or Ctrl+Enter would start a run behind the modal.
 - **Transcoding**:
   - Video bitrate (both engines): `-b:v` computed from target size and
     duration (`256 * 1024 * 8 bits / duration_seconds`), `-bufsize = b:v * 1.5`,
@@ -247,7 +266,7 @@ run lazily initializes it.
 ```bash
 cargo run            # debug
 cargo build --release
-cargo test           # 45 unit tests + 5 #[ignore] libav smoke tests
+cargo test           # 52 unit tests + 5 #[ignore] libav smoke tests
 cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
 
 # web (wasm32): engine matrix runs in browser; core assets in assets/ (29.5MB wasm gitignored)
@@ -256,8 +275,8 @@ cargo check --target wasm32-unknown-unknown --no-default-features --features web
 dx serve --platform web
 ```
 
-Test count: 45 unit tests across media/config/command/preview/app/steps/
-inprocess/runner/number_field, plus 5 integration smoke tests (`inprocess_video_smoke`,
+Test count: 52 unit tests across media/config/command/preview/app/steps/
+inprocess/runner/number_field/compat, plus 5 integration smoke tests (`inprocess_video_smoke`,
 `inprocess_gif_smoke`, `inprocess_image_smoke`,
 `image_has_no_size_factor_after_transcode`,
 `force_fps_frame_count_matches_sidecar`) that require the static
@@ -333,7 +352,8 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   desktop-only (`Video(AnimatedWebP)` never reaches `for_web`; the last arm
   pins it to ffmpeg-wasm harmlessly — web side keeps it as Image(Webp) →
   first-frame png). `webcodecs_ok` is probed once per Run in `runner::run_all`
-  (wasm); the tuple's pix_fmt (`VideoType::pix_fmt`) rides on `WebJob` through
+  (wasm) via `web::probe_details`（glue 返回逐项明细，bool 由明细算——兼容性报告
+  消费同一份明细）；the tuple's pix_fmt (`VideoType::pix_fmt`) rides on `WebJob` through
   `stickerFfmpegTranscode`.
 - Errors from the transcode core are `transcoder::TranscodeError` (thiserror);
   cancellation is matched via the enum, never by string comparison.
