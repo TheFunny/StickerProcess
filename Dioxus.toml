@@ -21,3 +21,8 @@ title = "Sticker Process"
 # WebView2 安装策略（文档 Bundle.windows）：
 # OfflineInstaller = 内嵌离线安装器（当前默认行为，安装包大但离线可用）
 webview_install_mode = { OfflineInstaller = { silent = true } }
+
+[bundle.windows.nsis]
+# 安装前钩子：结束正在运行的实例 + 拒绝静默降级覆盖（见 build/nsis-hooks.nsh
+# 与 docs/RELEASE.md「升级防护」）。dx 会把它 !include 进生成的 installer.nsi。
+installer_hooks = "build/nsis-hooks.nsh"

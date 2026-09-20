@@ -20,31 +20,51 @@
 ## 现状缺失的三块
 
 1. **无应用内更新检查**：未接入 `dioxus-updater` 插件，不会自动提示新版本。
-2. **无运行中防护**：`.nsi` 没有程序运行检测——升级时若 StickerProcess
-   正在运行，覆盖 `StickerProcess.exe` 会弹 NSIS 的"文件被占用"
-   （Retry/Abort）对话框。用户需先手动退出程序。
-3. **无版本比较**：已装新版再运行旧安装包不会被拦截（会静默降级覆盖）。
+2. ~~**无运行中防护**~~ → **已解决（2026-09-21）**，见下节「升级防护」。
+3. ~~**无版本比较**~~ → **已解决（2026-09-21）**，见下节「升级防护」。
+
+## 升级防护（2026-09-21 落地）
+
+`build/nsis-hooks.nsh` 通过 `Dioxus.toml` 的 `[bundle.windows.nsis] installer_hooks`
+被 dx `!include` 进生成的 `installer.nsi`（**不 fork 模板**——dx 升级模板时不用跟着改；
+若将来 dx 自己定义 `.onInit`，会编译期报重复定义，是大声失败）。钩子只有一个入口
+`.onInit`（任何 Section 之前运行，晚了就没意义）：
+
+| 检查 | 行为 |
+|---|---|
+| 程序正在运行 | `taskkill`（不带 `/F`，即 WM_CLOSE 优雅退出）→ 等 800ms 复查 → 仍在则交互式询问 OK/Cancel（OK 才 `/F` 强杀，Cancel 中止安装）。**静默安装不弹窗，直接 `/F`**。<br>检测不靠窗口标题（`FindWindow` 会随标题改动失效），只看 `taskkill` 退出码（0 = 确实结束了进程，128 = 没找到）。 |
+| 已装版本更新 | 读注册表 `DisplayVersion` 与**安装器自身**的 FileVersion 比较（模板把 `{{version}}` 写进了 VERSIONINFO）。已装更新 → 交互式确认"仍要装旧版吗"，**静默安装直接拒绝并以退出码 3 结束**（CI/无人值守不会把旧包盖上去）。读不到任一版本就放行——不为防守卡死正常安装。 |
+
+版本比较直接用 NSIS 自带 `WordFunc.nsh` 的 `${VersionCompare}`（字段数不同按缺位补 0，
+故已装 `0.1.0` 与安装包 `0.1.0.0` 判为相等），没有手写解析。
+
+**两个易踩的点**（都已在 hooks 里规避）：
+
+- 钩子文件**不经过 handlebars 渲染**，所以里面不能写 `{{version}}`；新版本号只能从
+  安装器自身的 VERSIONINFO 读（`${GetFileVersion} "$EXEPATH"`）。
+- NSIS 默认按 ANSI 代码页读脚本；hooks 里的中文注释要求 `makensis` 以 UTF-8 读入
+  （dx 自己调用时已带该参数——本项目实测 `dx bundle --package-types nsis` 通过）。
+
+**验证**（2026-09-21 实测，非推测）：
+
+- 版本比较 8/8 用例（含 `0.1.0` vs `0.1.0.0` 判等、`0.10 > 0.1` 的数字比较）：
+  用抽取出的 `STP_IsDowngrade` 编一个最小安装器跑静默安装，结果写文件读回。
+- 降级拦截端到端：伪造 HKCU 测试键（`…\Uninstall\com.stickerprocess.guardtest`）
+  `DisplayVersion=9.9.9` → 静默安装**退出码 3 且未写任何文件**；`0.0.1` / `0.1.0` /
+  无值 → 正常继续。测试键结束后删除，真实键未被动过。
+- 运行中防护端到端：把 app 复制成 `StickerProcessGuardTest.exe` 跑起来 → 静默安装
+  rc 0 且继续，2 秒内该进程消失（supervisor 报 exit code 0，即优雅退出而非强杀）；
+  无实例时 1.1s 直接放行。
 
 ## 升级方案选项（按实现成本排序）
 
-### 1. 自定义 .nsi 模板（低成本，解决 2/3）
+### 1. ~~自定义 .nsi 模板~~ → 用 installer_hooks 实现（✅ 已完成 2026-09-21，解决 2/3）
 
-dx 支持通过 `Dioxus.toml` 提供自定义 NSIS 模板。在生成的模板基础上追加：
+原计划 fork 自定义模板；实际 dx 的模板已支持 `installer_hooks`（`[bundle.windows.nsis]`），
+注入一个 `.nsh` 就够——**不必维护模板副本**（fork 的话 dx 每次升级模板都要手动跟）。
+实现与验证见上面「升级防护」。
 
-```nsis
-; 升级前检测程序是否运行（需要 nsProcess 插件或 FindWindow 轮询）
-!insertmacro MUI_PAGE_WELCOME
-
-Section "Install"
-    ; 关闭正在运行的实例（taskkill 需要用户确认或静默 /IM）
-    nsExec::Exec 'taskkill /IM StickerProcess.exe /FI "PID gt 0"'
-SectionEnd
-```
-
-加上版本比较宏（读注册表 `DisplayVersion` 与 `VIProductVersion` 比较，
-已装更新版本则弹窗确认降级）。
-
-### 2. 应用内"检查更新"提示（中成本，解决 1）
+### 2. 应用内"检查更新"提示（中成本，解决 1 — 未做，见 docs/BACKLOG.md A1）
 
 启动时（或手动按钮）GET 一个版本清单 URL（如 GitHub Releases 的
 `latest.json`），比较 `DisplayVersion`，发现新版弹 toast + 打开下载链接。

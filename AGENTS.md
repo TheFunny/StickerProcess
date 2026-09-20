@@ -41,6 +41,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch + sidecar stderr event pump), `command.rs` (ffmpeg command gen + `SCALE_FILTER` / `DEFAULT_DURATION_FACTORS` + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
+| `build/nsis-hooks.nsh` | NSIS 安装前钩子（`[bundle.windows.nsis] installer_hooks`）：`.onInit` 里结束正在运行的实例 + 拒绝静默降级覆盖。**不 fork dx 的 NSIS 模板**；文件不经 handlebars 渲染（读安装器自身 VERSIONINFO 取新版本号）。见 `docs/RELEASE.md` §升级防护 |
 | `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
 | `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
 |`scripts/fetch-ffmpeg-core.sh`|从 `TheFunny/ffmpeg-core-st` 的 Release 取回自建 ffmpeg.wasm core（`assets/ffmpeg-core-st.{js,wasm}`）：core 版本与 sha256 的唯一出处，CI 与本地开发共用 |
@@ -49,6 +50,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/REFACTOR_PLAN.md` | Post-Phase-D refactor checklist (P1–P5) and rejected/deferred decisions with rationale |
 | `docs/COMPAT_REPORT_PLAN.md` | Compatibility Report 按钮：开工前可行性报告（数据源盘点）+ 实测差异与验证记录 |
 | `docs/MOTION_REVIEW.md` | 弹窗/Toast 动画评审：实测数据（丢帧、时长、重启、reduced-motion）+ 建议与实施记录 |
+| `docs/BACKLOG.md` | **待办索引**：各计划文档里尚未落地的项 + 状态 + 优先级，以及"有意排除"清单（先查这里再翻各计划原文） |
 | `docs/WEB_DEMO_FINDINGS_B.md` | Route B spike record: WebCodecs pipeline timings, alpha:'keep' unsupported, browser coverage (corrected 2026-09: Firefox 133+ full stack) |
 | `docs/WEB_DEMO_FINDINGS_C.md` | Route C spike: WebCodecs in-block alpha webm **not feasible** (encoder accepts I420A but emits no alpha bitstream) — kills dual-track plan |
 |`docs/W4_CORE_BUILD.md`|Self-built ffmpeg.wasm core recipe (built by CI in `TheFunny/ffmpeg-core-st`, published as release assets), rollback record |
