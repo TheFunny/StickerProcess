@@ -60,7 +60,7 @@ jobs:
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Test (desktop)
-        run: cargo test
+        run: cargo test --locked
 
   build:
     needs: test
@@ -104,6 +104,11 @@ jobs:
       # 版本与 sha256 钉在 scripts/fetch-ffmpeg-core.sh（唯一出处）。
       - name: Fetch ffmpeg core wasm
         run: bash scripts/fetch-ffmpeg-core.sh
+
+      # dx 不透传 cargo 标志，先用 fetch --locked 卡住锁文件漂移
+      # （否则 manifest 与 Cargo.lock 不一致时会静默重解析，绕过评审）
+      - name: Verify lockfile
+        run: cargo fetch --locked
 
       - name: Build web bundle (release)
         run: dx build --platform web --release --base-path /StickerProcess/

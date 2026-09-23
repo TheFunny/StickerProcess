@@ -47,7 +47,7 @@ jobs:
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Test
-        run: cargo test --release
+        run: cargo test --locked --release
 
       # 两个安装包变体：Dioxus.toml 的 webview_install_mode 无命令行覆盖，
       # 只能 sed 改 TOML 换装两次。产物必须 cp 到 dist/ —— 第二次 dx bundle
@@ -78,7 +78,7 @@ jobs:
       - name: Build portable exe
         shell: bash
         run: |
-          cargo build --release
+          cargo build --locked --release
           v=${GITHUB_REF_NAME#v}
           cp target/release/StickerProcess.exe "dist/StickerProcess_${v}_x64-portable.exe"
 

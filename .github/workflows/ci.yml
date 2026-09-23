@@ -36,7 +36,7 @@ jobs:
             clippy-web-${{ runner.os }}-
 
       - name: Clippy (wasm32)
-        run: cargo clippy --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
+        run: cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
 
   # 两个 target 看到的 cfg 不同（对方的平台专属项会被报成 never used），所以两个都要跑
   clippy-desktop:
@@ -77,7 +77,7 @@ jobs:
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Clippy (desktop)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
   # 单测门禁：此前 cargo test 只在 tag 触发的 release workflow 里跑，
   # 回归可以全红合入 master。与 clippy 并行；夹具/环境同 clippy-desktop。
@@ -115,4 +115,4 @@ jobs:
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Test (desktop)
-        run: cargo test
+        run: cargo test --locked
