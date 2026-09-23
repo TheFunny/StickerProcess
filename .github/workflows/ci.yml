@@ -16,16 +16,16 @@ jobs:
   clippy-web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain (wasm32)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: wasm32-unknown-unknown
           components: clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
@@ -42,15 +42,15 @@ jobs:
   clippy-desktop:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain (MSVC)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           components: clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
@@ -63,7 +63,7 @@ jobs:
       # 与 release-desktop.yml 同一份预构建静态库（clippy 也要过 build.rs）；
       # key 跟着取件脚本走，改 pin 就自动换缓存。
       - name: Cache ffmpeg static libs
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: ffmpeg-dist
           key: ffmpeg-static-win-${{ hashFiles('scripts/fetch-ffmpeg-static.sh') }}
@@ -84,13 +84,13 @@ jobs:
   test-desktop:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Rust toolchain (MSVC)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
@@ -101,7 +101,7 @@ jobs:
             test-desktop-${{ runner.os }}-
 
       - name: Cache ffmpeg static libs
-        uses: actions/cache@v4
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: ffmpeg-dist
           key: ffmpeg-static-win-${{ hashFiles('scripts/fetch-ffmpeg-static.sh') }}
