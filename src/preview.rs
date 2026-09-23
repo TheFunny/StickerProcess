@@ -69,6 +69,15 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
 
 type Body = Vec<u8>;
 
+/// 单次 Range 响应窗口上限（开区间与超大闭区间一律适用）。预览协议就是为
+/// "大文件轨"设计的，而 Chromium/WebView2 对 `<video>` 的首个请求常是
+/// `bytes=0-`（开区间）——展开为整个文件一次分配，GB 级输入直接 OOM，
+/// `panic=abort` 下就是进程崩溃。截成 8 MiB 窗口后按 206 返回（Content-Range
+/// 如实标注），媒体元素按窗口续发 Range 续读，起播不受影响。
+/// 残余：无 Range 头的 200 全量读仍整读进内存——wry 的自定义协议响应体只收
+/// 完整字节、流式不可用；图片输入是 MB 级可接受，视频实测走 Range 路径。
+const MAX_WINDOW: u64 = 8 * 1024 * 1024;
+
 fn full(mime: &'static str, data: Body) -> HttpResponse<Cow<'static, [u8]>> {
     HttpResponse::builder()
         .status(StatusCode::OK)
@@ -115,6 +124,8 @@ fn parse_range(header: Option<&str>, total: u64) -> Option<(u64, u64)> {
         Ok(end) => end.min(total - 1),
         Err(_) => total - 1, // open-ended "bytes=N-"
     };
+    // 单次响应窗口：闭区间的显式大 end 与开区间一样受约束（见 MAX_WINDOW）
+    let end = end.min(start.saturating_add(MAX_WINDOW - 1));
     if end < start {
         return None;
     }
@@ -209,6 +220,21 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=1000-"), 1000), None); // 越界
         assert_eq!(parse_range(None, 1000), None);
         assert_eq!(parse_range(Some("malformed"), 1000), None);
+    }
+
+    /// 回归：单次响应封顶在 MAX_WINDOW——开区间与显式大 end 都不得展开成
+    /// 整个大文件的一次性分配（GB 级输入 OOM → panic=abort 直接崩进程）。
+    #[test]
+    fn range_parsing_caps_single_response_window() {
+        let gb = 2u64 * 1024 * 1024 * 1024;
+        let cap = 8 * 1024 * 1024;
+        assert_eq!(parse_range(Some("bytes=0-"), gb), Some((0, cap - 1)));
+        assert_eq!(
+            parse_range(Some(&format!("bytes=100-{gb}")), gb),
+            Some((100, 100 + cap - 1))
+        );
+        // 窗口不干扰正常小请求
+        assert_eq!(parse_range(Some("bytes=0-99"), gb), Some((0, 99)));
     }
 
     #[test]
