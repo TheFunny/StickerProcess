@@ -78,6 +78,9 @@ fn find_duration_payload(data: &[u8]) -> Result<usize, TranscodeError> {
 ///
 /// 载荷写成 100 **Segment Ticks**：TimestampScale 恒为 1e6 ns（1 tick = 1 ms），
 /// 即对外声称 0.1 s，让产物绕过 Telegram 的贴纸时长检测（超长文件会被拒收）。
+/// 桌面生产路径是 patch_webm_file（原地 8 字节写），本函数只被 wasm 的
+/// finish_web_job 与回归测试消费。
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(super) fn patch_webm_bytes(mut data: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     let at = find_duration_payload(&data)?;
     data[at..at + 8].copy_from_slice(&100f64.to_be_bytes());
