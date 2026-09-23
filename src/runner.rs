@@ -345,12 +345,15 @@ async fn run_single_task(
             } else {
                 // 与 iced NextProcess(Err) 一致：标记 Alert 后跳到下一个任务。
                 // 半成品（无 trailer 的 webm 等）与 cancel 路径同法清理，
-                // 不留在输出目录冒充成品
+                // 不留在输出目录冒充成品。Re-run 时被删的可能是上一次成功
+                // 的产物——size 必须一并清掉，否则镜像仍显示 ✓/KB、Reveal 与
+                // 预览入口保留，而文件已不存在（with_task 随后同步镜像）。
                 log::error!("Failed to process {name}: {err}");
-                if let Ok(t) = task_arc.lock()
+                if let Ok(mut t) = task_arc.lock()
                     && let Some(out) = t.get_output()
                 {
                     let _ = std::fs::remove_file(out);
+                    t.output_size = None;
                 }
                 ctx.touch_entry(index, |e| e.error = Some(err.to_string()));
                 ctx.with_task(index, |t| t.status = Status::Alert);
@@ -440,11 +443,13 @@ async fn run_single_task(
     }
 
     if cancelled {
-        // 半成品输出（无 trailer 的 webm 等）直接清理，避免残留坏文件
-        if let Ok(t) = task_arc.lock()
+        // 半成品输出（无 trailer 的 webm 等）直接清理，避免残留坏文件；
+        // 同上：attempt 顶部取消时删掉的可能是 Re-run 前的旧成品，size 一并清
+        if let Ok(mut t) = task_arc.lock()
             && let Some(out) = t.get_output()
         {
             let _ = std::fs::remove_file(out);
+            t.output_size = None;
         }
         ctx.touch_entry(index, |e| e.progress = None);
         ctx.with_task(index, |t| t.status = Status::Pending);
