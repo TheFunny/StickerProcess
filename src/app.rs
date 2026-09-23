@@ -445,31 +445,37 @@ impl UiState {
     }
 
     /// 一键下载全部 Done 任务的产物（web：字节驻内存，顺序触发浏览器下载，
-    /// 400ms 间隔防多文件拦截）。无锁镜像名 + 锁内克隆字节（单线程 wasm，
-    /// 与 task_list 行内下载同法）。
+    /// 400ms 间隔防多文件拦截）。只预收集 Arc+文件名（O(1)/项），字节在循环内
+    /// 逐个锁取——先全量克隆再下载是 N×512KB 的双份峰值（产物本就驻内存）。
     #[cfg(target_arch = "wasm32")]
     pub fn download_all(&mut self) {
-        let items: Vec<(Vec<u8>, String)> = self
-            .tasks
-            .cloned()
-            .iter()
-            .filter(|e| e.mirror.status == Status::Done)
-            .filter_map(|e| {
-                let bytes = e.transcoder.lock().ok()?.output_bytes.clone()?;
-                let name = e
-                    .mirror
-                    .output_file_name
-                    .clone()
-                    .unwrap_or_else(|| "sticker.webm".into());
-                Some((bytes, name))
-            })
-            .collect();
+        let items: Vec<(std::sync::Arc<std::sync::Mutex<crate::transcoder::Transcoder>>, String)> =
+            self.tasks
+                .cloned()
+                .iter()
+                .filter(|e| e.mirror.status == Status::Done)
+                .map(|e| {
+                    let name = e
+                        .mirror
+                        .output_file_name
+                        .clone()
+                        .unwrap_or_else(|| "sticker.webm".into());
+                    (std::sync::Arc::clone(&e.transcoder), name)
+                })
+                .collect();
         let mut ctx = *self;
         spawn(async move {
             let mut failed = 0usize;
-            for (bytes, name) in items {
-                if crate::transcoder::web::sticker_download(&bytes, &name).is_err() {
-                    log::error!("download failed: glue missing");
+            for (transcoder, name) in items {
+                // 锁内克隆单项字节、下载完立即释放，不跨 await 持锁（wasm 单线程）
+                let ok = {
+                    let bytes = transcoder.lock().ok().and_then(|t| t.output_bytes.clone());
+                    bytes
+                        .as_deref()
+                        .is_some_and(|b| crate::transcoder::web::sticker_download(b, &name).is_ok())
+                };
+                if !ok {
+                    log::error!("download failed: glue missing or output gone");
                     failed += 1;
                 }
                 crate::timers::sleep(std::time::Duration::from_millis(400)).await;
