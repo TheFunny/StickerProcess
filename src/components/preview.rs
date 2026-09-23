@@ -34,7 +34,9 @@ pub fn PreviewModal() -> Element {
     let mut ctx = use_context::<UiState>();
     // 输出 data URL 缓存：以 (输出路径, 大小) 为键，键不变不重读盘/重编码
     // （hook 必须在早退之前调用；Rc<RefCell> 非信号，绝不触发重渲染）。
-    let output_cache = use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, String)>)));
+    // 存 Rc<str>：data URL 可达 ~699KB，跑批期间 10Hz 重渲染时 String 克隆
+    // 是 ~14MB/s 的无谓 memcpy，Rc 克隆是 O(1)。
+    let output_cache = use_hook(|| Rc::new(RefCell::new(None::<(PathBuf, u64, Rc<str>)>)));
     // wasm 输入侧 object URL 缓存：以 (输入名, 大小) 为键；键变时 revoke 旧 URL
     // （Blob 已在构造时拷贝字节，revoke 不影响已渲染元素）。非信号，不触发重渲染。
     #[cfg(target_arch = "wasm32")]
@@ -45,7 +47,7 @@ pub fn PreviewModal() -> Element {
     let Some(index) = index else {
         return rsx! {};
     };
-    let Some(entry) = ctx.tasks.cloned().get(index).cloned() else {
+    let Some(entry) = ctx.tasks.read().get(index).cloned() else {
         return rsx! {};
     };
 
@@ -60,14 +62,14 @@ pub fn PreviewModal() -> Element {
     // (输出路径, 大小)——转码期间 tasks 信号 10Hz 更新不会重复编码。
     // 桌面从镜像路径读盘（免锁）；wasm 锁内克隆 output_bytes（单线程，
     // 锁从不跨 await 持有，渲染期同步取锁与 task_list 下载同一模式）。
-    let output_url: Option<String> = {
+    let output_url: Option<Rc<str>> = {
         let key = match (&entry.mirror.output_path, &entry.mirror.output_size) {
             (Some(path), Some(size)) => Some((path.clone(), *size)),
             _ => None,
         };
         let mut slot = output_cache.borrow_mut();
         match (&key, slot.as_ref()) {
-            (Some((p, s)), Some((lp, ls, url))) if lp == p && ls == s => Some(url.clone()),
+            (Some((p, s)), Some((lp, ls, url))) if lp == p && ls == s => Some(Rc::clone(url)),
             _ => {
                 let url = key.as_ref().and_then(|(path, _size)| {
                     let mime = output_mime(path);
@@ -90,8 +92,9 @@ pub fn PreviewModal() -> Element {
                 // 只缓存成功值：失败（文件被删/改名、杀软瞬时锁住）不入缓存，
                 // 否则空串被当有效 URL 渲染成空元素且永不重试（key 不变）。
                 // key 为 None 时清空，避免复用上一个任务的 URL。
+                let url = url.map(Rc::from);
                 *slot = match (&key, &url) {
-                    (Some((p, s)), Some(u)) => Some((p.clone(), *s, u.clone())),
+                    (Some((p, s)), Some(u)) => Some((p.clone(), *s, Rc::clone(u))),
                     _ => None,
                 };
                 url
@@ -188,7 +191,7 @@ pub fn PreviewModal() -> Element {
                     }
                     div { class: "preview-pane",
                         span { class: "label", "{output_side_label}" }
-                        {render_output(output_url.clone(), entry.mirror.is_video, show_loading)}
+                        {render_output(output_url.as_deref(), entry.mirror.is_video, show_loading)}
                     }
                 }
 
@@ -350,7 +353,8 @@ mod tests {
 }
 
 /// 输出侧内容：有 data URL 按类型渲染；已完成但还在编码 → Loading；否则占位。
-fn render_output(url: Option<String>, is_video: bool, loading: bool) -> Element {
+/// 收 &str：data URL 可达 ~699KB，调用方正处在渲染路径上，不为传参再拷一次。
+fn render_output(url: Option<&str>, is_video: bool, loading: bool) -> Element {
     match url {
         Some(url) if is_video => rsx! {
             video { src: "{url}", controls: true, loop: true }
