@@ -10,6 +10,7 @@
 use dioxus::desktop::{Config, wry};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use wry::http::header::{CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE};
 use wry::http::{Request as HttpRequest, Response as HttpResponse, StatusCode};
 
@@ -167,37 +168,23 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
     None
 }
 
+/// 编码保留集：RFC3986 unreserved（`-_.~` 已在 NON_ALPHANUMERIC 之外……不，
+/// NON_ALPHANUMERIC 编码除字母数字外的一切，故逐个 remove 出不编码的字符）+
+/// 路径现场需要的 `\` 与 `:`——URL 只在本进程 WebView 内往返，保持可读。
+const PATH_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'\\')
+    .remove(b':');
+
 pub fn percent_encode(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for byte in raw.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'\\' | b':' => {
-                out.push(*byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
+    utf8_percent_encode(raw, PATH_SET).to_string()
 }
 
 pub fn percent_decode(encoded: &str) -> String {
-    let bytes = encoded.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 3 <= bytes.len()
-            && let Ok(byte) =
-                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
-        {
-            out.push(byte);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_decode_str(encoded).decode_utf8_lossy().into_owned()
 }
 
 #[cfg(test)]

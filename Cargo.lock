@@ -15,6 +15,7 @@ dependencies = [
  "libc",
  "log",
  "oxipng",
+ "percent-encoding",
  "pretty_env_logger",
  "rfd",
  "serde",
