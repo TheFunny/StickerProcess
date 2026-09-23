@@ -111,7 +111,7 @@ mod desktop {
     use std::path::Path;
 
     pub fn collect_blocking(settings: &Settings) -> CompatReport {
-        let resolved = crate::runner::resolve_engine(settings.engine, false);
+        let resolved = crate::runner::resolve_engine(settings.engine);
         CompatReport {
             sections: vec![
                 CompatSection::new("Platform", platform_rows(settings, resolved)),
