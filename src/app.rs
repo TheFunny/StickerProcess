@@ -132,6 +132,14 @@ pub struct UiState {
     pub show_compat: Signal<bool>,
     pub running: Signal<bool>,
     pub overall_progress: Signal<f32>,
+    /// [桌面] 有未落盘的设置修改（关窗兜底 flush 据此决定是否补写）。
+    /// wasm 即时写 localStorage，无去抖窗口，不需要此状态。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub save_pending: Signal<bool>,
+    /// [桌面] 设置修改代数：每次修改递增，旧去抖任务见代数不匹配即退场——
+    /// 只有最新一次修改的任务真正写盘，等价于原同步写的单写者保序。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub save_epoch: Signal<u64>,
     /// 行内转码进度 (任务下标, 0..=1)，仅 Processing 期间有值。
     /// 刻意不放进 TaskMirror：镜像随 tasks 信号整表订阅，10Hz 进度写入会把
     /// TaskList/Summary/Toolbar/Preview 全部标脏重跑（它们的数字在 10Hz 尺度
@@ -183,12 +191,47 @@ impl UiState {
             }
         });
     }
-    /// 修改设置并即时同步落盘（settings.toml 仅 ~200B，写盘亚毫秒级；
-    /// 同步执行杜绝并发写撕裂/乱序——异步写完成后旧值可能覆盖新值）。
+    /// 修改设置；桌面 300ms 单飞去抖落盘，wasm 即时写 localStorage。
+    ///
+    /// 桌面原先逐键同步写：每键 = Settings 克隆 + toml 序列化 + create_dir_all +
+    /// fs::write + rename，Windows+Defender 下 rename 可达数十 ms，直接落在
+    /// 渲染帧上（路径输入框逐键触发）。去抖不牺牲原同步写的保序性质：写盘只
+    /// 发生在去抖任务里，代数保证单写者，且单执行器上快照与写盘之间无 await
+    /// ——不会交错出撕裂/旧值覆盖新值。去抖窗口内的尾写由 App 的 CloseRequested
+    /// 兜底（wry handler 先于 dioxus 关窗处理执行）。
     pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings)) {
         self.settings.with_mut(f);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.save_pending.set(true);
+            let epoch = self.save_epoch.cloned() + 1;
+            self.save_epoch.set(epoch);
+            let mut ctx = *self;
+            spawn(async move {
+                crate::timers::sleep(std::time::Duration::from_millis(300)).await;
+                // 期间又有修改 → 新任务（更高代数）负责写盘，本任务退场
+                if ctx.save_epoch.cloned() == epoch {
+                    ctx.flush_settings();
+                }
+            });
+            return;
+        }
+
+        // wasm：localStorage 同步写 ~1KB，无窗口生命周期钩子语义，保持即时写
+        #[cfg(target_arch = "wasm32")]
+        self.flush_settings();
+    }
+
+    /// 落盘当前设置快照。成功清 dirty（保留失败态：关窗兜底会再试一次）。
+    pub fn flush_settings(&mut self) {
         let snapshot = self.settings.cloned();
-        if let Err(e) = config::save(&snapshot) {
+        let saved = config::save(&snapshot);
+        #[cfg(not(target_arch = "wasm32"))]
+        if saved.is_ok() {
+            self.save_pending.set(false);
+        }
+        if let Err(e) = saved {
             log::error!("Failed to save settings: {e}");
             // wasm 无日志后端、release 桌面无控制台——只写 log 时设置静默丢失。
             // 逐键触发下按文案去重：持续失败（磁盘满/存储禁用）不刷屏，
@@ -810,6 +853,10 @@ pub fn App() -> Element {
         running: use_signal(|| false),
         overall_progress: use_signal(|| 0.0f32),
         progress: use_signal(|| None),
+        #[cfg(not(target_arch = "wasm32"))]
+        save_pending: use_signal(|| false),
+        #[cfg(not(target_arch = "wasm32"))]
+        save_epoch: use_signal(|| 0u64),
         cancel: use_signal(|| false),
         toasts: use_signal(Vec::new),
         undo: use_signal(|| None),
@@ -848,6 +895,26 @@ pub fn App() -> Element {
     });
 
     use_context_provider(move || ctx);
+
+    // 设置去抖的关窗兜底：300ms 窗口内改完就关会丢尾写。wry handler 在
+    // app.tick() 里执行，先于 dioxus 的 CloseRequested 处理——这里是最后时机。
+    // 只读 save_pending，无待写时连磁盘都不碰。
+    #[cfg(not(target_arch = "wasm32"))]
+    let _save_on_close = dioxus::desktop::use_wry_event_handler(move |event, _| {
+        use dioxus::desktop::WindowEvent;
+        use dioxus::desktop::tao::event::Event;
+        if matches!(
+            event,
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            }
+        ) && ctx.save_pending.cloned()
+        {
+            let mut writer = ctx;
+            writer.flush_settings();
+        }
+    });
 
     // 全局快捷键走 window 级原生监听 + eval 通道回传，而不是挂在 DOM 上：
     // 点掉一个按钮/关掉弹窗后焦点会落到 body，事件就不再经过 .app，挂根的
