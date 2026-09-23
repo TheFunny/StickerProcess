@@ -26,10 +26,12 @@ mod drop_bridge {
     // 任务，均主线程）
     thread_local! {
         pub static PENDING: RefCell<Vec<(String, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+        // 读取失败同样走队列：JS 闭包/spawn_local 上下文直接写信号会死锁
+        // （AGENTS wasm 坑 #2），与成功路径同一唤醒机制。
+        pub static ERRORS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
 
-    pub fn push(name: String, data: Vec<u8>) {
-        PENDING.with(|q| q.borrow_mut().push((name, data)));
+    fn wake() {
         // 唤醒排空任务：写一个普通 JS 全局标志，排空任务轮询它
         js_sys::Reflect::set(
             &js_sys::global(),
@@ -37,6 +39,16 @@ mod drop_bridge {
             &wasm_bindgen::JsValue::from_f64(js_sys::Math::random()),
         )
         .ok();
+    }
+
+    pub fn push(name: String, data: Vec<u8>) {
+        PENDING.with(|q| q.borrow_mut().push((name, data)));
+        wake();
+    }
+
+    pub fn push_error(msg: String) {
+        ERRORS.with(|q| q.borrow_mut().push(msg));
+        wake();
     }
 }
 
@@ -73,7 +85,7 @@ async fn js_read_file_bytes(file: web_sys::File) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-use drop_bridge::PENDING;
+use drop_bridge::{ERRORS, PENDING};
 
 #[component]
 pub fn DropZone(children: Element) -> Element {
@@ -109,6 +121,11 @@ pub fn DropZone(children: Element) -> Element {
                 for (name, data) in batch {
                     log::info!("[drop] queue drain: {name}");
                     ctx.add_file_bytes(name, data);
+                }
+                // 读取失败通知：与成功队列同一唤醒，dioxus 上下文内写信号才安全
+                let errors: Vec<String> = ERRORS.with(|q| std::mem::take(&mut *q.borrow_mut()));
+                for msg in errors {
+                    ctx.push_toast(crate::components::toast::ToastKind::Error, msg);
                 }
             }
         });
@@ -166,7 +183,10 @@ pub fn DropZone(children: Element) -> Element {
                             log::info!("[drop] read ok: {name} ({}B)", bytes.len());
                             drop_bridge::push(name, bytes);
                         }
-                        Err(e) => log::warn!("[drop] read failed: {name}: {e}"),
+                        Err(e) => {
+                            log::warn!("[drop] read failed: {name}: {e}");
+                            drop_bridge::push_error(format!("Failed to read dropped file {name}: {e}"));
+                        }
                     }
                 });
             }

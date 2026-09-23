@@ -187,6 +187,13 @@ impl UiState {
         let snapshot = self.settings.cloned();
         if let Err(e) = config::save(&snapshot) {
             log::error!("Failed to save settings: {e}");
+            // wasm 无日志后端、release 桌面无控制台——只写 log 时设置静默丢失。
+            // 逐键触发下按文案去重：持续失败（磁盘满/存储禁用）不刷屏，
+            // 通知退场后下次保存尝试仍会重新提示。
+            let text = format!("Failed to save settings: {e}");
+            if !self.toasts.cloned().iter().any(|t| t.text == text) {
+                self.push_toast(ToastKind::Error, text);
+            }
         }
     }
 
@@ -402,12 +409,23 @@ impl UiState {
                 Some((bytes, name))
             })
             .collect();
+        let mut ctx = *self;
         spawn(async move {
+            let mut failed = 0usize;
             for (bytes, name) in items {
                 if crate::transcoder::web::sticker_download(&bytes, &name).is_err() {
                     log::error!("download failed: glue missing");
+                    failed += 1;
                 }
                 crate::timers::sleep(std::time::Duration::from_millis(400)).await;
+            }
+            // wasm 无日志后端：只写 log 等于点了按钮没反应（行内单文件下载
+            // 同因早已改 toast）。汇总一条，避免 N 个失败叠 N 条通知。
+            if failed > 0 {
+                ctx.push_toast(
+                    ToastKind::Error,
+                    format!("Download failed for {failed} file(s)"),
+                );
             }
         });
     }
