@@ -96,12 +96,10 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
     } else {
         "Reveal in Explorer"
     };
-    // wasm 下载用：锁内克隆输出字节（仅 Done/SizeExcess 任务有）
+    // wasm 下载：渲染期只持 Arc（O(1)），点击时才锁内克隆字节——原先是每次
+    // 渲染都锁 Transcoder + 克隆 ≤512KB，设置面板每敲一个键全部 Done 行重拷
     #[cfg(target_arch = "wasm32")]
-    let entry_bytes: Option<Vec<u8>> = {
-        let t = entry.transcoder.lock().ok();
-        t.and_then(|t| t.output_bytes.clone())
-    };
+    let transcoder = entry.transcoder.clone();
     // 选中输出文件用（onclick 闭包捕获，桌面专属）
     #[cfg(not(target_arch = "wasm32"))]
     let select_path = entry.mirror.output_path.clone();
@@ -186,7 +184,11 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
                                         .output_file_name
                                         .clone()
                                         .unwrap_or_else(|| "sticker.webm".into());
-                                    match entry_bytes.clone() {
+                                    let bytes = transcoder
+                                        .lock()
+                                        .ok()
+                                        .and_then(|t| t.output_bytes.clone());
+                                    match bytes {
                                         Some(bytes)
                                             if crate::transcoder::web::sticker_download(
                                                 &bytes, &name,
