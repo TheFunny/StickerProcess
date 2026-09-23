@@ -24,13 +24,23 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy
 
-      - name: Cache cargo
+      # registry/git 用跨 workflow 共享键（cargo-…）：此前四个 job 各用互不相交
+      # 的键前缀，clippy-desktop 刚下载的 300+ crates registry，release/tag 构建
+      # 完全复用不到，每次重新下载解压。target 保持 job 专属，互不污染。
+      - name: Cache cargo registry (shared)
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache build output
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: target
           key: clippy-web-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             clippy-web-${{ runner.os }}-
@@ -49,13 +59,20 @@ jobs:
         with:
           components: clippy
 
-      - name: Cache cargo
+      - name: Cache cargo registry (shared)
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache build output
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: target
           key: clippy-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             clippy-desktop-${{ runner.os }}-
@@ -89,13 +106,20 @@ jobs:
       - name: Install Rust toolchain (MSVC)
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
-      - name: Cache cargo
+      - name: Cache cargo registry (shared)
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Cache build output
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: target
           key: test-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             test-desktop-${{ runner.os }}-
