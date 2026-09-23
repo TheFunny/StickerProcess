@@ -21,6 +21,11 @@ pub use error::TranscodeError;
 /// 产物文件名里输入名主干的最大字符数（Windows 路径长度上限的粗保护）。
 const MAX_NAME_STEM: usize = 64;
 
+/// 产物路径唯一序号：时间戳只有毫秒精度，两个"秒败"任务（spawn 前即报错的
+/// 无 duration mp4）背靠背分配输出路径会落进同一毫秒 → 同路径 → 一方的失败
+/// 清理删掉另一方的成品。时间戳后拼进程内单调序号消除该窗口。
+static OUTPUT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(feature = "desktop")]
 use ffmpeg_sidecar::child::FfmpegChild;
 #[cfg(feature = "desktop")]
@@ -193,11 +198,12 @@ impl Transcoder {
         // chrono::Local 依赖 std::time（wasm 未实现）——网页端用 JS Date 的 ISO 时间戳
         #[cfg(not(target_arch = "wasm32"))]
         let time = chrono::Local::now();
+        let seq = OUTPUT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let output = {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 output_dir.as_ref().join(format!(
-                    "{prefix}{}.{ext}",
+                    "{prefix}{}-{seq}.{ext}",
                     time.format("%Y-%m-%d-%H%M%S%.3f")
                 ))
             }
@@ -212,7 +218,7 @@ impl Transcoder {
                     // ISO 串异常时不能用 ".webm" 这种隐藏文件名——退回毫秒时间戳
                     s = (js_sys::Date::now() as u64).to_string();
                 }
-                output_dir.as_ref().join(format!("{prefix}{s}.{ext}"))
+                output_dir.as_ref().join(format!("{prefix}{s}-{seq}.{ext}"))
             }
         };
         self.set_output(&output);
