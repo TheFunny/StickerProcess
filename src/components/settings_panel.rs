@@ -50,10 +50,14 @@ pub fn SettingsPanel() -> Element {
             span { class: "label", "Engine" }
             select {
                 class: "input",
-                value: "{ctx.settings.read().engine}",
+                value: "{ctx.settings.read().engine.as_str()}",
                 onchange: move |evt: Event<FormData>| {
                     let engine = evt.data.value();
-                    ctx.update_settings(move |s| s.engine = engine);
+                    // 选项固定合法；parse 失败（手改 DOM）兜底默认值
+                    ctx.update_settings(move |s| {
+                        s.engine = crate::transcoder::Engine::parse(&engine)
+                            .unwrap_or_default()
+                    });
                 },
                 option {
                     value: "sidecar",

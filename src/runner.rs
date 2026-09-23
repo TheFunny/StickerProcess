@@ -39,21 +39,15 @@ pub(crate) async fn run_blocking<T: Send + 'static>(
 }
 
 /// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎。
-/// - 非法值（parse 失败）→ 回落 inprocess（config.load 已兜底，此处是运行期保险）
+/// 可用性兜底：
 /// - webcodecs 且浏览器不支持（`web_supported=false`）→ 回落 inprocess
 /// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
 ///
 /// 桌面专属：web 端忽略 `Settings.engine`（矩阵即策略，`Engine::for_web` 决定）。
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn resolve_engine(setting: &str, web_supported: bool) -> Engine {
-    let engine = match Engine::parse(setting) {
-        Some(e) => e,
-        None => {
-            log::warn!("engine='{setting}' 非法，回落 inprocess");
-            return Engine::Inprocess;
-        }
-    };
-    match engine {
+pub(crate) fn resolve_engine(setting: crate::transcoder::Engine, web_supported: bool) -> Engine {
+    // 设置已是类型化枚举，不再有"字符串非法"分支
+    match setting {
         Engine::Webcodecs if !web_supported => {
             log::warn!("engine=webcodecs 但浏览器不支持，回落 inprocess");
             Engine::Inprocess
@@ -246,7 +240,7 @@ async fn run_single_task(
                 let tx = progress_tx.clone();
                 // 引擎解析：设置值 + 可用性兜底（详见 resolve_engine）。
                 // 桌面端 web_supported 恒 false；wasm 化时改为传 JS 探测结果。
-                let engine = resolve_engine(&settings.engine, false);
+                let engine = resolve_engine(settings.engine, false);
                 let awaited = run_blocking(move || {
                     let mut t = task_arc
                         .lock()
@@ -479,22 +473,16 @@ mod tests {
 
     #[test]
     fn resolve_engine_passthrough_valid() {
-        assert_eq!(resolve_engine("inprocess", false), Engine::Inprocess);
+        assert_eq!(resolve_engine(Engine::Inprocess, false), Engine::Inprocess);
         // sidecar 直通与否取决于本机 ffmpeg 探测结果，两者都是合法输出
-        let sc = resolve_engine("sidecar", false);
+        let sc = resolve_engine(Engine::Sidecar, false);
         assert!(sc == Engine::Sidecar || sc == Engine::Inprocess);
     }
 
     #[test]
     fn resolve_engine_webcodecs_falls_back_when_unsupported() {
-        assert_eq!(resolve_engine("webcodecs", false), Engine::Inprocess);
-        assert_eq!(resolve_engine("webcodecs", true), Engine::Webcodecs);
-    }
-
-    #[test]
-    fn resolve_engine_invalid_falls_back() {
-        assert_eq!(resolve_engine("gpu", false), Engine::Inprocess);
-        assert_eq!(resolve_engine("", false), Engine::Inprocess);
+        assert_eq!(resolve_engine(Engine::Webcodecs, false), Engine::Inprocess);
+        assert_eq!(resolve_engine(Engine::Webcodecs, true), Engine::Webcodecs);
     }
 
     #[test]

@@ -32,6 +32,7 @@ use ffmpeg_sidecar::child::FfmpegChild;
 use ffmpeg_sidecar::event::FfmpegEvent;
 
 use crate::media::{MediaFile, MediaType};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -65,7 +66,10 @@ impl Status {
 
 /// 转码引擎：sidecar（ffmpeg 子进程）/ inprocess（libav 进程内）为桌面双轨；
 /// webcodecs（浏览器原生编解码）与 ffmpeg-wasm（Route A）为网页端。
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// 设置直接存本类型（kebab-case 序列化值与原字符串逐字一致），不再是
+/// "字符串 + 四层校验"——非法值在反序列化期就进不来。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Engine {
     Sidecar,
     Inprocess,
@@ -73,7 +77,16 @@ pub enum Engine {
     FfmpegWasm,
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self::Sidecar
+    }
+}
+
 impl Engine {
+    /// 桌面设置下拉的 String → Engine 映射（选项固定，非法即兜底）。
+    /// wasm 无引擎 UI（矩阵即策略），此函数仅桌面与测试消费。
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "sidecar" => Some(Self::Sidecar),

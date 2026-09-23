@@ -111,7 +111,7 @@ mod desktop {
     use std::path::Path;
 
     pub fn collect_blocking(settings: &Settings) -> CompatReport {
-        let resolved = crate::runner::resolve_engine(&settings.engine, false);
+        let resolved = crate::runner::resolve_engine(settings.engine, false);
         CompatReport {
             sections: vec![
                 CompatSection::new("Platform", platform_rows(settings, resolved)),
@@ -135,14 +135,17 @@ mod desktop {
         settings: &Settings,
         resolved: crate::transcoder::Engine,
     ) -> Vec<CompatRow> {
-        let (state, detail) = if resolved.as_str() == settings.engine.as_str() {
-            (CompatState::Info, format!("'{}'", settings.engine))
+        let (state, detail) = if resolved == settings.engine {
+            (
+                CompatState::Info,
+                format!("'{}'", settings.engine.as_str()),
+            )
         } else {
             (
                 CompatState::Warn,
                 format!(
                     "'{}' unavailable → falls back to '{}'",
-                    settings.engine,
+                    settings.engine.as_str(),
                     resolved.as_str()
                 ),
             )
@@ -322,7 +325,10 @@ mod web {
             CompatRow::new(
                 "Engine setting",
                 CompatState::Info,
-                format!("'{}' (ignored on web — the media type picks the engine)", settings.engine),
+                format!(
+                    "'{}' (ignored on web — the media type picks the engine)",
+                    settings.engine.as_str()
+                ),
             ),
             CompatRow::new(
                 "Secure context",

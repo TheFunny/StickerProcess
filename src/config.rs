@@ -41,9 +41,10 @@ pub struct Settings {
     pub target_fps: f64,
     /// 主题："light" / "dark"。
     pub theme: String,
-    /// 转码引擎："sidecar"（ffmpeg 子进程）或 "inprocess"（libav 进程内）。
-    #[serde(default = "default_engine")]
-    pub engine: String,
+    /// 转码引擎（类型化枚举：sidecar / inprocess；非法值反序列化即失败，
+    /// load 整体回退默认——不再需要 engine_valid + sanitize 双重校验）。
+    #[serde(default)]
+    pub engine: crate::transcoder::Engine,
     /// 产物文件名是否带上输入文件名（`输入名-时间戳.webm`）；默认 false = 只有时间戳。
     #[serde(default)]
     pub keep_input_name: bool,
@@ -52,10 +53,6 @@ pub struct Settings {
     /// **静默关掉**补丁，故显式默认 true。
     #[serde(default = "default_true")]
     pub webm_duration_patch: bool,
-}
-
-fn default_engine() -> String {
-    "sidecar".into()
 }
 
 fn default_true() -> bool {
@@ -79,7 +76,7 @@ impl Default for Settings {
             video_max_size_kb: 256,
             image_max_size_kb: 512,
             retry_shrink_factor: default_retry_shrink_factor(),
-            engine: default_engine(),
+            engine: crate::transcoder::Engine::default(),
             duration_factors: default_duration_factors(),
             target_fps: 0.0,
             theme: "system".into(),
@@ -90,12 +87,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// 转码引擎设置是否为合法值。
-    pub fn engine_valid(&self) -> bool {
-        crate::transcoder::Engine::parse(self.engine.as_str()).is_some()
-    }
-
-    /// 输出目录状态（桌面）：UI 用它决定红框与提示文案。
+    /// 输出目录状态（桌面）：UI 用它决定红框与提示。
     /// 只看存在性，不碰磁盘写——可写性要真正建文件才知道，见 `output_dir_writable`。
     #[cfg(not(target_arch = "wasm32"))]
     pub fn output_dir_state(&self) -> OutputDirState {
@@ -194,18 +186,11 @@ pub fn load() -> Settings {
     settings
 }
 
-/// 公共兜底：引擎值 / 输出目录 / 数值项（两平台一致）。手改的
-/// settings.toml / localStorage 绕过 NumberInput 的 UI 钳制：0 KB 上限
-/// → inf 超限比烧满重试；非有限值 → toml 序列化永久失败。范围与设置
-/// 面板各 NumberInput 的 min/max 对齐。
+/// 公共兜底：输出目录 / 数值项（两平台一致；引擎是类型化枚举，反序列化期
+/// 已挡住非法值）。手改的 settings.toml / localStorage 绕过 NumberInput 的
+/// UI 钳制：0 KB 上限 → inf 超限比烧满重试；非有限值 → toml 序列化永久失败。
+/// 范围与设置面板各 NumberInput 的 min/max 对齐。
 fn sanitize(settings: &mut Settings) {
-    if !settings.engine_valid() {
-        log::warn!(
-            "Invalid engine '{}' in settings, falling back to 'sidecar'",
-            settings.engine
-        );
-        settings.engine = "sidecar".into();
-    }
     if settings.output_dir.is_empty() {
         settings.output_dir = default_output_dir();
     }
@@ -301,7 +286,7 @@ mod tests {
         s.duration_factors = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         s.target_fps = 30.0;
         s.theme = "dark".into();
-        s.engine = "inprocess".into();
+        s.engine = crate::transcoder::Engine::Inprocess;
         s.keep_input_name = true;
         let raw = toml::to_string_pretty(&s).unwrap();
         assert_eq!(toml::from_str::<Settings>(&raw).unwrap(), s);
@@ -324,17 +309,15 @@ mod tests {
         // 兼容旧版 settings.toml：缺 engine 键时用默认 sidecar
         let legacy = "output_dir = 'X'\nmax_retry = 2\nvideo_max_size_kb = 256\nimage_max_size_kb = 512\ntheme = 'light'\n";
         let parsed: Settings = toml::from_str(legacy).unwrap();
-        assert_eq!(parsed.engine, "sidecar");
+        assert_eq!(parsed.engine, crate::transcoder::Engine::Sidecar);
     }
 
     #[test]
-    fn engine_valid_rejects_unknown_values() {
-        let mut s = Settings::default();
-        assert!(s.engine_valid());
-        s.engine = "inprocess".into();
-        assert!(s.engine_valid());
-        s.engine = "gpu".into();
-        assert!(!s.engine_valid());
+    fn unknown_engine_rejects_the_whole_file() {
+        // 类型化后非法值在反序列化期失败，load 落到整体默认——不再是
+        // "仅 engine 键回退"。手改非法值本就是罕见路径，load 级兜底已覆盖。
+        let raw = "output_dir = 'X'\nengine = 'gpu'\n";
+        assert!(toml::from_str::<Settings>(raw).is_err());
     }
 
     #[test]
