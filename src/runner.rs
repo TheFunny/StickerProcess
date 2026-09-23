@@ -16,6 +16,7 @@ use crate::media::MediaType;
 use crate::transcoder::Engine;
 use crate::transcoder::{Status, TranscodeError, Transcoder, excess_for, shrunk_factor};
 use dioxus::prelude::*;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -93,10 +94,6 @@ fn ensure_output_dir_set(
     Ok(())
 }
 
-fn file_name(path: &str) -> &str {
-    path.rsplit(['\\', '/']).next().unwrap_or(path)
-}
-
 pub async fn run_all(
     mut ctx: UiState,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
@@ -167,7 +164,13 @@ async fn run_single_task(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = webcodecs_ok;
     let task_arc = Arc::clone(&entry.transcoder);
-    let name = file_name(&entry.mirror.input_path);
+    // input_path 在桌面是完整路径（Windows Path 两个分隔符都识别），在 wasm 是
+    // file.name（无分隔符）——std 语义都覆盖；非文件路径兜底回原串
+    let input_path = &entry.mirror.input_path;
+    let name = Path::new(input_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(input_path.as_str());
 
     // 取消桥接：watcher 轮询 UI 信号，置位后 run_with_progress 内 kill ffmpeg
     let Some(cancel_flag) = task_arc.lock().ok().map(|t| Arc::clone(&t.cancel_flag)) else {
