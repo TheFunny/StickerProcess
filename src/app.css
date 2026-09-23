@@ -589,6 +589,12 @@ body {
   white-space: nowrap;
 }
 
+/* 运行中禁用（.btn-link 不走 .btn:disabled 那套灰显） */
+.toast-undo:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 设置面板（模态对话框） */
 .modal-backdrop {
   position: fixed;

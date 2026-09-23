@@ -463,6 +463,12 @@ impl UiState {
     /// 撤销最近一次删除。按钮只挂在对应通知上，故必须核对通知 id：
     /// 3.6 秒内删了两次时，旧通知上的撤销不能把新删的任务放回去。
     pub fn undo_remove(&mut self, toast_id: u64) {
+        // 运行中回插会移动队列下标，而 runner 持有的是开跑时的 index——
+        // 状态/进度/大小会写到别的行，被移位的 Processing 行还会永驻僵尸态
+        // （start_run 的 Processing 门从此拒绝开跑）。保留槽位，跑完仍可撤销。
+        if self.running.cloned() {
+            return;
+        }
         let Some(slot) = self.undo.cloned() else {
             return;
         };
