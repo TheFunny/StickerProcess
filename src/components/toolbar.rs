@@ -8,7 +8,7 @@
 //! Phase B：输出目录直接读写 `Settings`（即时同步落盘）；重试次数移入设置面板。
 //! web：输出目录行整体不渲染（产物驻内存走下载）。
 
-use crate::app::{SUPPORTED, UiState};
+use crate::app::UiState;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::config::OutputDirState;
 use crate::transcoder::Status;
@@ -16,13 +16,9 @@ use dioxus::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-/// 文件选择器 accept 属性，从 SUPPORTED 常量派生（避免手写漂移）。
+/// 文件选择器 accept 属性（与 rfd 对话框共用 media::dotted_exts 的拼装）。
 fn file_accept() -> String {
-    SUPPORTED
-        .iter()
-        .map(|ext| format!(".{ext}"))
-        .collect::<Vec<_>>()
-        .join(",")
+    crate::media::dotted_exts().join(",")
 }
 
 /// 主题三档（溢出菜单里的单选项）。

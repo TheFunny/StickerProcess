@@ -19,7 +19,7 @@ pub fn TaskList() -> Element {
         let s = ctx.settings.read();
         (
             (s.video_max_size_kb, s.image_max_size_kb),
-            crate::app::SUPPORTED.join(" · "),
+            crate::media::exts().collect::<Vec<_>>().join(" · "),
         )
     };
 

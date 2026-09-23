@@ -37,16 +37,8 @@ impl MediaFile {
     }
 
     fn from_source(source: Source) -> Self {
-        let ext = Self::ext_of(&source).map(|s| s.to_ascii_lowercase());
-        let r#type: Option<MediaType> = match ext.as_deref() {
-            Some("mp4") => MediaType::Video(VideoType::Mp4).into(),
-            Some("gif") => MediaType::Video(VideoType::Gif).into(),
-            Some("jpg") | Some("jpeg") => MediaType::Image(ImageType::Jpg).into(),
-            Some("png") => MediaType::Image(ImageType::Png).into(),
-            Some("webp") => MediaType::Image(ImageType::Webp).into(),
-            Some("apng") => MediaType::Video(VideoType::Apng).into(),
-            _ => None,
-        };
+        // 类型探测查 SUPPORTED 表（大小写不敏感，免掉 lowercased 分配）
+        let r#type = Self::ext_of(&source).and_then(type_of_ext);
         Self {
             source,
             r#type,
@@ -295,10 +287,45 @@ pub fn mime_for_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
+/// 扩展名 → 媒体类型的唯一事实源：入队过滤（app）、类型探测（MediaFile）、
+/// 文件对话框 accept（toolbar / rfd）、空态文案（task_list）全部从这一张表
+/// 派生——原先 app.rs 字符串表与 from_source match 两份靠测试互查。
+pub const SUPPORTED: [(&str, MediaType); 7] = [
+    ("mp4", MediaType::Video(VideoType::Mp4)),
+    ("gif", MediaType::Video(VideoType::Gif)),
+    ("apng", MediaType::Video(VideoType::Apng)),
+    ("jpg", MediaType::Image(ImageType::Jpg)),
+    ("jpeg", MediaType::Image(ImageType::Jpg)),
+    ("png", MediaType::Image(ImageType::Png)),
+    ("webp", MediaType::Image(ImageType::Webp)),
+];
+
+/// 扩展名（任意大小写）→ 媒体类型；表外 → None。
+pub fn type_of_ext(ext: &str) -> Option<MediaType> {
+    SUPPORTED
+        .iter()
+        .find(|(e, _)| e.eq_ignore_ascii_case(ext))
+        .map(|(_, t)| t.clone())
+}
+
+/// 是否受支持的输入扩展名（入队过滤用）。
+pub fn is_supported(ext: &str) -> bool {
+    type_of_ext(ext).is_some()
+}
+
+/// 纯扩展名迭代（空态文案等展示场景）。
+pub fn exts() -> impl Iterator<Item = &'static str> {
+    SUPPORTED.iter().map(|(ext, _)| *ext)
+}
+
+/// 文件选择器 `.ext` 列表：toolbar 的 accept 属性与 rfd 对话框共用一份拼装。
+pub fn dotted_exts() -> Vec<String> {
+    exts().map(|ext| format!(".{ext}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::SUPPORTED;
 
     #[test]
     fn test_new_media_file_mp4() {
@@ -338,10 +365,11 @@ mod tests {
         assert_eq!(media_file.r#type, None);
     }
 
-    /// AGENTS「四处同步」约定的保证：SUPPORTED 的每一项都必须能被识别。
+    /// 表驱动探测的保证：SUPPORTED 表的每一项都必须能被 MediaFile 识别
+    /// （type_of_ext 与表同源，此测钉住 ext_of → type_of_ext 的接线）。
     #[test]
     fn supported_extensions_are_consistent() {
-        for ext in SUPPORTED {
+        for (ext, _) in SUPPORTED {
             let file = MediaFile::new(Path::new(&format!("file.{ext}")));
             assert!(
                 file.r#type.is_some(),

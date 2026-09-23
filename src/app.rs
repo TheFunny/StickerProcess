@@ -16,10 +16,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// 全部受支持扩展名（唯一列表）。新增媒体类型时按 AGENTS「四处同步」约定：
-/// 改这里 + `media.rs` 扩展名表 + `command.rs` 编码处理。
-pub const SUPPORTED: [&str; 7] = ["mp4", "gif", "apng", "jpg", "jpeg", "png", "webp"];
-
 static TOAST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Toast 淡出时长（ms）。**与 `app.css` 里 `.toast` 的 transition 时长必须是同一个数**
@@ -292,7 +288,7 @@ impl UiState {
                     .and_then(|ext| ext.to_str())
                     .map(|s| s.to_ascii_lowercase());
                 match ext.as_deref() {
-                    Some(ext) if SUPPORTED.contains(&ext) => {
+                    Some(ext) if crate::media::is_supported(ext) => {
                         list.push(TaskEntry::new(MediaFile::new(&path)));
                         added.push(list.len() - 1);
                     }
@@ -313,7 +309,7 @@ impl UiState {
     #[cfg(target_arch = "wasm32")]
     pub fn add_file_bytes(&mut self, name: String, data: Vec<u8>) {
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
-        if !ext.as_deref().is_some_and(|e| SUPPORTED.contains(&e)) {
+        if !ext.as_deref().is_some_and(crate::media::is_supported) {
             log::warn!("Skipped unsupported file: {name}");
             self.report_skipped(vec![name]);
             return;
@@ -577,7 +573,7 @@ impl UiState {
     pub fn pick_input_files(&mut self) {
         let mut ctx = *self;
         spawn(async move {
-            let exts: Vec<String> = SUPPORTED.iter().map(|e| format!(".{e}")).collect();
+            let exts = crate::media::dotted_exts();
             let picked = rfd::AsyncFileDialog::new()
                 .add_filter("Supported media", &exts)
                 .pick_files()
