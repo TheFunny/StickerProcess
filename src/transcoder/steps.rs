@@ -100,6 +100,10 @@ impl Transcoder {
             match rx.recv_timeout(POLL) {
                 Ok((buffer, true)) => break buffer,
                 Ok((_, false)) | Err(RecvTimeoutError::Disconnected) => {
+                    // 与取消分支同法回收：FfmpegChild 无 Drop（见下方 wait 注释），
+                    // 漏 kill+wait 会在 Windows 上留下阻塞在管道写端的孤儿 ffmpeg
+                    let _ = process.kill();
+                    let _ = process.wait();
                     return Err(TranscodeError::ImagePipe("read stdout failed"));
                 }
                 Err(RecvTimeoutError::Timeout) => {
