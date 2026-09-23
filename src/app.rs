@@ -46,8 +46,6 @@ pub struct TaskMirror {
     pub factor: Option<f64>,
     /// 输出文件路径镜像（set_output_dir 时同步），供预览免锁读取。
     pub output_path: Option<PathBuf>,
-    /// 当前尝试的转码进度 0..=1（仅 Processing 期间有值）。
-    pub progress: Option<f32>,
     /// 最近一次成功转码的耗时。
     pub elapsed_ms: Option<u64>,
     /// 最近一次失败的错误详情（悬停工具提示展示）。
@@ -85,7 +83,6 @@ impl TaskEntry {
                 output_file_name: None,
                 output_path: None,
                 factor: None,
-                progress: None,
                 elapsed_ms: None,
                 error: None,
             },
@@ -135,6 +132,12 @@ pub struct UiState {
     pub show_compat: Signal<bool>,
     pub running: Signal<bool>,
     pub overall_progress: Signal<f32>,
+    /// 行内转码进度 (任务下标, 0..=1)，仅 Processing 期间有值。
+    /// 刻意不放进 TaskMirror：镜像随 tasks 信号整表订阅，10Hz 进度写入会把
+    /// TaskList/Summary/Toolbar/Preview 全部标脏重跑（它们的数字在 10Hz 尺度
+    /// 上从不变化）。独立信号 = 只有读它的任务行被唤醒。
+    /// 顺序执行（同时至多一个任务在跑），单槽足够，增删队列无需同步。
+    pub progress: Signal<Option<(usize, f32)>>,
     /// 取消标记：runner 在每次尝试前检查；运行中的任务经 cancel_flag 中断 ffmpeg。
     pub cancel: Signal<bool>,
     pub toasts: Signal<Vec<Toast>>,
@@ -597,7 +600,8 @@ impl UiState {
         // 实时进度通道：worker 发送 → 接收端按 ~10Hz 节流合并后写显示镜像
         let (progress_tx, mut progress_rx) =
             tokio::sync::mpsc::unbounded_channel::<crate::runner::ProgressUpdate>();
-        let mut tasks = self.tasks;
+        let tasks = self.tasks;
+        let mut progress = self.progress;
         spawn(async move {
             use std::collections::HashMap;
 
@@ -609,18 +613,18 @@ impl UiState {
                     return;
                 }
                 let latest: Vec<_> = pending.drain().collect();
-                tasks.with_mut(|list| {
-                    for (index, pct) in latest {
-                        if let Some(entry) = list.get_mut(index) {
-                            // 仅 Processing 期间写进度：worker 退出后残留的
-                            // 100% 更新不得覆盖 runner 清掉的 progress（否则
-                            // Done 任务显示进度条而非文件大小）
-                            if matches!(entry.mirror.status, Status::Processing) {
-                                entry.mirror.progress = Some(pct);
-                            }
-                        }
+                for (index, pct) in latest {
+                    // 仅 Processing 期间写进度：worker 退出后残留的 100% 更新
+                    // 不得复活 runner 已清掉的进度条（否则 Done 行显示进度
+                    // 而非文件大小）。写独立信号、不碰 tasks——见 UiState::progress。
+                    let processing = tasks
+                        .peek()
+                        .get(index)
+                        .is_some_and(|e| matches!(e.mirror.status, Status::Processing));
+                    if processing {
+                        progress.set(Some((index, pct)));
                     }
-                });
+                }
             };
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -805,6 +809,7 @@ pub fn App() -> Element {
         show_compat: use_signal(|| false),
         running: use_signal(|| false),
         overall_progress: use_signal(|| 0.0f32),
+        progress: use_signal(|| None),
         cancel: use_signal(|| false),
         toasts: use_signal(Vec::new),
         undo: use_signal(|| None),

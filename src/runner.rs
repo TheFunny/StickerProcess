@@ -232,10 +232,8 @@ async fn run_single_task(
             t.duration_patch = duration_patch;
             t.status = Status::Processing;
         });
-        ctx.touch_entry(index, |e| {
-            e.progress = None;
-            e.error = None;
-        });
+        ctx.progress.set(None);
+        ctx.touch_entry(index, |e| e.error = None);
 
         // 后台线程执行转码；不跨 await 持有锁
         // （std::time::Instant 在 wasm 未实现——桌面才有计时）
@@ -332,9 +330,7 @@ async fn run_single_task(
                 }
             }
         };
-        ctx.touch_entry(index, |e| {
-            e.progress = None;
-        });
+        ctx.progress.set(None);
         let Ok(()) = result else {
             let err = result.unwrap_err();
             if *ctx.cancel.peek() || matches!(err, TranscodeError::Cancelled) {
@@ -458,7 +454,7 @@ async fn run_single_task(
             let _ = std::fs::remove_file(out);
             t.output_size = None;
         }
-        ctx.touch_entry(index, |e| e.progress = None);
+        ctx.progress.set(None);
         ctx.with_task(index, |t| t.status = Status::Pending);
         return TaskOutcome::Cancelled;
     }

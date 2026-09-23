@@ -45,15 +45,21 @@ pub fn TaskList() -> Element {
 #[component]
 fn TaskRow(index: usize) -> Element {
     let ctx = use_context::<UiState>();
+    // 按行派生进度：值不属于本行 → None，值不变不向下游广播——10Hz 进度
+    // 写入只唤醒正在转码那一行的 TaskRowView（hooks 先于早退无条件调用）
+    let pct = use_memo(move || {
+        let current = *ctx.progress.read();
+        current.filter(|(i, _)| *i == index).map(|(_, p)| p)
+    });
     let entry = ctx.tasks.read().get(index).cloned();
     let Some(entry) = entry else { return rsx! {} };
 
-    rsx! { TaskRowView { entry, index, running: ctx.running.cloned() } }
+    rsx! { TaskRowView { entry, index, running: ctx.running.cloned(), pct: pct.cloned() } }
 }
 
 /// 拆出纯展示子组件：entry 变化时才重渲染本行。
 #[component]
-fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
+fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) -> Element {
     let mut ctx = use_context::<UiState>();
     // 拖选文字/数字时按下与松开位置不同——click 会落在行上，需与普通点击区分
     let mut mouse_down_at = use_signal(|| None::<(f64, f64)>);
@@ -153,7 +159,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
             div { class: "row-main",
                 span { class: "{status_class}", "[{entry.mirror.status.label()}]" }
                 span { class: "path", "{entry.mirror.input_path}" }
-                if let Some(pct) = entry.mirror.progress {
+                if let Some(pct) = pct {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
                 } else if let Some((name, size)) = output {
                     // 文件名 = 动作（打开目录 / 下载），size = 只读标记：两者行为分开
@@ -250,7 +256,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool) -> Element {
                     crate::components::icon::IconClose {}
                 }
             }
-            if let Some(pct) = entry.mirror.progress {
+            if let Some(pct) = pct {
                 div { class: "row-progress",
                     div { class: "row-progress-fill", width: "{(pct * 100.0).round()}%" }
                 }
