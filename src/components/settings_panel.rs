@@ -1,7 +1,8 @@
 //! 设置面板：模态对话框，改动即时生效并即时落盘。
 //!
 //! 覆盖设置项：输出目录、重试次数、视频/图片大小上限、重试缩放系数、
-//! 时长→系数表、强制帧率、主题（System/Light/Dark）。
+//! 时长→系数表、强制帧率、引擎（桌面）。主题三选一在工具栏 ⋯ 菜单（低频动作
+//! 归溢出菜单——面板里那份是重复控件，已删）。
 //! 码率基准 / ffmpeg 路径 / 语言 / 并行数为规划中的可选项，暂不开放。
 
 use crate::app::UiState;
@@ -19,24 +20,6 @@ pub fn SettingsPanel() -> Element {
     let mut ctx = use_context::<UiState>();
     // Reset Defaults 的二次确认态（4s 无第二次点击自动解除）
     let mut reset_armed = use_signal(|| false);
-    // wasm 引擎 caps：None=未知（探测中），Some(b)=WebCodecs VP9 是否可用。
-    // 面板首次打开时异步探测（只注入轻量 glue，不加载 ffmpeg core）；结果缓存。
-    // 仅 wasm 引用（engine_select 桌面/wasm 两支真 cfg 分离），故 wasm-only 声明。
-    #[cfg(target_arch = "wasm32")]
-    let mut webcodecs_ok = use_signal(|| None::<bool>);
-    #[cfg(target_arch = "wasm32")]
-    {
-        let open = ctx.show_settings;
-        use_effect(move || {
-            if !open.cloned() || webcodecs_ok.peek().is_some() {
-                return;
-            }
-            spawn(async move {
-                let ok = crate::transcoder::web::webcodecs_supported().await;
-                webcodecs_ok.set(Some(ok));
-            });
-        });
-    }
     if !ctx.show_settings.cloned() {
         return rsx! {};
     }
@@ -58,55 +41,36 @@ pub fn SettingsPanel() -> Element {
         };
         (available, suffix)
     };
-    // 引擎下拉：桌面三项（sidecar 可用性置灰）；网页端 Auto 唯一可选，
-    // 两个矩阵项恒灰、用后缀标状态（亮/灰≠可选；选中也不生效，故无 onchange）。
-    #[cfg(target_arch = "wasm32")]
-    let engine_select = {
-        let wc_state = match *webcodecs_ok.read() {
-            Some(true) => "✓ available",
-            Some(false) => "✗ VP9 encoding unsupported in this browser",
-            None => "detecting…",
-        };
-        rsx! {
+    // 引擎下拉仅桌面有意义：web 的引擎矩阵即策略（Engine::for_web），用户选不了
+    // 也不该在这看——路由信息 Compatibility Report 已完整呈现。面板行整块不渲染。
+    #[cfg(not(target_arch = "wasm32"))]
+    let engine_section = rsx! {
+        div { class: "settings-section", "Engine" }
+        div { class: "settings-row",
+            span { class: "label", "Engine" }
             select {
                 class: "input",
-                value: "auto",
-                option { value: "auto", "Auto (pick engine by media type)" }
+                value: "{ctx.settings.read().engine}",
+                onchange: move |evt: Event<FormData>| {
+                    let engine = evt.data.value();
+                    ctx.update_settings(move |s| s.engine = engine);
+                },
                 option {
-                    value: "ffmpeg-wasm",
-                    disabled: true,
-                    "ffmpeg.wasm — GIF/APNG (alpha dual-track) ✓ available"
+                    value: "sidecar",
+                    disabled: !sidecar_available,
+                    "Sidecar (ffmpeg.exe){unavailable_suffix}"
                 }
+                option { value: "inprocess", "In-process (libav)" }
                 option {
                     value: "webcodecs",
                     disabled: true,
-                    "WebCodecs — MP4/images {wc_state}"
+                    "WebCodecs (web only)"
                 }
             }
         }
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    let engine_select = rsx! {
-        select {
-            class: "input",
-            value: "{ctx.settings.read().engine}",
-            onchange: move |evt: Event<FormData>| {
-                let engine = evt.data.value();
-                ctx.update_settings(move |s| s.engine = engine);
-            },
-            option {
-                value: "sidecar",
-                disabled: !sidecar_available,
-                "Sidecar (ffmpeg.exe){unavailable_suffix}"
-            }
-            option { value: "inprocess", "In-process (libav)" }
-            option {
-                value: "webcodecs",
-                disabled: true,
-                "WebCodecs (web only)"
-            }
-        }
-    };
+    #[cfg(target_arch = "wasm32")]
+    let engine_section = rsx! {};
 
     // 输出目录仅桌面有意义（web 产物驻内存走下载）；rsx 元素级 #[cfg] 不被
     // 解析，按 engine_select 的 let 双分支先例处理。
@@ -292,25 +256,7 @@ pub fn SettingsPanel() -> Element {
                     span { class: "hint", "0 keeps the source frame rate" }
                 }
 
-                div { class: "settings-section", "Engine & theme" }
-                div { class: "settings-row",
-                    span { class: "label", "Engine" }
-                    {engine_select}
-                }
-                div { class: "settings-row",
-                    span { class: "label", "Theme" }
-                    select {
-                        class: "input",
-                        value: "{ctx.settings.read().theme}",
-                        onchange: move |evt: Event<FormData>| {
-                            let theme = evt.data.value();
-                            ctx.update_settings(move |s| s.theme = theme);
-                        },
-                        option { value: "system", "System (follow OS)" }
-                        option { value: "light", "Light" }
-                        option { value: "dark", "Dark" }
-                    }
-                }
+                {engine_section}
 
                 div { class: "row modal-actions",
                     button {
