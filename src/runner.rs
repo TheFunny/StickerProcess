@@ -251,7 +251,18 @@ async fn run_single_task(
                     let mut t = task_arc
                         .lock()
                         .map_err(|e| TranscodeError::Join(e.to_string()))?;
+                    // 发送侧节流到 50ms：接收端 100ms 才 flush，中间更新全被
+                    // HashMap 覆盖丢弃——inprocess 每帧 send（30-100 次/秒）只是
+                    // 白白唤醒 tokio select。UI 有效频率本就是 flush 的 10Hz，不变。
+                    let mut last_sent = None;
                     t.run_with_progress(engine, move |pct| {
+                        let now = Instant::now();
+                        if let Some(prev) = last_sent
+                            && now.duration_since(prev) < std::time::Duration::from_millis(50)
+                        {
+                            return;
+                        }
+                        last_sent = Some(now);
                         // 发送失败仅意味着接收端已关闭，忽略即可
                         let _ = tx.send(ProgressUpdate { index, pct });
                     })
