@@ -414,9 +414,18 @@ pub fn shrunk_factor(current: f64, excess: f64, shrink: f64) -> f64 {
     current / excess * shrink
 }
 
-/// 输出大小相对上限的倍率（>1.0 即超限）。镜像侧（`TaskEntry`）与 Transcoder 侧
-/// （runner 重试决策）共用这一条公式——两边各写一遍曾出现过分母漂移。
-pub fn excess_ratio(output_size: Option<u64>, limit: u64) -> Option<f64> {
+/// 输出大小相对上限的倍率（>1.0 即超限）。镜像侧（`TaskEntry`，bool 来自已
+/// 同步的 `is_video` 镜像）与 Transcoder 侧（runner 重试决策）共用整条链——
+/// "按类型选上限"与除法两半原先各写两遍，分母/上限都出过漂移。
+/// 类型缺失（不会发生：入队已按 SUPPORTED 表过滤）按图片上限处理——原先
+/// `unreachable!()` 会直接 panic 掉整个进程，不值得为一个已排除的状态付这个代价。
+pub fn excess_for(
+    is_video: bool,
+    output_size: Option<u64>,
+    video_limit: u64,
+    image_limit: u64,
+) -> Option<f64> {
+    let limit = if is_video { video_limit } else { image_limit };
     Some(output_size? as f64 / limit as f64)
 }
 

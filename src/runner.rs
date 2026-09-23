@@ -14,7 +14,7 @@ use crate::components::toast::ToastKind;
 use crate::media::MediaType;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::transcoder::Engine;
-use crate::transcoder::{Status, TranscodeError, Transcoder, excess_ratio, shrunk_factor};
+use crate::transcoder::{Status, TranscodeError, Transcoder, excess_for, shrunk_factor};
 use dioxus::prelude::*;
 use std::sync::{Arc, Mutex};
 #[cfg(not(target_arch = "wasm32"))]
@@ -64,17 +64,6 @@ pub(crate) fn resolve_engine(setting: crate::transcoder::Engine, web_supported: 
 #[cfg(not(target_arch = "wasm32"))]
 fn sidecar_vp9_available() -> bool {
     crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9)
-}
-
-/// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
-/// 类型缺失（不会发生：入队已按扩展名过滤）按图片上限处理——原先 `unreachable!()`
-/// 会直接 panic 掉整个进程，不值得为一个已排除的状态付这个代价。
-fn size_excess_factor(task: &Transcoder, video_limit: u64, image_limit: u64) -> Option<f64> {
-    let limit = match task.media_file.r#type() {
-        Some(MediaType::Video(_)) => video_limit,
-        _ => image_limit,
-    };
-    excess_ratio(task.output_size, limit)
 }
 
 enum Decision {
@@ -368,7 +357,12 @@ async fn run_single_task(
         let mut size_err: Option<String> = None;
         let decision = ctx
             .with_task(index, |t| match t.check_size() {
-                Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
+                Ok(_) => match excess_for(
+                    matches!(t.media_file.r#type(), Some(MediaType::Video(_))),
+                    t.output_size,
+                    video_limit,
+                    image_limit,
+                ) {
                     Some(excess) if excess > 1.0 => {
                         if let Some(factor) = t.size_factor.as_mut() {
                             let old = *factor;

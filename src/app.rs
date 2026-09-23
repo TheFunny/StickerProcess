@@ -87,12 +87,12 @@ impl TaskEntry {
 
     /// 输出大小相对上限的倍率（>1.0 即超限），无输出时返回 None。
     pub fn size_excess_ratio(&self, video_limit: u64, image_limit: u64) -> Option<f64> {
-        let limit = if self.mirror.is_video {
-            video_limit
-        } else {
-            image_limit
-        };
-        crate::transcoder::excess_ratio(self.mirror.output_size, limit)
+        crate::transcoder::excess_for(
+            self.mirror.is_video,
+            self.mirror.output_size,
+            video_limit,
+            image_limit,
+        )
     }
 }
 
