@@ -68,19 +68,14 @@ impl Status {
 /// webcodecs（浏览器原生编解码）与 ffmpeg-wasm（Route A）为网页端。
 /// 设置直接存本类型（kebab-case 序列化值与原字符串逐字一致），不再是
 /// "字符串 + 四层校验"——非法值在反序列化期就进不来。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Engine {
+    #[default]
     Sidecar,
     Inprocess,
     Webcodecs,
     FfmpegWasm,
-}
-
-impl Default for Engine {
-    fn default() -> Self {
-        Self::Sidecar
-    }
 }
 
 impl Engine {

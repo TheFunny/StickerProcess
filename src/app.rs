@@ -211,7 +211,6 @@ impl UiState {
                     ctx.flush_settings();
                 }
             });
-            return;
         }
 
         // wasm：localStorage 同步写 ~1KB，无窗口生命周期钩子语义，保持即时写
