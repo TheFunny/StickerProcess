@@ -87,8 +87,13 @@ pub fn PreviewModal() -> Element {
                             .map(|bytes| data_url(mime, &bytes))
                     }
                 });
-                // 键为 None 时也清空缓存，避免复用上一个任务的 URL
-                *slot = key.map(|(p, s)| (p, s, url.clone().unwrap_or_default()));
+                // 只缓存成功值：失败（文件被删/改名、杀软瞬时锁住）不入缓存，
+                // 否则空串被当有效 URL 渲染成空元素且永不重试（key 不变）。
+                // key 为 None 时清空，避免复用上一个任务的 URL。
+                *slot = match (&key, &url) {
+                    (Some((p, s)), Some(u)) => Some((p.clone(), *s, u.clone())),
+                    _ => None,
+                };
                 url
             }
         }
@@ -113,7 +118,12 @@ pub fn PreviewModal() -> Element {
                     .unwrap_or_default();
                 let mime = input_mime(&key.0);
                 let url = object_url_for(mime, &bytes);
-                if let Some((_, old)) = slot.replace((key, url.clone())) {
+                // 只缓存成功值：失败（空串）不入缓存，下次渲染重试
+                if url.is_empty() {
+                    if let Some((_, old)) = slot.take() {
+                        web_sys::Url::revoke_object_url(&old).ok();
+                    }
+                } else if let Some((_, old)) = slot.replace((key, url.clone())) {
                     web_sys::Url::revoke_object_url(&old).ok();
                 }
                 url
