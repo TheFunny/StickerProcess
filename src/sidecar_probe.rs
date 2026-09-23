@@ -21,14 +21,10 @@ pub struct SidecarProbe {
 }
 
 impl SidecarProbe {
-    /// 启动后调用一次；后续 `probe()` 直接命中缓存。
-    pub fn init() -> &'static SidecarProbe {
-        PROBE.get_or_init(Self::detect)
-    }
-
-    /// 缓存命中版：首次调用自动触发探测（init 无需显式调用）。
+    /// 进程内缓存版：首次调用自动触发探测（init 无需显式存在——原先的公开
+    /// init() 包装只有 main 在用，返回值还被丢弃）。
     pub fn probe() -> Option<&'static SidecarProbe> {
-        let r = Self::init();
+        let r = PROBE.get_or_init(Self::detect);
         (!r.exe.as_os_str().is_empty()).then_some(r)
     }
     fn detect() -> Self {
@@ -93,8 +89,8 @@ mod tests {
     }
 
     #[test]
-    fn probe_none_before_init_is_ok() {
-        // init 前调用 probe() 返回 None（不 panic）——探测与消费解耦
+    fn probe_stands_alone() {
+        // 无前置初始化要求，单独调用不 panic
         let _ = SidecarProbe::probe();
     }
 }

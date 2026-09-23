@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-#ffmpeg-next = "8"
 dioxus = { version = "0.7", default-features = false, features = ["lib"] }
 log = "0.4.34"
 tokio = { version = "1.53", features = ["rt", "sync", "time", "macros"] }

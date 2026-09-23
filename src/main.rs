@@ -31,7 +31,7 @@ fn main() {
         .parse_default_env()
         .init();
     // sidecar 可用性探测（进程内缓存一次；日志记录结果）
-    crate::sidecar_probe::SidecarProbe::init();
+    let _ = crate::sidecar_probe::SidecarProbe::probe();
     let cfg = preview::register(
         // with_menu(None) 关闭 dioxus 默认菜单栏（File/View 等）
         Config::new()

@@ -323,50 +323,40 @@ impl Transcoder {
                 "web engines (webcodecs / ffmpeg-wasm) require the web build",
             ));
         }
-        #[cfg(feature = "desktop")]
+        // 函数整体已按 desktop feature gate，体内不再重复 cfg
         if engine == Engine::Inprocess {
             return self.run_inprocess(on_progress);
         }
-        // sidecar 分支（ffmpeg 子进程）桌面专属；wasm 无子进程
-        #[cfg(feature = "desktop")]
-        {
-            // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
-            self.cancel_flag.store(false, Ordering::Relaxed);
-            let media_type = self
-                .media_file
-                .r#type()
-                .ok_or(TranscodeError::InvalidMediaType)?;
-            let mut command = self.gen_command()?;
-            let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
-            match media_type {
-                MediaType::Video(v_type) => {
-                    // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件。
-                    // 分母与码率同一时长源（APNG=1.0）；pct 钳到 [0,1] 与
-                    // inprocess 一致——0.001s 地板会把进度条冲出千位
-                    let duration = self.effective_duration(&v_type)?;
-                    self.pump_events(&mut process, duration, &mut on_progress)?;
-                    // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
-                    // 不查退出码会把无 trailer 坏文件判成 Done。
-                    let status = self.wait_cancellable(&mut process)?;
-                    if !status.success() {
-                        return Err(TranscodeError::FfmpegFailed(status.to_string()));
-                    }
-                    self.run_video()
+        // sidecar 分支（ffmpeg 子进程）
+        // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        let media_type = self
+            .media_file
+            .r#type()
+            .ok_or(TranscodeError::InvalidMediaType)?;
+        let mut command = self.gen_command()?;
+        let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
+        match media_type {
+            MediaType::Video(v_type) => {
+                // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件。
+                // 分母与码率同一时长源（APNG=1.0）；pct 钳到 [0,1] 与
+                // inprocess 一致——0.001s 地板会把进度条冲出千位
+                let duration = self.effective_duration(&v_type)?;
+                self.pump_events(&mut process, duration, &mut on_progress)?;
+                // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
+                // 不查退出码会把无 trailer 坏文件判成 Done。
+                let status = self.wait_cancellable(&mut process)?;
+                if !status.success() {
+                    return Err(TranscodeError::FfmpegFailed(status.to_string()));
                 }
-                MediaType::Image(_) => {
-                    if self.cancel_flag.load(Ordering::Relaxed) {
-                        return Err(TranscodeError::Cancelled);
-                    }
-                    self.run_image(&mut process)
-                }
+                self.run_video()
             }
-        }
-        #[cfg(not(feature = "desktop"))]
-        {
-            let _ = (&engine, &mut on_progress);
-            Err(TranscodeError::UnsupportedEngine(
-                "sidecar requires desktop",
-            ))
+            MediaType::Image(_) => {
+                if self.cancel_flag.load(Ordering::Relaxed) {
+                    return Err(TranscodeError::Cancelled);
+                }
+                self.run_image(&mut process)
+            }
         }
     }
 
