@@ -128,7 +128,7 @@ impl Transcoder {
         };
         // 与视频路径同一不变量：退出码才代表成功。解码失败时 stdout 可能只有
         // 半个 PNG，直接交给 oxipng 会把真因报成 "optimize failed"。
-        let status = process.wait().map_err(|_| TranscodeError::ReadOutput)?;
+        let status = self.wait_cancellable(process)?;
         if !status.success() {
             return Err(TranscodeError::FfmpegFailed(status.to_string()));
         }

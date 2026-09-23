@@ -265,6 +265,36 @@ impl Transcoder {
         outcome
     }
 
+    /// 等子进程退出：100ms 轮询 `try_wait`，取消经 `cancel_flag` 可达。
+    /// 裸 `wait()` 在"管道已关、进程仍活"的异常 ffmpeg 上会永久阻塞——
+    /// 没人再消费 cancel_flag，Cancel 变空操作、转码锁被 worker 长期持有。
+    /// stderr 若还没被 `pump_events` 取走（图片路径），先放线程排入 sink：
+    /// 管满会让 ffmpeg 卡在写端，退出码永远等不到。
+    #[cfg(feature = "desktop")]
+    pub(super) fn wait_cancellable(
+        &self,
+        process: &mut FfmpegChild,
+    ) -> Result<std::process::ExitStatus, TranscodeError> {
+        const POLL: std::time::Duration = std::time::Duration::from_millis(100);
+        if let Some(mut stderr) = process.take_stderr() {
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+            });
+        }
+        loop {
+            if self.cancel_flag.load(Ordering::Relaxed) {
+                let _ = process.kill();
+                let _ = process.wait(); // kill 后立即返回；回收子进程（crate 无 Drop）
+                return Err(TranscodeError::Cancelled);
+            }
+            match process.as_inner_mut().try_wait() {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => std::thread::sleep(POLL),
+                Err(_) => return Err(TranscodeError::ReadOutput),
+            }
+        }
+    }
+
     /// 执行转码（按 engine 设置分发 sidecar / inprocess）；进度经回调上报（0..=1）。
     /// 取消经 `cancel_flag` 中断。
     ///
@@ -308,7 +338,7 @@ impl Transcoder {
                     self.pump_events(&mut process, duration, &mut on_progress)?;
                     // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
                     // 不查退出码会把无 trailer 坏文件判成 Done。
-                    let status = process.wait().map_err(|_| TranscodeError::ReadOutput)?;
+                    let status = self.wait_cancellable(&mut process)?;
                     if !status.success() {
                         return Err(TranscodeError::FfmpegFailed(status.to_string()));
                     }
