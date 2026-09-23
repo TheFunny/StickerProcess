@@ -230,7 +230,7 @@ impl Transcoder {
     /// 刻意不用 `child.iter()`：那个迭代器把 `&mut FfmpegChild` 借走整个循环，
     /// 于是卡住的 ffmpeg（无声输入、无进度行）就永远 kill 不到——Cancel 变成
     /// 空操作，worker 还持着 Transcoder 锁不放。这里自持 stderr，事件经 crate
-    /// 公开的 `spawn_stderr_thread` 以 sync channel 回传（bound=0，天然反压），
+    /// 公开的 `spawn_stderr_thread` 以有界 sync channel 回传（见下方容量注释），
     /// 按 100ms 节拍轮询 cancel_flag。
     #[cfg(feature = "desktop")]
     fn pump_events(
@@ -243,7 +243,10 @@ impl Transcoder {
 
         const POLL: std::time::Duration = std::time::Duration::from_millis(100);
         let stderr = process.take_stderr().ok_or(TranscodeError::ReadOutput)?;
-        let (tx, rx) = std::sync::mpsc::sync_channel(0);
+        // 有界(8)而非 0：反压不需要零缓冲——bound=0 时解析线程每产一行事件
+        // （log 行远多于进度行）都要与本循环完成一次阻塞式线程会合，纯属
+        // 上下文切换开销。8 行的余量吸收突发，满了才退回会合。
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
         let reader = ffmpeg_sidecar::iter::spawn_stderr_thread(stderr, tx);
         let mut outcome = Ok(());
         loop {
