@@ -19,8 +19,9 @@ videos into **Telegram-style stickers**, implemented in **Rust** with the
   alpha lands — spike verdict: WebCodecs can't, see `docs/WEB_DEMO_FINDINGS_C.md`).
 
 E6 Phase 1 added an in-process transcoding engine (libav via `ffmpeg-the-third`),
-selected by the `engine` setting (default `"sidecar"` in `config.rs`;
-`"inprocess"` is always available and is the runtime fallback; `"sidecar"` requires a detected ffmpeg.exe). Sidecar
+selected by the `engine` setting (typed `Engine` enum, default `Sidecar` via
+`#[default]` in `transcoder/mod.rs`;
+`Inprocess` is always available and is the runtime fallback; `Sidecar` requires a detected ffmpeg.exe). Sidecar
 availability is probed once at startup (`src/sidecar_probe.rs`: exe adjacent
 to the app, else PATH, plus a `libvpx-vp9` encoder check); the settings
 dropdown disables sidecar when unavailable, and the runner falls back to
@@ -32,17 +33,17 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | Path | Purpose |
 |---|---|
 | `src/main.rs` | Binary entry: desktop-only logger init (`pretty_env_logger`; wasm has no log backend) + Dioxus launch with window config |
-|`src/app.rs`|Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry { transcoder, mirror: TaskMirror }`; `SUPPORTED` constant|
+|`src/app.rs`|Root component; `UiState` global signals (`settings` is the single source of truth for config); `TaskEntry { transcoder, mirror: TaskMirror }`|
 | `src/config.rs` | `Settings` model (serde+toml), persisted to `%APPDATA%/StickerProcess/settings.toml`; `load`/`save`（原子写）+ `sanitize` 数值钳制 + roundtrip tests |
 | `src/runner.rs` | Async transcode loop: `run_all` (skips `Done` tasks) → `run_single_task` (size-based retry, per-task cancel watcher, `TranscodeError` handling, retry/factor logging), progress channel, toasts |
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
-| `src/media.rs` | `MediaFile` model: type detection by extension, `probe()` (ffmpeg codec/duration check incl. animated-webp → `Video(AnimatedWebP)` correction + packet-summed duration), duration, output path; enums; unit tests |
+| `src/media.rs` | `MediaFile` model: type detection by the single `SUPPORTED` `(ext, MediaType)` table (drives入队过滤/`type_of_ext`/`dotted_exts`/空态文案) + `mime_for_ext`（预览三处共用）, `probe()` (ffmpeg codec/duration check incl. animated-webp → `Video(AnimatedWebP)` correction + packet-summed duration), duration, output path; enums; unit tests |
 | `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch + sidecar stderr event pump), `command.rs` (ffmpeg command gen + `SCALE_FILTER` / `DEFAULT_DURATION_FACTORS` + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `build/nsis-hooks.nsh` | NSIS 安装前钩子（`[bundle.windows.nsis] installer_hooks`）：`.onInit` 里结束正在运行的实例 + 拒绝静默降级覆盖。**不 fork dx 的 NSIS 模板**；文件不经 handlebars 渲染（读安装器自身 VERSIONINFO 取新版本号）。见 `docs/RELEASE.md` §升级防护 |
-| `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME by extension, HTTP Range/206, percent encode/decode; unit tests |
+| `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME via `media::mime_for_ext`, HTTP Range/206（单次响应封顶 8 MiB 窗口，防 GB 级 `bytes=0-` 一次分配）, percent encode/decode（`percent-encoding` crate，桌面 target 专属依赖）; unit tests |
 | `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
 |`scripts/fetch-ffmpeg-core.sh`|从 `TheFunny/ffmpeg-core-st` 的 Release 取回自建 ffmpeg.wasm core（`assets/ffmpeg-core-st.{js,wasm}`）：core 版本与 sha256 的唯一出处，CI 与本地开发共用 |
 |`scripts/fetch-ffmpeg-static.sh`|从 `TheFunny/ffmpeg-static-win` 的 Release 取回静态 ffmpeg（解包到 `ffmpeg-dist/` 当 `FFMPEG_DIR`）：tag 与 sha256 的唯一出处，`release-desktop.yml` / `ci.yml` 与本地开发共用 |
@@ -56,9 +57,9 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 |`docs/W4_CORE_BUILD.md`|Self-built ffmpeg.wasm core recipe (built by CI in `TheFunny/ffmpeg-core-st`, published as release assets), rollback record |
 | `docs/MIGRATION_PLAN.md` | Roadmap and phase checklist (A–E complete; E6 phase 1 in-process transcoding complete) |
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
-| `.github/workflows/deploy-web.yml` | CI：push master → dx release build（`--base-path /StickerProcess/`）→ 跑 `scripts/fetch-ffmpeg-core.sh` 从 ffmpeg-core-st Release 取 29.5MB core（sha256 校验） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
+| `.github/workflows/deploy-web.yml` | CI：push master → **先 windows 跑 `cargo test --locked`（质量门，lint 仍不挡部署但正确性挡）** → dx release build（`--base-path /StickerProcess/`；dx 下载带 sha256 校验，`cargo fetch --locked` 验锁）→ 跑 `scripts/fetch-ffmpeg-core.sh` 从 ffmpeg-core-st Release 取 29.5MB core（sha256 校验） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 跑 `scripts/fetch-ffmpeg-static.sh` 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
-| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
+| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）+ `cargo test --locked`（windows，此前单测只在打 tag 时跑）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop/test job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。registry 缓存键跨 workflow 共享（`cargo-{os}-`），target 各 job 专属。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
@@ -78,9 +79,12 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   duration factor table, forced FPS, theme, transcode `engine`, webm 时长补丁开关
   `webm_duration_patch` (默认 true；关掉则产物保留编码器原始 Duration，
   即不再谎报 100 ms 骗过 Telegram 的时长检测)). Mutate only via
-  `UiState::update_settings(…)` — it applies the closure, then **synchronously**
-  saves to `%APPDATA%/StickerProcess/settings.toml` (file is ~200 B, sub-ms write;
-  sync execution prevents torn/out-of-order writes from per-keystroke async saves).
+  `UiState::update_settings(…)` — it applies the closure, then schedules the
+  save. Desktop **debounces 300 ms with a single-writer epoch**（逐键同步写的
+  toml 序列化 + rename 在 Windows+Defender 下可达数十 ms、直落渲染帧；代数保证
+  只有最新任务写盘，快照→写盘间无 await，保序/无撕裂与原同步写等价），关窗尾写
+  由 App 的 wry `CloseRequested` 兜底；wasm 同步写 localStorage（~1KB，无窗口
+  钩子语义）。写失败弹去重 toast（无日志后端/无控制台的平台上 log 即静默）。
   Invalid output dirs (nonexistent, uncreatable parent) render the toolbar and
   settings inputs with a red border via `Settings::output_dir_valid()`
   (desktop only — on web both rows are not rendered at all).
@@ -98,8 +102,11 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   Each queued task is a `TaskEntry { transcoder: Arc<Mutex<Transcoder>>, mirror: TaskMirror }`
   shared with background `tokio::task::spawn_blocking` workers via `Arc<Mutex<..>>`
   (deliberately NOT cloned). `TaskMirror` holds **every** render-time field
-  (path/status/output_size/factor/progress/elapsed/error/is_video) so rendering never
-  locks the mutex while a worker holds it during transcoding. `TaskMirror` derives
+  (path/status/output_size/factor/elapsed/error/is_video) so rendering never
+  locks the mutex while a worker holds it during transcoding. 行内转码进度
+  **刻意不在镜像里**——它是 `UiState.progress: Signal<Option<(usize, f32)>>`
+  （顺序执行单槽即可；放镜像会让 10Hz 写入把整表 `tasks` 信号标脏，空转
+  TaskList/Summary/Toolbar/Preview）。`TaskMirror` derives
   `PartialEq` on purpose: `TaskEntry`'s manual eq only compares the mirror, so a
   hand-written field list could silently drop a field and make dioxus memo skip
   re-renders (this broke factor display, then status/error badges).
@@ -107,7 +114,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   `UiState::with_task(index, …)` for Transcoder-derived fields (locks, applies, syncs
   status/factor/output_size/output_path/output_file_name) and
   `UiState::touch_entry(index, …)` (closure gets `&mut TaskMirror`) for UI-only
-  mirrors (progress/elapsed/error). Do not mutate mirrors via raw `tasks.with_mut`
+  mirrors (elapsed/error). Do not mutate mirrors via raw `tasks.with_mut`
   elsewhere. Row actions: `retry_task` (Alert/SizeExcess/Done → Pending, factor
   preserved; renders as "Retry"/"Re-run") and `remove_task` (any status).
 - **Async probing**: adding a file creates the `Transcoder` without IO probing
@@ -122,15 +129,17 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   race `prepare_web_job` into reading an empty duration (spurious `Alert`).
 - **Execution flow**: Run → `runner::run_all` async loop, which **skips `Done`
   tasks** (re-running one goes through the row's Re-run button → `Pending`).
-  Per task: assign a timestamped output path once, set `Processing`, run
+  Per task: assign a timestamped output path once (timestamp + 进程内单调序号防
+  毫秒碰撞), set `Processing`, run
   `Transcoder::run_with_progress(engine, …)` inside `spawn_blocking` — `engine`
-  is the typed `Engine` returned by `resolve_engine(&Settings.engine, …)`
-  (`"sidecar"` → ffmpeg CLI subprocess via `ffmpeg-sidecar`, progress parsed from
-  a self-driven stderr event pump; `"inprocess"` → `Transcoder::run_inprocess`,
+  is the typed `Engine` returned by `resolve_engine(Settings.engine)`
+  (`Sidecar` → ffmpeg CLI subprocess via `ffmpeg-sidecar`, progress parsed from
+  a self-driven stderr event pump; `Inprocess` → `Transcoder::run_inprocess`,
   libav pipe, progress computed from frame pts / duration). Both send progress
-  over an mpsc channel to the UI mirror; the ~10Hz receiver loop only writes
-  mirrors of tasks still in `Processing` — stale post-completion updates must not
-  resurrect the progress bar on a Done row. Then `check_size()`. If over limit,
+  over an mpsc channel (发送侧 50ms 节流——接收端 100ms 才 flush，逐帧 send 全是
+  无效唤醒); the ~10Hz receiver loop writes the dedicated `UiState::progress`
+  signal only while that index is still `Processing` — stale post-completion
+  updates must not resurrect the progress bar on a Done row. Then `check_size()`. If over limit,
   shrink factor (`factor = factor / excess * retry_shrink_factor`) and retry up to
   `max_retry`, else advance.
   Task errors mark `Alert`, push an error toast, and skip to the next task.
@@ -163,8 +172,8 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   classes in `app.css`, badge text comes from `Status::label()` (never `{:?}` —
   users must not see `SizeExcess`).
 - **Theming**: CSS custom properties in `app.css`; `[data-theme="dark"]` on
-  `<html>` overrides variables. Theme is part of `Settings` (persisted); toggles
-  live in the toolbar and the settings panel.
+  `<html>` overrides variables. Theme is part of `Settings` (persisted); the
+  three-way toggle lives in the toolbar `⋯` menu (设置面板里的重复控件已删).
 - **Compatibility Report** (toolbar `⋯` menu → `Compatibility Report`; UI in
   `components/compat.rs`, data in `compat.rs`): read-only environment checkup —
   engine availability, browser caps, engine-asset reachability, and the routing
@@ -343,8 +352,10 @@ offline from the registry cache while `Cargo.lock` stays untouched.
 - Engine-specific changes go in their own file (`command.rs` sidecar /
   `inprocess.rs` libav / `web.rs` wasm 桥); shared bitrate logic lives in
   `command.rs` helpers so all engines stay behaviorally identical. The *setting*
-  string is `"sidecar" | "inprocess" | "webcodecs" | "ffmpeg-wasm"`, validated by
-  `Settings::engine_valid()` — but the core boundary is **typed**: `resolve_engine`
+  is the typed `Engine` enum (serde kebab-case 序列化值 `"sidecar" | "inprocess" |
+  "webcodecs" | "ffmpeg-wasm"` 与原字符串逐字一致；非法值反序列化即失败，
+  `load` 整体回退默认——`engine_valid()`/sanitize 引擎分支已随之删除) — the core
+  boundary is **typed**: `resolve_engine`
   returns `Engine`, `run_with_progress(Engine, …)` dispatches on it, `WebJob.engine`
   is an `Engine`, and the wasm dispatch matches exhaustively (no `other =>`
   catch-all, so an unknown engine string can no longer silently run sidecar).
@@ -383,17 +394,16 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `cargo clippy --all-targets` is *not* a substitute: it adds a second target
   whose own dead-code view differs (measured: 6 → 7 warnings).
   Both commands are **gated in CI** (`.github/workflows/ci.yml`) with `-- -D warnings`.
-- New media types must be wired in **four** places:
-  1. `src/app.rs` — `SUPPORTED` (the single extension list; `file_accept()` and
-     the drop/upload filter both derive from it, and
-     `media::tests::supported_extensions_are_consistent` asserts every entry is
-     actually recognized)
-  2. `src/components/toolbar.rs` — accept string derives from `SUPPORTED`
-     automatically; extend only for special cases
-  3. `src/media.rs` — extension match + enum variant + a unit test
-  4. `src/media.rs` (`VideoType::pix_fmt`) + `src/transcoder/command.rs`
+- New media types must be wired in **three** places:
+  1. `src/media.rs` — `SUPPORTED` 表加一行 `(ext, MediaType)`（入队过滤、
+     `type_of_ext`、`dotted_exts`、空态文案全部自动派生）+ 对应 enum variant
+     + 一行单测；`media::tests::supported_extensions_are_consistent` 断言表内
+     每项可识别
+  2. `src/media.rs` `mime_for_ext` — 预览三处（preview:// 协议 / 桌面 data URL /
+     web Blob URL）共用的扩展名→MIME；漏加则该类型输入预览 404
+  3. `src/media.rs` (`VideoType::pix_fmt`) + `src/transcoder/command.rs`
      — pix_fmt / codec handling, plus `MediaFile::probe` codec correction
-  Same-extension dual type (animated webp) skips 1–2 (extension exists) and adds
+  Same-extension dual type (animated webp) skips 1（extension exists）and adds
   a `VideoType` variant + probe detection instead; `for_web` gets a catch-all.
 
 ## Gotchas
