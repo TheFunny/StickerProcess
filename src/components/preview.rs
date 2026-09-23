@@ -285,25 +285,15 @@ fn path_ext_str(path: &Path) -> String {
 }
 
 fn output_mime(path: &Path) -> &'static str {
-    if path_ext_str(path) == "png" {
-        "image/png"
-    } else {
-        "video/webm"
-    }
+    // 输出只可能是 .png / .webm；兜底沿用旧默认
+    crate::media::mime_for_ext(&path_ext_str(path)).unwrap_or("video/webm")
 }
 
-/// 输入侧 MIME（按扩展名；与 src/preview.rs 的映射一致，wasm 无该模块）。
+/// 输入侧 MIME（web 预览 Blob URL；桌面走 preview:// 协议）。
 #[cfg(target_arch = "wasm32")]
 fn input_mime(name: &str) -> &'static str {
-    match path_ext_str(Path::new(name)).as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" | "apng" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        _ => "application/octet-stream",
-    }
+    crate::media::mime_for_ext(&path_ext_str(Path::new(name)))
+        .unwrap_or("application/octet-stream")
 }
 
 /// 字节 → Blob object URL（wasm 输入预览；Blob 构造即拷贝字节）。

@@ -145,15 +145,7 @@ fn read_slice(path: &Path, start: u64, end: u64) -> Option<Body> {
 
 fn mime_for(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "webp" => Some("image/webp"),
-        "gif" => Some("image/gif"),
-        "mp4" => Some("video/mp4"),
-        "webm" => Some("video/webm"),
-        _ => None,
-    }
+    crate::media::mime_for_ext(&ext)
 }
 
 /// 极简 query 参数提取：`?key=value`（本协议足够）。
@@ -228,6 +220,8 @@ mod tests {
     fn mime_by_extension() {
         assert_eq!(mime_for(Path::new("a.webm")), Some("video/webm"));
         assert_eq!(mime_for(Path::new("B.PNG")), Some("image/png"));
+        // 回归：apng 曾只在 wasm 表里，桌面协议侧漏了 → 输入预览 404
+        assert_eq!(mime_for(Path::new("a.apng")), Some("image/png"));
         assert_eq!(mime_for(Path::new("c.txt")), None);
     }
 

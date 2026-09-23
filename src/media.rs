@@ -279,6 +279,22 @@ pub enum ImageType {
     Webp,
 }
 
+/// 扩展名 → MIME 的唯一事实源（preview:// 协议白名单、预览输出 data URL、
+/// web 输入 Blob URL 三处共用——原先两张手抄表靠注释互相同步，且桌面表
+/// 漏了 apng：`.apng` 输入走 preview:// 协议会 404）。None = 不认识（协议
+/// 侧据此 404，预览侧各自兜底）。
+pub fn mime_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" | "apng" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "mp4" => Some("video/mp4"),
+        "webm" => Some("video/webm"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
