@@ -19,9 +19,14 @@ use ffmpeg_the_third::codec::threading;
 use ffmpeg_the_third::format::Pixel;
 use ffmpeg_the_third::frame::video::Video as VideoFrame;
 use ffmpeg_the_third::util::mathematics::Rescale;
-use libc::EAGAIN;
 use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
+
+/// POSIX EAGAIN（MSVC errno.h = 11；桌面 target 仅 Windows——build.rs 硬编码
+/// /NODEFAULTLIB 与 avicap32，见 §ffmpeg environment）。原先为这一个常量直依
+/// libc；ffmpeg-sys 的 ffi 不导出 errno 常量，故本地钉值。
+/// 语义：`Error::Other { errno }` 持正向 errno（ffmpeg-the-third 的 From 已归一）。
+const EAGAIN: i32 = 11;
 
 /// 输出流时间基：webm muxer 惯例毫秒。
 const OUT_TB: Rational = Rational(1, 1000);

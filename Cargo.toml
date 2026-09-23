@@ -33,7 +33,6 @@ pretty_env_logger = "0.5.0"
 # 引擎双轨 / 文件对话框 / 资源管理器定位 / png 优化（feature = "desktop" 消费）
 ffmpeg-the-third = { version = "6", optional = true }
 ffmpeg-sidecar = { version = "2.5", optional = true }
-libc = { version = "0.2", optional = true }
 oxipng = { version = "10.2", features = ["parallel", "zopfli"], default-features = false, optional = true }
 rfd = { version = "0.17", optional = true }
 
@@ -42,7 +41,6 @@ default = ["desktop"]
 desktop = [
     "dep:ffmpeg-the-third",
     "dep:ffmpeg-sidecar",
-    "dep:libc",
     "dep:oxipng",
     "dep:rfd",
     "dioxus/desktop",
