@@ -252,7 +252,9 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     let raw = toml::to_string_pretty(settings).map_err(|e| e.to_string())?;
     // 先写临时文件再改名：fs::write 截断后写，中断窗口留下半截 toml
     // → load 判损坏，全部设置回默认。rename 在同一卷上是原子的。
-    let tmp = path.with_extension("toml.tmp");
+    // tmp 名拼 pid：便携版与安装版可同时运行（NSIS 钩子只挡安装时），
+    // 固定名会让两进程对同一 tmp 交错截断，半截内容被 rename 成正式文件。
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
     std::fs::write(&tmp, raw).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
