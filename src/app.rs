@@ -327,6 +327,15 @@ impl UiState {
                 // web：probe() 恒 Ok；时长/APNG 由 JS 原生元数据回填
                 let (name, data) = {
                     let Ok(t) = task_arc.lock() else {
+                        // 锁中毒直接 return 会让任务永驻 Probing：
+                        // run_all 的等待循环空转、start_run 永久拒绝开跑。
+                        // 回写 Alert 落地（与第二处锁分支/桌面 join 失败一致）。
+                        Self::write_back_probe(
+                            &mut ctx,
+                            index,
+                            &entry,
+                            Err("transcoder lock poisoned".to_string()),
+                        );
                         return;
                     };
                     match (t.media_file.display_name(), t.media_file.bytes()) {
