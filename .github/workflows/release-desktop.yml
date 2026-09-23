@@ -28,11 +28,13 @@ jobs:
           restore-keys: |
             desktop-${{ runner.os }}-
 
+      # 与 deploy-web.yml 同一防线：Release 资产可变，钉 sha256 再解压。
       - name: Install dx CLI
         shell: bash
         run: |
           curl -sSL -o dx.zip \
             https://github.com/dioxuslabs/dioxus/releases/download/v0.7.10/dx-x86_64-pc-windows-msvc.zip
+          echo "45eb4f87b7f86fdba8508ee7e0ef1f9e13cf8f2ffcc6a2d5858d0e8ea7dd1531  dx.zip" | sha256sum -c -
           unzip -o dx.zip -d "$CARGO_HOME/bin"
           dx --version
 

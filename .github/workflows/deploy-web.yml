@@ -86,11 +86,16 @@ jobs:
             web-${{ runner.os }}-dx0.7.10-
             web-${{ runner.os }}-
 
+      # dx CLI：GitHub Release 资产可变（可删除重传），不校验就等于把
+      # dioxuslabs 发布账号的 compromise 直接送进持 pages:write 的 runner。
+      # 与 scripts/fetch-*.sh 同一模式：钉 tag + 钉 sha256。换版本时更新两处
+      # （deploy-web 的 tgz 与 release-desktop 的 zip 是不同资产、不同哈希）。
       - name: Install dx CLI
         run: |
           if [ ! -x ~/.cargo/bin/dx ]; then
             curl -sSL -o dx.tgz \
               https://github.com/dioxuslabs/dioxus/releases/download/v0.7.10/dx-x86_64-unknown-linux-gnu.tar.gz
+            echo "4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7  dx.tgz" | sha256sum -c -
             tar xzf dx.tgz -C ~/.cargo/bin
           fi
           dx --version
