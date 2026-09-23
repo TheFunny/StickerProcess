@@ -78,3 +78,41 @@ jobs:
 
       - name: Clippy (desktop)
         run: cargo clippy -- -D warnings
+
+  # 单测门禁：此前 cargo test 只在 tag 触发的 release workflow 里跑，
+  # 回归可以全红合入 master。与 clippy 并行；夹具/环境同 clippy-desktop。
+  test-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            test-desktop-${{ runner.os }}-
+
+      - name: Cache ffmpeg static libs
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-dist
+          key: ffmpeg-static-win-${{ hashFiles('scripts/fetch-ffmpeg-static.sh') }}
+
+      - name: Fetch prebuilt ffmpeg static libs
+        shell: bash
+        run: |
+          if [ ! -f ffmpeg-dist/lib/avcodec.lib ]; then
+            bash scripts/fetch-ffmpeg-static.sh
+          fi
+          echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
+
+      - name: Test (desktop)
+        run: cargo test
