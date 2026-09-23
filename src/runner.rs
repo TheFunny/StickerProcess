@@ -362,6 +362,9 @@ async fn run_single_task(
             break 'attempt;
         };
         // 与 iced NextProcess(Ok) 一致：查尺寸 → 调系数 → 决定重试/前进
+        // check_size 失败（写盘后文件被删/杀软隔离）也要把原因带到行内：
+        // 只置 Alert 的话徽标显示 Failed 却无任何错误详情（对齐转码失败路径）
+        let mut size_err: Option<String> = None;
         let decision = ctx
             .with_task(index, |t| match t.check_size() {
                 Ok(_) => match size_excess_factor(t, video_limit, image_limit) {
@@ -394,11 +397,15 @@ async fn run_single_task(
                 },
                 Err(e) => {
                     log::error!("Error check size: {e}");
+                    size_err = Some(e.to_string());
                     t.status = Status::Alert;
                     Decision::Advance
                 }
             })
             .unwrap_or(Decision::Advance);
+        if let Some(msg) = size_err {
+            ctx.touch_entry(index, |e| e.error = Some(msg));
+        }
 
         match decision {
             Decision::Retry => {
