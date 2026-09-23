@@ -28,16 +28,24 @@ impl Transcoder {
     }
 }
 
-/// 磁盘补丁（桌面 Path 源）：读全文件 → 定位 → 写回。
-/// 文件上限就是贴纸大小（≤512KB），一次全量 I/O 是微秒级；原先的"8KB 头部
-/// 窗口 + seek 原地写 + 整文件兜底"为省这点 I/O 维护了三条写路径与三种错误
-/// 映射（还多一份重复的定位逻辑）。定位语义全在 `find_duration_payload`。
+/// 磁盘补丁（桌面 Path 源）：定位后**原地** seek 写 8 字节。
+/// 定位要读全文件（上限 ≤512KB，微秒级），但写回不能走 `fs::write`：
+/// 它先截断再写，中途失败（磁盘满/中断）就把已编码完成的好文件毁掉，
+/// 而 runner 随后还会把"损坏"产物删掉重跑。8 字节原地写无截断窗口，
+/// 失败也不损原文件。定位语义全在 `find_duration_payload`。
 #[cfg(feature = "desktop")]
 fn patch_webm_file(path: &std::path::Path) -> Result<(), TranscodeError> {
+    use std::io::{Seek, SeekFrom, Write};
     let data = std::fs::read(path)
         .map_err(|_| TranscodeError::DurationPatch("failed to read output file"))?;
-    let patched = patch_webm_bytes(data)?;
-    std::fs::write(path, &patched).map_err(|_| TranscodeError::DurationPatch("error writing file"))
+    let at = find_duration_payload(&data)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
+    file.seek(SeekFrom::Start(at as u64))
+        .and_then(|_| file.write_all(&100f64.to_be_bytes()))
+        .map_err(|_| TranscodeError::DurationPatch("error writing file"))
 }
 
 /// Duration 载荷（8 字节 f64）的起始偏移 = 标记位置 + 3。
