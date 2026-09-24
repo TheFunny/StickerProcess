@@ -41,7 +41,7 @@
         await d.tracks.ready;
         const t = d.tracks.selectedTrack;
         let total = 0;
-        for (let i = 0; i < Math.min(t.frameCount, 500); i++) {
+        for (let i = 0; i < t.frameCount; i++) {
           const { image } = await d.decode({ frameIndex: i });
           total += (image.duration ?? 100000) / 1e6;
           image.close();
@@ -132,6 +132,7 @@
       webcodecsMissing: await missing(["webm-muxer.js", "webcodecs-engine.js"]),
       ffmpegMissing: await missing([
         "ffmpeg.js",
+        "ffmpeg-engine.js",
         "814.ffmpeg.js",
         "ffmpeg-core-st.js",
         "ffmpeg-core-st.wasm",

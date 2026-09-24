@@ -370,8 +370,8 @@ fn reflect_has(window: &web_sys::Window, key: &str) -> bool {
     js_sys::Reflect::has(window, &JsValue::from_str(key)).unwrap_or(false)
 }
 
-/// 幂等注入 glue 脚本链（按序：依赖在前）；注入后轮询 marker 是否挂上 window
-/// （200ms × 50 次 = 10s 上限），避免 onload 回调的 Closure 生命周期管理。
+/// 幂等注入 glue 脚本链（依赖在前）。动态 classic script 默认 async=true；
+/// 显式设为 false 后，classic script 按插入顺序执行。
 async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeError> {
     let window =
         web_sys::window().ok_or_else(|| TranscodeError::Engine("no window on wasm".into()))?;
@@ -381,8 +381,6 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
     let document = window
         .document()
         .ok_or_else(|| TranscodeError::Engine("no document on wasm".into()))?;
-    // 顺序注入：前一脚本是后一的全局依赖（UMD wrapper → glue；muxer → glue）。
-    // 重复插入只多执行一次 IIFE，window 函数被覆盖，无副作用。
     for src in srcs {
         let script = document
             .create_element("script")
@@ -390,6 +388,9 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
         script
             .set_attribute("src", src)
             .map_err(|_| TranscodeError::Engine("set script src failed".into()))?;
+        script
+            .set_attribute("async", "false")
+            .map_err(|_| TranscodeError::Engine("set script async failed".into()))?;
         let head = document
             .head()
             .ok_or_else(|| TranscodeError::Engine("no head on wasm".into()))?;
