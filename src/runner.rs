@@ -66,6 +66,16 @@ fn sidecar_vp9_available() -> bool {
     crate::sidecar_probe::SidecarProbe::probe().is_some_and(|p| p.has_vp9)
 }
 
+/// 一次 attempt 后的去向：超限且预算未耗尽且有系数可缩 → Retry，否则 Advance。
+/// 纯函数（表驱动测试）；状态/系数的写回留在 run_single_task 的闭包里。
+fn decide(excess: Option<f64>, has_factor: bool, retry: u8, max_retry: u8) -> Decision {
+    match excess {
+        Some(e) if e > 1.0 && retry < max_retry && has_factor => Decision::Retry,
+        _ => Decision::Advance,
+    }
+}
+
+#[derive(Debug, PartialEq)]
 enum Decision {
     /// 未达重试上限，缩小系数后重跑当前任务。
     Retry,
@@ -358,39 +368,32 @@ async fn run_single_task(
         let mut size_err: Option<String> = None;
         let decision = ctx
             .with_task(index, |t| match t.check_size() {
-                Ok(_) => match excess_for(
-                    matches!(t.media_file.r#type(), Some(MediaType::Video(_))),
-                    t.output_size,
-                    video_limit,
-                    image_limit,
-                ) {
-                    Some(excess) if excess > 1.0 => {
-                        if let Some(factor) = t.size_factor.as_mut() {
-                            let old = *factor;
-                            let new = shrunk_factor(old, excess, retry_shrink);
-                            *factor = new;
-                            log::warn!(
-                                "{name}: output {:.2} KB over limit ({excess:.2}x), \
-                                 factor {old:.3} -> {new:.3}",
-                                t.output_size.map_or(0.0, |s| s as f64 / 1024.0),
-                            );
+                Ok(_) => {
+                    let excess = excess_for(
+                        matches!(t.media_file.r#type(), Some(MediaType::Video(_))),
+                        t.output_size,
+                        video_limit,
+                        image_limit,
+                    );
+                    match excess {
+                        Some(e) if e > 1.0 => {
+                            if let Some(factor) = t.size_factor.as_mut() {
+                                let old = *factor;
+                                let new = shrunk_factor(old, e, retry_shrink);
+                                *factor = new;
+                                log::warn!(
+                                    "{name}: output {:.2} KB over limit ({e:.2}x), \
+                                     factor {old:.3} -> {new:.3}",
+                                    t.output_size.map_or(0.0, |s| s as f64 / 1024.0),
+                                );
+                            }
+                            t.status = Status::SizeExcess;
                         }
-                        t.status = Status::SizeExcess;
-                        if retry < max_retry && t.size_factor.is_some() {
-                            Decision::Retry
-                        } else {
-                            Decision::Advance
-                        }
+                        Some(_) => t.status = Status::Done,
+                        None => t.status = Status::Alert,
                     }
-                    Some(_) => {
-                        t.status = Status::Done;
-                        Decision::Advance
-                    }
-                    None => {
-                        t.status = Status::Alert;
-                        Decision::Advance
-                    }
-                },
+                    decide(excess, t.size_factor.is_some(), retry, max_retry)
+                }
                 Err(e) => {
                     log::error!("Error check size: {e}");
                     size_err = Some(e.to_string());
@@ -463,7 +466,7 @@ async fn run_single_task(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_engine;
+    use super::{Decision, decide, resolve_engine};
     use crate::transcoder::Engine;
 
     #[test]
@@ -486,5 +489,20 @@ mod tests {
         let engine = Engine::parse("ffmpeg-wasm").expect("ffmpeg-wasm must parse");
         assert_eq!(engine.as_str(), "ffmpeg-wasm");
         assert_eq!(Engine::parse(engine.as_str()), Some(Engine::FfmpegWasm));
+    }
+
+    /// 尺寸重试决策的完整去向表（AGENTS 契约：图片不空转、耗尽停 SizeExcess）。
+    #[test]
+    fn decide_table_covers_retry_and_advance() {
+        // 超限 + 有系数 + 预算未耗尽 → Retry
+        assert_eq!(decide(Some(1.2), true, 0, 3), Decision::Retry);
+        // 预算耗尽 → Advance（行状态由调用处置为 SizeExcess，不自动转 Done）
+        assert_eq!(decide(Some(1.2), true, 3, 3), Decision::Advance);
+        // 图片任务（无系数可缩）→ 不空转重试
+        assert_eq!(decide(Some(1.2), false, 0, 3), Decision::Advance);
+        // 达标 → Advance
+        assert_eq!(decide(Some(1.0), true, 0, 3), Decision::Advance);
+        // check_size 失败 / 拿不到大小 → Advance（调用处置 Alert）
+        assert_eq!(decide(None, true, 0, 3), Decision::Advance);
     }
 }
