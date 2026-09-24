@@ -85,10 +85,10 @@ pub fn SettingsPanel() -> Element {
             // 与工具栏同一套：选择按钮做进输入框内，面板里也保持一致
             div { class: "dir-field",
                 input {
-                    class: if ctx.settings.read().output_dir_state() == OutputDirState::Ok {
-                        "input grow"
-                    } else {
+                    class: if ctx.settings.read().output_dir_state() == OutputDirState::Missing {
                         "input grow invalid-dir"
+                    } else {
+                        "input grow"
                     },
                     r#type: "text",
                     "aria-label": "Output folder",
