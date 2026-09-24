@@ -53,6 +53,9 @@ jobs:
       - name: Compile tests (wasm32)
         run: cargo test --locked --target wasm32-unknown-unknown --no-default-features --features web --no-run
 
+      - name: Test web engines (Node)
+        run: node --test assets/*.test.js
+
   # 两个 target 看到的 cfg 不同（对方的平台专属项会被报成 never used），所以两个都要跑
   clippy-desktop:
     runs-on: windows-latest

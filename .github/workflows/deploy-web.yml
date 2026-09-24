@@ -9,6 +9,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "Dioxus.toml"
+      - "scripts/**"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
@@ -146,6 +147,9 @@ jobs:
               s = p.read_text(encoding="utf-8")
               p.write_text(s.replace("</head>", meta + "\n    </head>", 1), encoding="utf-8")
           PY
+
+      - name: Smoke test mounted web app
+        run: bash scripts/smoke-web.sh web-dist
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
 
