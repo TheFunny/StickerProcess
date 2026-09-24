@@ -383,7 +383,7 @@ impl UiState {
                     Ok(inner) => inner,
                     Err(e) => Err(format!("join error: {e}")),
                 };
-                Self::write_back_probe(&mut ctx, index, &entry, result);
+                Self::write_back_probe(&mut ctx, &entry, result);
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -395,7 +395,6 @@ impl UiState {
                         // 回写 Alert 落地（与第二处锁分支/桌面 join 失败一致）。
                         Self::write_back_probe(
                             &mut ctx,
-                            index,
                             &entry,
                             Err("transcoder lock poisoned".to_string()),
                         );
@@ -420,33 +419,30 @@ impl UiState {
                     }
                     t.probe()
                 })();
-                Self::write_back_probe(&mut ctx, index, &entry, result);
+                Self::write_back_probe(&mut ctx, &entry, result);
             }
         });
     }
 
+    /// 按共享 Transcoder 找当前下标；数字下标会被删除/插入/Undo 改变。
+    fn entry_index(tasks: &[TaskEntry], entry: &TaskEntry) -> Option<usize> {
+        tasks
+            .iter()
+            .position(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
+    }
     /// 探测结果回写（状态翻转 + 错误镜像），含 Arc::ptr_eq 任务校验。
-    fn write_back_probe(
-        ctx: &mut UiState,
-        index: usize,
-        entry: &TaskEntry,
-        result: Result<(), String>,
-    ) {
-        // 先校验仍是同一任务（队列可能已被清空/重排），再写入：
-        // probe 不写 Transcoder.status，需在闭包内赋值由 with_task 同步镜像
-        // （含 probe 纠正类型后的 is_video，避免用错大小上限/预览渲染元素）。
-        if !ctx
-            .tasks
-            .cloned()
-            .get(index)
-            .is_some_and(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
-        {
+    fn write_back_probe(ctx: &mut UiState, entry: &TaskEntry, result: Result<(), String>) {
+        // 数字下标只代表启动探测时的快照。空闲期删除、插入或 Undo 会移动
+        // 队列；按共享 Transcoder 重新定位，找不到才把这次回写视为无效。
+        let tasks = ctx.tasks.read();
+        let Some(index) = Self::entry_index(&tasks, entry) else {
             return;
-        }
+        };
+        drop(tasks);
         // Run 已接管该任务（镜像 = Processing）则止步：with_task 会在主线程
         // 撞 worker 持有的锁（UI 冻结），且无条件写 Pending 会抹掉运行中状态。
         if matches!(
-            ctx.tasks.cloned().get(index),
+            ctx.tasks.read().get(index),
             Some(e) if e.mirror.status == Status::Processing
         ) {
             return;
@@ -466,20 +462,23 @@ impl UiState {
     /// 逐个锁取——先全量克隆再下载是 N×512KB 的双份峰值（产物本就驻内存）。
     #[cfg(target_arch = "wasm32")]
     pub fn download_all(&mut self) {
-        let items: Vec<(std::sync::Arc<std::sync::Mutex<crate::transcoder::Transcoder>>, String)> =
-            self.tasks
-                .cloned()
-                .iter()
-                .filter(|e| e.mirror.status == Status::Done)
-                .map(|e| {
-                    let name = e
-                        .mirror
-                        .output_file_name
-                        .clone()
-                        .unwrap_or_else(|| "sticker.webm".into());
-                    (std::sync::Arc::clone(&e.transcoder), name)
-                })
-                .collect();
+        let items: Vec<(
+            std::sync::Arc<std::sync::Mutex<crate::transcoder::Transcoder>>,
+            String,
+        )> = self
+            .tasks
+            .cloned()
+            .iter()
+            .filter(|e| e.mirror.status == Status::Done)
+            .map(|e| {
+                let name = e
+                    .mirror
+                    .output_file_name
+                    .clone()
+                    .unwrap_or_else(|| "sticker.webm".into());
+                (std::sync::Arc::clone(&e.transcoder), name)
+            })
+            .collect();
         let mut ctx = *self;
         spawn(async move {
             let mut failed = 0usize;
@@ -812,7 +811,7 @@ await new Promise(() => {{}});
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskEntry, Status, reinsert_removed, split_done};
+    use super::{Status, TaskEntry, UiState, reinsert_removed, split_done};
     use crate::media::MediaFile;
     use std::path::Path;
 
@@ -829,6 +828,21 @@ mod tests {
     }
 
     #[test]
+    fn probe_writeback_follows_task_after_reindex() {
+        let target = TaskEntry::new(MediaFile::new(Path::new("target.mp4")));
+        let mut list = vec![
+            TaskEntry::new(MediaFile::new(Path::new("a.mp4"))),
+            target.clone(),
+        ];
+
+        // 探测启动后删除目标前面的任务；旧下标 1 已失效，但身份仍在。
+        list.remove(0);
+        list.insert(0, TaskEntry::new(MediaFile::new(Path::new("new.mp4"))));
+
+        assert_eq!(UiState::entry_index(&list, &target), Some(1));
+    }
+
+    #[test]
     fn undo_reinsert_restores_original_order() {
         // 收集走 clear_done 的同一份实现（split_done），回插走 reinsert_removed：
         // 下标记账两端都是真件——clear_done 改坏收集/下标，此测试必须红
@@ -838,10 +852,7 @@ mod tests {
         let (mut kept, removed) = split_done(list);
         assert_eq!(names(&kept), ["a.mp4", "c.mp4", "e.mp4"]);
         // 撤销槽记的是**原**下标
-        assert_eq!(
-            removed.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
-            [1, 3]
-        );
+        assert_eq!(removed.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [1, 3]);
         reinsert_removed(&mut kept, removed);
         assert_eq!(names(&kept), ["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"]);
     }
