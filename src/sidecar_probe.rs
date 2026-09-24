@@ -10,7 +10,8 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 static PROBE: OnceLock<SidecarProbe> = OnceLock::new();
@@ -52,7 +53,11 @@ impl SidecarProbe {
     }
 
     fn select_candidate(candidates: Vec<PathBuf>, check: impl Fn(&Path) -> bool) -> Self {
+        let mut fallback = None;
         for path in candidates.into_iter().filter(|path| path.is_file()) {
+            if fallback.is_none() {
+                fallback = Some(path.clone());
+            }
             if check(&path) {
                 log::info!("sidecar ffmpeg detected: {}", path.display());
                 return Self {
@@ -60,6 +65,16 @@ impl SidecarProbe {
                     has_vp9: true,
                 };
             }
+        }
+        if let Some(exe) = fallback {
+            log::warn!(
+                "sidecar ffmpeg detected without libvpx-vp9: {}",
+                exe.display()
+            );
+            return Self {
+                exe,
+                has_vp9: false,
+            };
         }
         log::info!("sidecar ffmpeg with libvpx-vp9 not found — inprocess engine only");
         Self {
@@ -81,23 +96,38 @@ impl SidecarProbe {
         Self::run_probe(child, PROBE_TIMEOUT)
     }
 
-    /// 并发排空 stdout/stderr；每路最多读取 1 MiB，超时后 kill + wait。
+    /// 并发排空 stdout/stderr；每路最多读取 1 MiB，超时或超限后 kill + wait。
     fn run_probe(mut child: Child, timeout: Duration) -> bool {
         fn reader<R: Read + Send + 'static>(
             pipe: R,
+            overflow: Arc<AtomicBool>,
         ) -> std::thread::JoinHandle<Result<Vec<u8>, std::io::Error>> {
             std::thread::spawn(move || {
                 let mut bytes = Vec::new();
-                pipe.take(MAX_PROBE_OUTPUT)
+                pipe.take(MAX_PROBE_OUTPUT + 1)
                     .read_to_end(&mut bytes)
-                    .map(|_| bytes)
+                    .map(|_| {
+                        if bytes.len() as u64 > MAX_PROBE_OUTPUT {
+                            overflow.store(true, Ordering::Relaxed);
+                        }
+                        bytes
+                    })
             })
         }
-        let out_reader = child.stdout.take().map(reader);
-        let err_reader = child.stderr.take().map(reader);
+        let overflow = Arc::new(AtomicBool::new(false));
+        let out_reader = child
+            .stdout
+            .take()
+            .map(|pipe| reader(pipe, Arc::clone(&overflow)));
+        let err_reader = child
+            .stderr
+            .take()
+            .map(|pipe| reader(pipe, Arc::clone(&overflow)));
         let deadline = Instant::now() + timeout;
+        let mut aborted = false;
         loop {
-            if Instant::now() >= deadline {
+            if overflow.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                aborted = true;
                 let _ = child.kill();
                 break;
             }
@@ -105,6 +135,7 @@ impl SidecarProbe {
                 Ok(Some(_)) => break,
                 Ok(None) => std::thread::sleep(Duration::from_millis(20)),
                 Err(_) => {
+                    aborted = true;
                     let _ = child.kill();
                     break;
                 }
@@ -119,6 +150,9 @@ impl SidecarProbe {
             .and_then(|reader| reader.join().ok())
             .and_then(Result::ok)
             .unwrap_or_default();
+        if aborted || overflow.load(Ordering::Relaxed) {
+            return false;
+        }
         status.is_some_and(|status| status.success())
             && [stdout, stderr]
                 .iter()
@@ -164,6 +198,20 @@ mod tests {
     }
 
     #[test]
+    fn keeps_first_existing_candidate_without_vp9() {
+        let first = std::env::temp_dir().join(format!("stp_fallback_{}.cmd", std::process::id()));
+        let second = std::env::temp_dir().join(format!("stp_fallback2_{}.cmd", std::process::id()));
+        std::fs::write(&first, "@exit /b 0\r\n").unwrap();
+        std::fs::write(&second, "@echo no encoder\r\n").unwrap();
+        let selected =
+            SidecarProbe::select_candidate(vec![first.clone(), second.clone()], |_| false);
+        assert_eq!(selected.exe, first);
+        assert!(!selected.has_vp9);
+        let _ = std::fs::remove_file(first);
+        let _ = std::fs::remove_file(second);
+    }
+
+    #[test]
     fn probe_timeout_returns_false() {
         let child = Command::new("powershell.exe")
             .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
@@ -175,5 +223,21 @@ mod tests {
         let started = Instant::now();
         assert!(!SidecarProbe::run_probe(child, Duration::from_millis(100)));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn oversized_probe_output_is_rejected() {
+        let child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "[Console]::Out.Write(('x' * 1048577))",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        assert!(!SidecarProbe::run_probe(child, Duration::from_secs(3)));
     }
 }

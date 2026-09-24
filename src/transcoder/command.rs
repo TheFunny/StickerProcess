@@ -253,4 +253,21 @@ mod tests {
             .expect("-bufsize present");
         assert_eq!(args[pos + 1], (bv as f64 * BUFSIZE_RATIO).to_string());
     }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn gen_command_uses_detected_sidecar_path() {
+        use crate::media::MediaFile;
+        use std::path::Path;
+
+        let mut t = Transcoder::new(MediaFile::new(Path::new("a.mp4")));
+        t.media_file.set_duration(1.0);
+        t.set_output("out/a.webm");
+        let mut command = t.gen_command().unwrap();
+        let program = command.as_inner().get_program();
+        match crate::sidecar_probe::SidecarProbe::probe() {
+            Some(probe) => assert_eq!(program, probe.exe.as_os_str()),
+            None => assert_eq!(program, std::ffi::OsStr::new("ffmpeg")),
+        }
+    }
 }
