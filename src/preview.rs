@@ -144,9 +144,11 @@ fn parse_range(header: Option<&str>, total: u64) -> Option<(u64, u64)> {
     if start >= total {
         return None;
     }
-    let end = match end_s.trim().parse::<u64>() {
-        Ok(end) => end.min(total - 1),
-        Err(_) => total - 1, // open-ended "bytes=N-"
+    let end_s = end_s.trim();
+    let end = if end_s.is_empty() {
+        total - 1
+    } else {
+        end_s.parse::<u64>().ok()?.min(total - 1)
     };
     let end = end.min(start.saturating_add(MAX_WINDOW - 1));
     if end < start {
@@ -225,6 +227,7 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=-500"), 1000), None);
         assert_eq!(parse_range(Some("bytes=0-9,20-29"), 1000), None);
         assert_eq!(parse_range(Some("bytes=500-100"), 1000), None);
+        assert_eq!(parse_range(Some("bytes=0-abc"), 1000), None);
     }
 
     fn request(path: &Path, range: Option<&str>) -> HttpRequest<Vec<u8>> {
@@ -253,6 +256,9 @@ mod tests {
         assert_eq!(partial.headers()[CONTENT_RANGE], "bytes 2-5/10");
 
         let invalid = handle(request(&path, Some("bytes=-5")));
+
+        let malformed = handle(request(&path, Some("bytes=0-abc")));
+        assert_eq!(malformed.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(invalid.status(), StatusCode::RANGE_NOT_SATISFIABLE);
 
         std::fs::File::create(&path)
