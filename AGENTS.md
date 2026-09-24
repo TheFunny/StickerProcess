@@ -278,7 +278,7 @@ run lazily initializes it.
 ```bash
 cargo run            # debug
 cargo build --release
-cargo test           # 52 unit tests + 5 #[ignore] libav smoke tests
+cargo test           # 53 unit tests + 6 #[ignore] (5 libav smoke + 1 env probe)
 cargo test -- --ignored   # needs ffmpeg static libs (see "ffmpeg environment")
 
 # web (wasm32): engine matrix runs in browser; core assets in assets/ (29.5MB wasm gitignored)
@@ -287,13 +287,15 @@ cargo check --target wasm32-unknown-unknown --no-default-features --features web
 dx serve --platform web
 ```
 
-Test count: 52 unit tests across media/config/command/preview/app/steps/
-inprocess/runner/number_field/compat, plus 5 integration smoke tests (`inprocess_video_smoke`,
+Test count: 53 unit tests across media/config/command/preview/app/steps/
+inprocess/runner/number_field/compat, plus 6 ignored tests: 5 integration
+smoke tests (`inprocess_video_smoke`,
 `inprocess_gif_smoke`, `inprocess_image_smoke`,
 `image_has_no_size_factor_after_transcode`,
 `force_fps_frame_count_matches_sidecar`) that require the static
-ffmpeg libs (env setup below). `inprocess_video_smoke` accepts a
-`SMOKE_INPUT` env var to transcode an arbitrary input.
+ffmpeg libs (env setup below) and `sidecar_row_follows_probe` (spawns a real
+`ffmpeg -version`; run with `cargo test -- --ignored`). `inprocess_video_smoke`
+accepts a `SMOKE_INPUT` env var to transcode an arbitrary input.
 
 ### wasm 体积（实测，别重复测）
 
