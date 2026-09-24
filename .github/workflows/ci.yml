@@ -46,7 +46,12 @@ jobs:
             clippy-web-${{ runner.os }}-
 
       - name: Clippy (wasm32)
-        run: cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
+        run: cargo clippy --locked --tests --target wasm32-unknown-unknown --no-default-features --features web -- -D warnings
+
+      # 测试代码也要在 wasm 目标下编译过：cfg(wasm32) 分支的测试此前从未被
+      # 任何命令编译（首开时暴露 12 个编译错），光 lint 主代码挡不住它烂掉。
+      - name: Compile tests (wasm32)
+        run: cargo test --locked --target wasm32-unknown-unknown --no-default-features --features web --no-run
 
   # 两个 target 看到的 cfg 不同（对方的平台专属项会被报成 never used），所以两个都要跑
   clippy-desktop:
@@ -94,7 +99,7 @@ jobs:
           echo "FFMPEG_DIR=$GITHUB_WORKSPACE/ffmpeg-dist" >> "$GITHUB_ENV"
 
       - name: Clippy (desktop)
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy --locked --tests -- -D warnings
 
   # 单测门禁：此前 cargo test 只在 tag 触发的 release workflow 里跑，
   # 回归可以全红合入 master。与 clippy 并行；夹具/环境同 clippy-desktop。
