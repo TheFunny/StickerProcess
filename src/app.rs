@@ -11,6 +11,7 @@ use crate::components::{
 use crate::config::{self, Settings};
 use crate::media::MediaFile;
 use crate::transcoder::{Status, Transcoder};
+use dioxus::core::spawn_forever;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -204,7 +205,9 @@ impl UiState {
             let epoch = self.save_epoch.cloned() + 1;
             self.save_epoch.set(epoch);
             let mut ctx = *self;
-            spawn(async move {
+            // spawn_forever：去抖任务从设置面板/行内控件的作用域触发，组件在
+            // 300ms 窗口内卸载（关面板）会取消 spawn 的任务 → 保存静默丢失
+            spawn_forever(async move {
                 crate::timers::sleep(std::time::Duration::from_millis(300)).await;
                 // 期间又有修改 → 新任务（更高代数）负责写盘，本任务退场
                 if ctx.save_epoch.cloned() == epoch {
@@ -261,7 +264,10 @@ impl UiState {
         }
         let mut toasts = self.toasts;
         let hold = if undo { 6000 } else { 3600 };
-        spawn(async move {
+        // spawn_forever 而非 spawn：后者绑定"当前 scope"（= 点 ✕ 的 TaskRow），
+        // 行随删除卸载会连带取消计时任务 → toast 永不移除（实测 toast 3 armed 后
+        // 102s 无 leaving）。计时器是全局一次性工作，挂 ROOT 存活到应用退出。
+        spawn_forever(async move {
             crate::timers::sleep(std::time::Duration::from_millis(hold)).await;
             toasts.with_mut(|list| {
                 if let Some(t) = list.iter_mut().find(|t| t.id == id) {
