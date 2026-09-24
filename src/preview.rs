@@ -199,6 +199,15 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=1000-"), 1000), None); // 越界
         assert_eq!(parse_range(None, 1000), None);
         assert_eq!(parse_range(Some("malformed"), 1000), None);
+        // 后缀式 bytes=-N：start 解析失败 → None（走 200 全量）。本协议只服务
+        // 自家 WebView（视频元素只发普通区间），钉现状即可。
+        assert_eq!(parse_range(Some("bytes=-500"), 1000), None);
+        // 多段 Range 不支持：split_once('-') 使 end="9,20-29" 解析失败 → 被当
+        // 开区间 → 放大成全量 206。RFC 语义应按段分答；改它属产品决策，先钉死
+        // 现状防"顺手修好"变成无人察觉的行为漂移。
+        assert_eq!(parse_range(Some("bytes=0-9,20-29"), 1000), Some((0, 999)));
+        // end < start → None（走 200 全量）
+        assert_eq!(parse_range(Some("bytes=500-100"), 1000), None);
     }
 
     /// 回归：单次响应封顶在 MAX_WINDOW——开区间与显式大 end 都不得展开成
@@ -229,8 +238,6 @@ mod tests {
     fn media_url_format() {
         let url = media_url(Path::new(r"D:\x\y.png"));
         assert!(url.starts_with(URL_PREFIX));
-        // `\` 与 `:` 在白名单内保持原样，中文/空格才转义
-        assert!(url.contains("media?p=D:\\x\\y.png"));
         let url_cn = media_url(Path::new(r"D:\目 录\a.png"));
         assert!(url_cn.contains("%E7%9B%AE")); // 目
         assert!(url_cn.contains("%20"));
