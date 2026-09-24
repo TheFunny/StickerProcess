@@ -335,9 +335,6 @@ impl Transcoder {
         if engine == Engine::Inprocess {
             return self.run_inprocess(on_progress);
         }
-        // sidecar 分支（ffmpeg 子进程）
-        // 上次取消遗留的标志必须清掉，否则同一任务再次 Run 会立即被"取消"
-        self.cancel_flag.store(false, Ordering::Relaxed);
         let media_type = self
             .media_file
             .r#type()

@@ -43,8 +43,6 @@ impl Transcoder {
         &mut self,
         mut on_progress: impl FnMut(f32),
     ) -> Result<(), TranscodeError> {
-        // 上次取消遗留的标志必须清掉（与 sidecar 入口一致）
-        self.cancel_flag.store(false, Ordering::Relaxed);
         LazyLock::force(&LIBAV_INIT);
         let media_type = self
             .media_file

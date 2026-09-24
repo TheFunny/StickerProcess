@@ -200,6 +200,9 @@ pub(crate) async fn exec_webcodecs(
             "WebCodecs VP9 not supported in this browser",
         ));
     }
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Err(TranscodeError::Cancelled);
+    }
 
     let cancel_flag_probe = Arc::clone(&cancel_flag);
     let closure = Closure::new(move |pct: f32| {

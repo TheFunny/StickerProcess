@@ -41,15 +41,18 @@ pub(crate) async fn run_blocking<T: Send + 'static>(
 
 /// 引擎解析：设置值 + 可用性兜底，返回实际执行的引擎。
 /// 可用性兜底：
-/// - webcodecs（网页端引擎，桌面无浏览器环境）→ 回落 inprocess
+/// - web 引擎（网页端无桌面运行环境）→ 回落 inprocess
 /// - sidecar 且 ffmpeg/libvpx-vp9 不可用 → 回落 inprocess
 ///
 /// 桌面专属：web 端忽略 `Settings.engine`（矩阵即策略，`Engine::for_web` 决定）。
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn resolve_engine(setting: crate::transcoder::Engine) -> Engine {
     match setting {
-        Engine::Webcodecs => {
-            log::warn!("engine=webcodecs 是网页端引擎，桌面回落 inprocess");
+        Engine::Webcodecs | Engine::FfmpegWasm => {
+            log::warn!(
+                "engine={} 是网页端引擎，桌面回落 inprocess",
+                setting.as_str()
+            );
             Engine::Inprocess
         }
         Engine::Sidecar if !sidecar_vp9_available() => {
@@ -90,18 +93,16 @@ enum TaskOutcome {
     Cancelled,
 }
 
-/// 为尚未设置输出路径的任务分配输出文件（文件名规则见 `set_output_dir`）。
-fn ensure_output_dir_set(
+/// 每次显式 Run 分配一个新输出；run_single_task 内的尺寸重试继续复用它。
+fn set_output_for_run(
     task: &Arc<Mutex<Transcoder>>,
     output_dir: &str,
     keep_input_name: bool,
 ) -> Result<(), String> {
-    let mut t = task.lock().map_err(|e| e.to_string())?;
-    if t.get_output().is_none() {
-        t.set_output_dir(output_dir, keep_input_name)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    task.lock()
+        .map_err(|e| e.to_string())?
+        .set_output_dir(output_dir, keep_input_name)
+        .map_err(|e| e.to_string())
 }
 
 pub async fn run_all(
@@ -137,7 +138,7 @@ pub async fn run_all(
         // 每任务取当前设置（output_dir 等）
         let settings = ctx.settings.peek().clone();
 
-        if let Err(msg) = ensure_output_dir_set(
+        if let Err(msg) = set_output_for_run(
             &entry.transcoder,
             &settings.output_dir,
             settings.keep_input_name,
@@ -151,8 +152,7 @@ pub async fn run_all(
         match run_single_task(&mut ctx, &entry, index, progress_tx.clone(), webcodecs_ok).await {
             TaskOutcome::Advanced => index += 1,
             TaskOutcome::Cancelled => {
-                // 复位（progress/状态）由 run_single_task 完成，这里只记日志
-                //（cancel_flag 在 run_with_progress 入口复位）
+                // 复位（progress/状态）由 run_single_task 完成，这里只记日志。
                 log::info!("queue cancelled at '{}'", entry.mirror.input_path);
                 break;
             }
@@ -193,15 +193,15 @@ async fn run_single_task(
         loop {
             if *cancel_signal.read() {
                 cancel_flag_watcher.store(true, std::sync::atomic::Ordering::Relaxed);
-                // wasm：引擎卡住时不再有进度回调，取消必须主动送达 JS 侧
-                // （桌面 sidecar/inprocess 各自在循环里轮询该标志）
+                // wasm：主动送达 JS；持续保持旗标直到 runner 取消 watcher。
                 #[cfg(target_arch = "wasm32")]
                 crate::transcoder::web::cancel_active();
-                return;
             }
             crate::timers::sleep(std::time::Duration::from_millis(100)).await;
         }
     }));
+    // 旗标只由 runner 在 attempt 入口清零；引擎入口不再覆盖取消边沿。
+    cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
     let mut retry: u8 = 0;
     let mut cancelled = false;
@@ -229,6 +229,11 @@ async fn run_single_task(
         });
         ctx.progress.set(None);
         ctx.touch_entry(index, |e| e.error = None);
+        // 清除旧取消边沿后立即复查，防止清零与 watcher 首次轮询之间的点击丢失。
+        if *ctx.cancel.peek() {
+            cancelled = true;
+            break 'attempt;
+        }
 
         // 后台线程执行转码；不跨 await 持有锁
         // （std::time::Instant 在 wasm 未实现——桌面才有计时）
@@ -284,8 +289,6 @@ async fn run_single_task(
                         }
                         return TaskOutcome::Advanced;
                     };
-                    t.cancel_flag
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
                     t.prepare_web_job(webcodecs_ok)
                 };
                 match job_result {
@@ -466,9 +469,9 @@ async fn run_single_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, decide};
     #[cfg(not(target_arch = "wasm32"))]
     use super::resolve_engine;
+    use super::{Decision, decide, set_output_for_run};
     #[cfg(not(target_arch = "wasm32"))] // 唯一模块级使用者是下面两个桌面专属测试
     use crate::transcoder::Engine;
 
@@ -485,6 +488,32 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))] // resolve_engine 桌面专属（web 矩阵即策略）
     fn resolve_engine_webcodecs_falls_back_on_desktop() {
         assert_eq!(resolve_engine(Engine::Webcodecs), Engine::Inprocess);
+    }
+
+    #[test]
+    fn rerun_uses_current_output_settings() {
+        let task = std::sync::Arc::new(std::sync::Mutex::new(crate::transcoder::Transcoder::new(
+            crate::media::MediaFile::new(std::path::Path::new("input/clip.mp4")),
+        )));
+        set_output_for_run(&task, "old", false).unwrap();
+        let first = task.lock().unwrap().get_output().cloned().unwrap();
+        set_output_for_run(&task, "new", true).unwrap();
+        let second = task.lock().unwrap().get_output().cloned().unwrap();
+        assert_ne!(first, second);
+        assert!(second.starts_with("new"));
+        assert!(
+            second
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("clip-")
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resolve_engine_ffmpeg_wasm_falls_back_on_desktop() {
+        assert_eq!(resolve_engine(Engine::FfmpegWasm), Engine::Inprocess);
     }
 
     #[test]
