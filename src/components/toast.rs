@@ -60,7 +60,7 @@ pub fn ToastContainer() -> Element {
                     span { class: "toast-text", "{toast.text}" }
                     if toast.undo {
                         button {
-                            class: "btn-link toast-undo",
+                            class: "btn btn-mini toast-undo",
                             // 运行中禁用：undo_remove 同一守卫的可见反馈（保槽，跑完可再点）
                             disabled: ctx.running.cloned(),
                             onclick: move |_| ctx.undo_remove(toast.id),

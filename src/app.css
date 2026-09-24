@@ -501,6 +501,9 @@ body {
   flex-direction: column-reverse;
   gap: 8px;
   max-width: 420px;
+  /* 默认 stretch 会让容器（收缩包裹最长子项）把所有通知拉齐到最宽那条——
+     各按自身内容定宽、靠右堆叠，max-width 仍由容器兜底 */
+  align-items: flex-end;
 }
 
 .toast {
@@ -582,17 +585,12 @@ body {
   overflow-y: auto;
 }
 
-/* 删除回执上的撤销：链路按钮样式 + 加粗（唯一的可操作元素） */
-.toast-undo {
+/* 删除回执上的撤销：mini 按钮（唯一的可操作元素，必须长得像按钮而不是正文）。
+   选择器带 .toast 提特异性——.btn-mini 的 margin-left:8px 同分靠后，会压掉右对齐；
+   禁用灰显/防点击由 .btn:disabled 统一提供，不再单写一份 */
+.toast .toast-undo {
   margin-left: auto;
   font-weight: 600;
-  white-space: nowrap;
-}
-
-/* 运行中禁用（.btn-link 不走 .btn:disabled 那套灰显） */
-.toast-undo:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* 设置面板（模态对话框） */
