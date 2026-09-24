@@ -56,6 +56,9 @@ fi
   exit 1
 }
 
+printf 'browser: '
+"$chrome" --version
+
 "$chrome" \
   --headless=new \
   --no-sandbox \

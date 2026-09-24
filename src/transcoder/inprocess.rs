@@ -635,7 +635,7 @@ mod tests {
 
         let mut t = Transcoder::new(crate::media::MediaFile::new(&input));
         t.media_file.set_duration(1.0);
-        assert!(t.probe().is_ok());
+        t.probe().unwrap();
         t.set_output(&output);
         let err = t.run_inprocess(|_| {}).unwrap_err();
         assert!(
