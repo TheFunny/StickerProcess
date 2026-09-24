@@ -407,6 +407,15 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   a `VideoType` variant + probe detection instead; `for_web` gets a catch-all.
 
 ## Gotchas
+- **dioxus `spawn` 绑当前 scope，组件卸载即取消任务**（core 文档原话
+  "canceled when the component is dropped"，任务注册进该 scope 的
+  `spawned_tasks` 随 scope drop 清杀）：toast 计时器曾由点 ✕ 的 TaskRow spawn，
+  删行卸载该 scope 连带取消计时 → toast 永驻（插桩实测 `armed` 后 102s 无
+  `leaving`、0 panic；`TaskRow { key: "{index}" }` 删行只销毁**末行** key，
+  故只复现于删末行——这就是"有时候"的来源）。**必须活过触发组件的任务一律用
+  `dioxus::core::spawn_forever`**（挂 ROOT，活到 VirtualDom 结束）：toast 计时器、
+  设置面板 300ms 去抖写盘（关面板即丢保存）均已改；触发源是 App/工具栏等永生
+  组件的 `spawn` 不受影响，新增任务时按触发源会否卸载来判断。
 - **wasm 平台三坑**（W1 实测，全部静默崩上下文/死锁，报错无栈）：
   1. `tokio::time`、`std::time::Instant`、`chrono::Local` 在 wasm32 一律 panic
      （"time not implemented"）——用 `timers::sleep`（cfg 双实现）与 `js_sys::Date`。
