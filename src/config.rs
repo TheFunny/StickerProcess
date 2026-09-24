@@ -7,6 +7,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 /// 输出目录可用性：红框与提示文案都从它派生（替代原来的 bool）。
 /// 桌面专属——web 没有输出目录这一行。
 #[cfg(not(target_arch = "wasm32"))]
@@ -86,6 +89,9 @@ impl Default for Settings {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+static WRITE_PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 impl Settings {
     /// 输出目录状态（桌面）：UI 用它决定红框与提示。
     /// 只看存在性，不碰磁盘写——可写性要真正建文件才知道，见 `output_dir_writable`。
@@ -114,10 +120,18 @@ impl Settings {
         if !dir.is_dir() {
             return false;
         }
-        let probe = dir.join(".stickerprocess_write_test");
-        match std::fs::write(&probe, b"") {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&probe);
+        let seq = WRITE_PROBE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let probe = dir.join(format!(
+            ".stickerprocess_write_test.{}.{seq}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(_) => {
+                let _ = std::fs::remove_file(probe);
                 true
             }
             Err(_) => false,
@@ -330,7 +344,7 @@ mod tests {
     #[test]
     fn sanitize_clamps_out_of_range_values() {
         let mut s = Settings {
-            video_max_size_kb: 0,   // inf 超限比的源头
+            video_max_size_kb: 0,          // inf 超限比的源头
             retry_shrink_factor: f64::NAN, // toml 序列化失败源
             duration_factors: [99.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             target_fps: 1e9,
@@ -371,6 +385,11 @@ mod tests {
         // 已存在的目录
         assert_eq!(s.output_dir_state(), OutputDirState::Ok);
         assert!(s.output_dir_writable(), "temp dir should be writable");
+        // 旧固定名是用户文件，不能被写权限探测截断或删除。
+        let user_file = base.join(".stickerprocess_write_test");
+        std::fs::write(&user_file, b"keep me").unwrap();
+        assert!(s.output_dir_writable());
+        assert_eq!(std::fs::read(&user_file).unwrap(), b"keep me");
 
         // 不存在、但父目录在 → 开跑时 create_dir 会成功
         s.output_dir = base.join("child").to_string_lossy().into_owned();
