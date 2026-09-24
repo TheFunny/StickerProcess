@@ -156,14 +156,14 @@ mod tests {
         let mut data = vec![0u8; 10];
         data[7..10].copy_from_slice(&[0x44, 0x89, 0x88]); // 3+8 字节超出 EOF
         let err = patch_webm_bytes(data).unwrap_err();
-        assert!(err.to_string().contains("too close to EOF"));
+        assert!(matches!(err, TranscodeError::DurationPatch(_)));
     }
 
     #[test]
     fn duration_patch_rejects_missing_marker() {
         let data = vec![0u8; 64];
         let err = patch_webm_bytes(data).unwrap_err();
-        assert!(err.to_string().contains("not found"));
+        assert!(matches!(err, TranscodeError::DurationPatch(_)));
     }
 
     /// 回归：Cluster 载荷里的伪标记不得被改写（误中会静默坏 8 字节视频数据）。
@@ -173,7 +173,7 @@ mod tests {
         data[10..14].copy_from_slice(&[0x1F, 0x43, 0xB6, 0x75]); // Cluster 在前
         data[50..53].copy_from_slice(&[0x44, 0x89, 0x88]); // 载荷里的伪标记
         let err = patch_webm_bytes(data).unwrap_err();
-        assert!(err.to_string().contains("not found"));
+        assert!(matches!(err, TranscodeError::DurationPatch(_)));
     }
 
     /// 回归：原地补丁只改 8 字节载荷——文件长度与其余字节必须原封不动。

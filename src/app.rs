@@ -106,6 +106,22 @@ pub struct UndoSlot {
     pub removed: Vec<(usize, TaskEntry)>,
 }
 
+/// clear_done 的收集件：按**原下标**拆出 Done 任务、其余保序。抽成函数是因为
+/// 撤销回插依赖"原下标"记账——测试必须驱动同一份实现，复刻循环在 clear_done
+/// 改坏下标记账时照样绿。
+fn split_done(list: Vec<TaskEntry>) -> (Vec<TaskEntry>, Vec<(usize, TaskEntry)>) {
+    let mut kept = Vec::new();
+    let mut removed = Vec::new();
+    for (pos, entry) in list.into_iter().enumerate() {
+        if entry.mirror.status == Status::Done {
+            removed.push((pos, entry));
+        } else {
+            kept.push(entry);
+        }
+    }
+    (kept, removed)
+}
+
 /// 把撤销槽里的条目按原下标升序回插。删除期间队列可能又变短（撤销前删了别的
 /// 任务），下标越界时贴到末尾——原位回插才能还原原序。
 fn reinsert_removed(list: &mut Vec<TaskEntry>, removed: Vec<(usize, TaskEntry)>) {
@@ -516,15 +532,10 @@ impl UiState {
     pub fn clear_done(&mut self) {
         let mut removed = Vec::new();
         self.tasks.with_mut(|list| {
-            // retain 会压缩下标，撤销要按原位回插——自己过一遍
-            let old = std::mem::take(list);
-            for (pos, entry) in old.into_iter().enumerate() {
-                if entry.mirror.status == Status::Done {
-                    removed.push((pos, entry));
-                } else {
-                    list.push(entry);
-                }
-            }
+            // retain 会压缩下标，撤销要按原位回插——收集走 split_done（原下标记账）
+            let (kept, rem) = split_done(std::mem::take(list));
+            *list = kept;
+            removed = rem;
         });
         if removed.is_empty() {
             return;
@@ -801,7 +812,7 @@ await new Promise(() => {{}});
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskEntry, reinsert_removed};
+    use super::{TaskEntry, Status, reinsert_removed, split_done};
     use crate::media::MediaFile;
     use std::path::Path;
 
@@ -819,22 +830,20 @@ mod tests {
 
     #[test]
     fn undo_reinsert_restores_original_order() {
-        // 与 clear_done 同一收集算法（记的是**原**下标），免得测试自己手算下标
-        let mut list = Vec::new();
-        let mut removed = Vec::new();
-        for (pos, entry) in entries(&["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"])
-            .into_iter()
-            .enumerate()
-        {
-            if pos == 1 || pos == 3 {
-                removed.push((pos, entry));
-            } else {
-                list.push(entry);
-            }
-        }
-        assert_eq!(names(&list), ["a.mp4", "c.mp4", "e.mp4"]);
-        reinsert_removed(&mut list, removed);
-        assert_eq!(names(&list), ["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"]);
+        // 收集走 clear_done 的同一份实现（split_done），回插走 reinsert_removed：
+        // 下标记账两端都是真件——clear_done 改坏收集/下标，此测试必须红
+        let mut list = entries(&["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"]);
+        list[1].mirror.status = Status::Done;
+        list[3].mirror.status = Status::Done;
+        let (mut kept, removed) = split_done(list);
+        assert_eq!(names(&kept), ["a.mp4", "c.mp4", "e.mp4"]);
+        // 撤销槽记的是**原**下标
+        assert_eq!(
+            removed.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            [1, 3]
+        );
+        reinsert_removed(&mut kept, removed);
+        assert_eq!(names(&kept), ["a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4"]);
     }
 
     #[test]

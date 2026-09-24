@@ -510,6 +510,10 @@ mod tests {
     /// 报告必须跟着探测缓存走：探测不到 ffmpeg.exe 时不许写成可用（反之亦然）。
     /// `--nocapture` 下打印整份报告，作为桌面端的实测证据。
     #[test]
+    // 环境依赖 + 子进程副作用（collect_blocking 会 spawn `ffmpeg -version`、写探测
+    // 文件）：归入 --ignored，单测套件不跑进程；探测存在性由 sidecar_probe 自己的
+    // 单测覆盖，此处只验证"报告跟随探测"的映射。
+    #[ignore = "spawns a real ffmpeg; run with --ignored"]
     fn sidecar_row_follows_probe() {
         let report = desktop::collect_blocking(&Settings::default());
         let row = report
