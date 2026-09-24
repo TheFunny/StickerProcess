@@ -59,7 +59,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `docs/WEB_PLAN.md` | Web dual-engine roadmap (W1–W5): ffmpeg.wasm for GIF/APNG alpha, WebCodecs for MP4, engine matrix, and deployment |
 | `.github/workflows/deploy-web.yml` | CI：push master → **先 windows 跑 `cargo test --locked`（质量门，lint 仍不挡部署但正确性挡）** → dx release build（`--base-path /StickerProcess/`；dx 下载带 sha256 校验，`cargo fetch --locked` 验锁）→ 跑 `scripts/fetch-ffmpeg-core.sh` 从 ffmpeg-core-st Release 取 29.5MB core（sha256 校验） → 组装产物（cp assets 八件套+core，index→404）→ python 注入静态 OG/description 到 head（dx 无自定义模板、爬虫不执行 JS）→ 官方三件套 configure/upload/deploy-pages 发布（Pages 源=Actions）|
 | `.github/workflows/release-desktop.yml` | CI：push tag `v*`（或手动 dispatch）→ windows runner 跑 `scripts/fetch-ffmpeg-static.sh` 从 ffmpeg-static-win Release 取预构建静态库当 `FFMPEG_DIR` → cargo test + `dx bundle --release --nsis` **两次**（webview_install_mode 无 CLI 覆盖，sed 改 Dioxus.toml 切 OfflineInstaller/Skip）+ `cargo build --release` 的裸 exe 当便携版 → 产物收进 `dist/`（第二次 bundle 会清空 nsis 目录，原地留文件=丢）改名 `-setup-webview.exe`/`-setup-no-webview.exe`/`-portable.exe` → softprops/action-gh-release 发布。首次正式包 = v0.1.0 |
-| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`-D warnings`）+ `cargo test --locked`（windows，此前单测只在打 tag 时跑）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop/test job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。registry 缓存键跨 workflow 共享（`cargo-{os}-`），target 各 job 专属。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
+| `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`--tests -D warnings`）+ `cargo test --locked`（windows，此前单测只在打 tag 时跑）+ wasm 测试编译检查（`--no-run`，cfg(wasm32) 测试防烂）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop/test job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。registry 缓存键跨 workflow 共享（`cargo-{os}-`），target 各 job 专属。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
 | `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
@@ -383,9 +383,9 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   compares only that struct — a hand-written field list dropped a mirror field
   before and made dioxus memo silently skip re-renders (broke factor display,
   then status/error badges).
-- Lint state: run clippy for **both** targets —
-  `cargo clippy` and
-  `cargo clippy --target wasm32-unknown-unknown --no-default-features --features web`.
+- Lint state: run clippy for **both** targets **including tests** —
+  `cargo clippy --tests` and
+  `cargo clippy --tests --target wasm32-unknown-unknown --no-default-features --features web`.
   Both are **warning-free**: platform-only API surface is either cfg-gated to the
   platform that uses it (`#[cfg(feature = "desktop")]` / `#[cfg(not(target_arch =
   "wasm32"))]`) or, where the other platform's unit tests need it (e.g.
@@ -393,9 +393,12 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `#[cfg_attr(<other target>, allow(dead_code))]` with a reason. Don't reintroduce
   a hand-maintained "these warnings are false positives" list — if a new
   cross-platform item trips it, use one of those two forms.
-  `cargo clippy --all-targets` is *not* a substitute: it adds a second target
-  whose own dead-code view differs (measured: 6 → 7 warnings).
-  Both commands are **gated in CI** (`.github/workflows/ci.yml`) with `-- -D warnings`.
+  `--tests` 是 CI 实际形态：首开时暴露 4 个真问题（components/preview.rs 的
+  items-after-test-module、config.rs 三处 field_reassign_with_default），全部
+  根因修复而非 allow——别用 allow 绕。CI 的 wasm job 另跑
+  `cargo test --target wasm32 … --no-run` 编译 wasm 目标的测试套件（cfg(wasm32)
+  测试此前从未被任何命令编译，首开 12 个编译错）。
+  All commands are **gated in CI** (`.github/workflows/ci.yml`) with `-- -D warnings`.
 - New media types must be wired in **three** places:
   1. `src/media.rs` — `SUPPORTED` 表加一行 `(ext, MediaType)`（入队过滤、
      `type_of_ext`、`dotted_exts`、空态文案全部自动派生）+ 对应 enum variant
