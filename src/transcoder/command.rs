@@ -200,6 +200,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "desktop")] // parse_progress_time 是 sidecar 进度解析（桌面专属）
     fn progress_time_parses() {
         assert!((parse_progress_time("00:00:01.00") - 1.0).abs() < 1e-9);
         assert!((parse_progress_time("00:03:29.04") - 209.04).abs() < 1e-9);

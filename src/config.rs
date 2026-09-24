@@ -269,6 +269,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // toml 是桌面专属依赖（wasm 走 serde_json）
     fn roundtrip_default() {
         let raw = toml::to_string_pretty(&Settings::default()).unwrap();
         let parsed: Settings = toml::from_str(&raw).unwrap();
@@ -276,23 +277,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // toml 是桌面专属依赖（wasm 走 serde_json）
     fn roundtrip_custom() {
-        let mut s = Settings::default();
-        s.output_dir = r"D:\out put\目录".into();
-        s.max_retry = 7;
-        s.video_max_size_kb = 128;
-        s.image_max_size_kb = 1024;
-        s.retry_shrink_factor = 0.9;
-        s.duration_factors = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
-        s.target_fps = 30.0;
-        s.theme = "dark".into();
-        s.engine = crate::transcoder::Engine::Inprocess;
-        s.keep_input_name = true;
+        let s = Settings {
+            output_dir: r"D:\out put\目录".into(),
+            max_retry: 7,
+            video_max_size_kb: 128,
+            image_max_size_kb: 1024,
+            retry_shrink_factor: 0.9,
+            duration_factors: [1.0; 6],
+            target_fps: 30.0,
+            theme: "dark".into(),
+            engine: crate::transcoder::Engine::Inprocess,
+            keep_input_name: true,
+            ..Settings::default()
+        };
         let raw = toml::to_string_pretty(&s).unwrap();
         assert_eq!(toml::from_str::<Settings>(&raw).unwrap(), s);
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // toml 是桌面专属依赖（wasm 走 serde_json）
     fn missing_new_fields_fall_back_to_defaults() {
         // 兼容旧版 settings.toml：缺新字段时用默认值（未知键 gif_factor_multiplier 被忽略）
         let legacy = "output_dir = 'X'\nmax_retry = 2\nvideo_max_size_kb = 256\nimage_max_size_kb = 512\ngif_factor_multiplier = 0.75\ntheme = 'light'\n";
@@ -305,6 +310,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // toml 是桌面专属依赖（wasm 走 serde_json）
     fn missing_engine_falls_back_to_sidecar() {
         // 兼容旧版 settings.toml：缺 engine 键时用默认 sidecar
         let legacy = "output_dir = 'X'\nmax_retry = 2\nvideo_max_size_kb = 256\nimage_max_size_kb = 512\ntheme = 'light'\n";
@@ -313,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // toml 是桌面专属依赖（wasm 走 serde_json）
     fn unknown_engine_rejects_the_whole_file() {
         // 类型化后非法值在反序列化期失败，load 落到整体默认——不再是
         // "仅 engine 键回退"。手改非法值本就是罕见路径，load 级兜底已覆盖。
@@ -322,18 +329,21 @@ mod tests {
 
     #[test]
     fn sanitize_clamps_out_of_range_values() {
-        let mut s = Settings::default();
-        s.video_max_size_kb = 0; // inf 超限比的源头
-        s.retry_shrink_factor = f64::NAN; // toml 序列化失败源
-        s.duration_factors = [99.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-        s.target_fps = 1e9;
+        let mut s = Settings {
+            video_max_size_kb: 0,   // inf 超限比的源头
+            retry_shrink_factor: f64::NAN, // toml 序列化失败源
+            duration_factors: [99.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            target_fps: 1e9,
+            ..Settings::default()
+        };
         sanitize(&mut s);
         assert_eq!(s.video_max_size_kb, 16);
         assert_eq!(s.retry_shrink_factor, 0.05);
         assert_eq!(s.duration_factors[0], 10.0);
         assert_eq!(s.duration_factors[1], 0.05);
         assert_eq!(s.target_fps, 240.0);
-        // 序列化必须恢复可用
+        // 序列化必须恢复可用（toml 桌面专属；wasm 用 serde_json 走 localStorage）
+        #[cfg(not(target_arch = "wasm32"))]
         assert!(toml::to_string_pretty(&s).is_ok());
 
         // 第二轮：上/下限反向与非有限值——四条钳制分支各过一遍
@@ -353,10 +363,12 @@ mod tests {
     fn output_dir_state_covers_the_four_cases() {
         let base = std::env::temp_dir().join(format!("sp_cfg_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&base);
-        let mut s = Settings::default();
+        let mut s = Settings {
+            output_dir: base.to_string_lossy().into_owned(),
+            ..Settings::default()
+        };
 
         // 已存在的目录
-        s.output_dir = base.to_string_lossy().into_owned();
         assert_eq!(s.output_dir_state(), OutputDirState::Ok);
         assert!(s.output_dir_writable(), "temp dir should be writable");
 

@@ -466,10 +466,14 @@ async fn run_single_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, decide, resolve_engine};
+    use super::{Decision, decide};
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::resolve_engine;
+    #[cfg(not(target_arch = "wasm32"))] // 唯一模块级使用者是下面两个桌面专属测试
     use crate::transcoder::Engine;
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // resolve_engine 桌面专属（web 矩阵即策略）
     fn resolve_engine_passthrough_valid() {
         assert_eq!(resolve_engine(Engine::Inprocess), Engine::Inprocess);
         // sidecar 直通与否取决于本机 ffmpeg 探测结果，两者都是合法输出
@@ -478,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // resolve_engine 桌面专属（web 矩阵即策略）
     fn resolve_engine_webcodecs_falls_back_on_desktop() {
         assert_eq!(resolve_engine(Engine::Webcodecs), Engine::Inprocess);
     }

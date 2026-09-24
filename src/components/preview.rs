@@ -324,24 +324,6 @@ fn compare_text(entry: &TaskEntry, ratio: Option<f64>) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// data URL 是浏览器侧的输入契约：mime 前缀 + 标准 base64（写错则预览整片空白）。
-    #[test]
-    fn data_url_formats_prefix_and_payload() {
-        use base64::Engine as _;
-        assert_eq!(
-            data_url("image/png", &[1, 2, 3]),
-            format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
-            )
-        );
-    }
-}
-
 /// 输出侧内容：有 data URL 按类型渲染；已完成但还在编码 → Loading；否则占位。
 /// 收 &str：data URL 可达 ~699KB，调用方正处在渲染路径上，不为传参再拷一次。
 fn render_output(url: Option<&str>, is_video: bool, loading: bool) -> Element {
@@ -358,5 +340,23 @@ fn render_output(url: Option<&str>, is_video: bool, loading: bool) -> Element {
         None => rsx! {
             div { class: "preview-empty", "Not transcoded yet" }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// data URL 是浏览器侧的输入契约：mime 前缀 + 标准 base64（写错则预览整片空白）。
+    #[test]
+    fn data_url_formats_prefix_and_payload() {
+        use base64::Engine as _;
+        assert_eq!(
+            data_url("image/png", &[1, 2, 3]),
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3])
+            )
+        );
     }
 }
