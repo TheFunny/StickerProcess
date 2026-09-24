@@ -211,11 +211,42 @@ mod tests {
         use crate::media::MediaFile;
         let mut t = Transcoder::new(MediaFile::from_bytes(vec![1, 2, 3], "a.gif".into()));
         t.media_file.set_duration(2.0);
-        let duration = t.effective_duration(&VideoType::Gif).unwrap();
-        let factor = t.resolve_factor(duration, &VideoType::Gif);
-        let bitrate = quantized_bitrate(target_bitrate_bps(duration), factor);
+        // 直接断言三引擎唯一出处本身——旧版手工串联 effective_duration →
+        // resolve_factor → quantized_bitrate，链的接线/顺序改坏测试照样绿
+        let (duration, bitrate) = t.video_bitrate(&VideoType::Gif).unwrap();
+        assert!((duration - 2.0).abs() < f64::EPSILON);
         // duration=2.0 落 <3s 档（因子 1.0）→ 256KB*8/2s * 1.0 * 0.75(gif) = 786432
         // 量化到 10 的倍数 → 786430
         assert_eq!(bitrate, 786_430);
+    }
+
+    /// 链的出口：真正进 ffmpeg 命令的 -b:v / -bufsize（= b:v × 1.5）必须与
+    /// video_bitrate 的结果一致——链算对但没接进命令，旧测试发现不了。
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn gen_command_emits_bitrate_and_bufsize() {
+        use crate::media::{MediaFile, MediaType};
+        use std::path::Path;
+        // Path 源（gen_command 要 input path）+ 已分配输出（要 output path）
+        let mut t = Transcoder::new(MediaFile::new(Path::new("a.mp4")));
+        t.media_file.set_duration(2.0);
+        t.set_output("out/a.webm");
+        let MediaType::Video(v_type) = t.media_file.r#type().expect("mp4 types as video") else {
+            panic!("mp4 must be a video type");
+        };
+        // 先跑一次码率链固定 size_factor；gen_command 内部重跑会复用同一因子
+        let (_, bv) = t.video_bitrate(&v_type).unwrap();
+        let cmd = t.gen_command().unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let pos = args.iter().position(|a| a == "-b:v").expect("-b:v present");
+        assert_eq!(args[pos + 1], bv.to_string());
+        let pos = args
+            .iter()
+            .position(|a| a == "-bufsize")
+            .expect("-bufsize present");
+        assert_eq!(args[pos + 1], (bv as f64 * BUFSIZE_RATIO).to_string());
     }
 }
