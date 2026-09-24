@@ -168,8 +168,15 @@ pub fn Toolbar() -> Element {
                         #[cfg(target_arch = "wasm32")]
                         {
                             for f in evt.data.files() {
+                                let name = f.name();
+                                if f.size() > crate::media::MAX_WEB_INPUT_BYTES as u64 {
+                                    ctx.push_toast(
+                                        crate::components::toast::ToastKind::Warn,
+                                        format!("{name} exceeds the 64 MiB browser input limit"),
+                                    );
+                                    continue;
+                                }
                                 spawn(async move {
-                                    let name = f.name();
                                     if let Ok(bytes) = f.read_bytes().await {
                                         ctx.add_file_bytes(name, bytes.to_vec());
                                     }

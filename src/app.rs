@@ -326,7 +326,7 @@ impl UiState {
         }
     }
 
-    /// 网页端：前端文件字节直接入队（扩展名过滤与 add_files 一致）。
+    /// 网页端：前端文件字节直接入队（扩展名、单项大小、队列总量三项检查）。
     #[cfg(target_arch = "wasm32")]
     pub fn add_file_bytes(&mut self, name: String, data: Vec<u8>) {
         let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
@@ -334,7 +334,27 @@ impl UiState {
             log::warn!("Skipped unsupported file: {name}");
             self.report_skipped(vec![name]);
             return;
-        };
+        }
+        if data.len() > crate::media::MAX_WEB_INPUT_BYTES {
+            self.push_toast(
+                ToastKind::Warn,
+                format!("{name} exceeds the 64 MiB browser input limit"),
+            );
+            return;
+        }
+        let queued = self
+            .tasks
+            .read()
+            .iter()
+            .map(|e| e.mirror.input_size)
+            .sum::<u64>();
+        if queued.saturating_add(data.len() as u64) > crate::media::MAX_WEB_QUEUE_BYTES as u64 {
+            self.push_toast(
+                ToastKind::Warn,
+                format!("{name} exceeds the 128 MiB browser queue limit"),
+            );
+            return;
+        }
         let index = self.tasks.with_mut(|list| {
             list.push(TaskEntry::new(MediaFile::from_bytes(data, name)));
             list.len() - 1

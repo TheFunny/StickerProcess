@@ -28,16 +28,25 @@ impl Transcoder {
     }
 }
 
-/// 磁盘补丁（桌面 Path 源）：定位后**原地** seek 写 8 字节。
-/// 定位要读全文件（上限 ≤512KB，微秒级），但写回不能走 `fs::write`：
-/// 它先截断再写，中途失败（磁盘满/中断）就把已编码完成的好文件毁掉，
-/// 而 runner 随后还会把"损坏"产物删掉重跑。8 字节原地写无截断窗口，
-/// 失败也不损原文件。定位语义全在 `find_duration_payload`。
+/// Duration 位于首个 Cluster 之前；限制扫描窗口即可避免高配置产物按全文分配。
+#[cfg(feature = "desktop")]
+const MAX_HEADER_SCAN: usize = 8 * 1024 * 1024;
+
+/// 磁盘补丁：只读最多 8 MiB 定位头部，再原地 seek 写 8 字节。不能用
+/// `fs::write`：它先截断再写，中途失败会毁掉已编码完成的好文件。
 #[cfg(feature = "desktop")]
 fn patch_webm_file(path: &std::path::Path) -> Result<(), TranscodeError> {
-    use std::io::{Seek, SeekFrom, Write};
-    let data = std::fs::read(path)
-        .map_err(|_| TranscodeError::DurationPatch("failed to read output file"))?;
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::File::open(path)
+        .map_err(|_| TranscodeError::DurationPatch("failed to open output file"))?;
+    let total = file
+        .metadata()
+        .map_err(|_| TranscodeError::DurationPatch("failed to stat output file"))?
+        .len();
+    let scan_len = total.min(MAX_HEADER_SCAN as u64) as usize;
+    let mut data = vec![0u8; scan_len];
+    file.read_exact(&mut data)
+        .map_err(|_| TranscodeError::DurationPatch("failed to read output header"))?;
     let at = find_duration_payload(&data)?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)

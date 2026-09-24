@@ -2,6 +2,13 @@
 use ffmpeg_the_third as ffmpeg;
 use std::path::{Path, PathBuf};
 
+/// 网页端浏览器必须整份驻留输入并创建多份转码副本；64 MiB 单文件、128 MiB
+/// 队列总量避免普通多选直接推过 wasm 线性内存上限。
+#[cfg(target_arch = "wasm32")]
+pub const MAX_WEB_INPUT_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(target_arch = "wasm32")]
+pub const MAX_WEB_QUEUE_BYTES: usize = 128 * 1024 * 1024;
+
 /// 媒体来源：桌面为文件路径；网页端为前端读入内存的字节 + 文件名。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {

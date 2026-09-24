@@ -90,12 +90,12 @@ use drop_bridge::{ERRORS, PENDING};
 #[component]
 pub fn DropZone(children: Element) -> Element {
     let mut dragging = use_signal(|| false);
-    let mut ctx = use_context::<UiState>();
+    let ctx = use_context::<UiState>();
 
     #[cfg(target_arch = "wasm32")]
-    {
-        // 排空任务：dioxus 执行器内运行（信号写入安全）。同时按 _dropHover
-        // 时间戳新鲜度维护覆盖层高亮（拖出窗口 500ms 无打点即熄灭）。
+    use_effect(move || {
+        // 一次挂载只启动一个排空循环；重渲染不会叠加 200ms 轮询任务。
+        let mut ctx = ctx;
         spawn(async move {
             let mut last_seen = 0f64;
             loop {
@@ -122,14 +122,13 @@ pub fn DropZone(children: Element) -> Element {
                     log::info!("[drop] queue drain: {name}");
                     ctx.add_file_bytes(name, data);
                 }
-                // 读取失败通知：与成功队列同一唤醒，dioxus 上下文内写信号才安全
                 let errors: Vec<String> = ERRORS.with(|q| std::mem::take(&mut *q.borrow_mut()));
                 for msg in errors {
                     ctx.push_toast(crate::components::toast::ToastKind::Error, msg);
                 }
             }
         });
-    }
+    });
 
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
@@ -177,6 +176,12 @@ pub fn DropZone(children: Element) -> Element {
                     continue;
                 };
                 let name = file.name();
+                if file.size() > crate::media::MAX_WEB_INPUT_BYTES as f64 {
+                    drop_bridge::push_error(format!(
+                        "{name} exceeds the 64 MiB browser input limit"
+                    ));
+                    continue;
+                }
                 wasm_bindgen_futures::spawn_local(async move {
                     match js_read_file_bytes(file).await {
                         Ok(bytes) => {
@@ -185,7 +190,9 @@ pub fn DropZone(children: Element) -> Element {
                         }
                         Err(e) => {
                             log::warn!("[drop] read failed: {name}: {e}");
-                            drop_bridge::push_error(format!("Failed to read dropped file {name}: {e}"));
+                            drop_bridge::push_error(format!(
+                                "Failed to read dropped file {name}: {e}"
+                            ));
                         }
                     }
                 });
@@ -220,9 +227,9 @@ pub fn DropZone(children: Element) -> Element {
                 dragging.set(false);
                 // 与文件选择一致：运行中也允许追加（沿用 iced 订阅语义）
                 // web 端摄取由原生 drop 守卫完成（本监听 prevent_default 异步生效
-                // 不可靠），此处仅桌面路径。
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    let mut ctx = ctx;
                     let files: Vec<PathBuf> =
                         evt.data.files().iter().map(|f| f.path()).collect();
                     if !files.is_empty() {
