@@ -56,18 +56,25 @@
         const base = location.href.replace(/\/[^/]*$/, "");
         const noop = () => {};
         const progress = onCoreProgress || noop;
-        const [coreURL, wasmURL] = await Promise.all([
-          toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript"),
-          fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress)
-            .then((b) => URL.createObjectURL(b)),
-        ]);
-        const ff = new FFmpeg();
-        // ST core (no pthreads): no COOP/COEP required.
-        await ff.load({ coreURL, wasmURL });
-        ffmpeg = ff;
-        return ff;
+        const urls = [];
+        try {
+          urls.push(await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript"));
+          urls.push(await fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress)
+            .then((b) => URL.createObjectURL(b)));
+          const ff = new FFmpeg();
+          // ST core (no pthreads): no COOP/COEP required.
+          await ff.load({ coreURL: urls[0], wasmURL: urls[1] });
+          // load resolve 后 worker 已取得 core；撤销 URL 立即释放下载 Blob。
+          // 失败路径同样撤销，且 loading.catch 允许下次重试。
+          urls.forEach((url) => URL.revokeObjectURL(url));
+          ffmpeg = ff;
+          return ff;
+        } catch (error) {
+          urls.forEach((url) => URL.revokeObjectURL(url));
+          throw error;
+        }
       })();
-      loading.catch(() => { loading = null; }); // 失败后允许重试
+      loading.catch(() => { loading = null; });
     }
     return loading;
   }
@@ -117,6 +124,8 @@
   };
 
   window.stickerFfmpegCancel = () => {
-    if (ffmpeg) { ffmpeg.terminate(); ffmpeg = null; }
+    if (ffmpeg) ffmpeg.terminate();
+    ffmpeg = null;
+    loading = null;
   };
 })();
