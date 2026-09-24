@@ -116,7 +116,10 @@ impl Transcoder {
 #[cfg(feature = "desktop")]
 impl Transcoder {
     pub(super) fn gen_command(&mut self) -> Result<FfmpegCommand, TranscodeError> {
-        let mut command = FfmpegCommand::new();
+        let mut command = match crate::sidecar_probe::SidecarProbe::probe() {
+            Some(probe) => FfmpegCommand::new_with_path(&probe.exe),
+            None => FfmpegCommand::new(),
+        };
         command
             .input(
                 self.media_file
