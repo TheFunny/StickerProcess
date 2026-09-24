@@ -335,6 +335,17 @@ mod tests {
         assert_eq!(s.target_fps, 240.0);
         // 序列化必须恢复可用
         assert!(toml::to_string_pretty(&s).is_ok());
+
+        // 第二轮：上/下限反向与非有限值——四条钳制分支各过一遍
+        s.image_max_size_kb = 0;
+        s.retry_shrink_factor = 1.5;
+        s.target_fps = -10.0;
+        s.duration_factors[2] = f64::NAN;
+        sanitize(&mut s);
+        assert_eq!(s.image_max_size_kb, 16); // 下限
+        assert_eq!(s.retry_shrink_factor, 1.0); // 上限
+        assert_eq!(s.target_fps, 0.0); // 负数钳到 0
+        assert_eq!(s.duration_factors[2], 0.05); // 非有限 → min
     }
 
     #[test]
