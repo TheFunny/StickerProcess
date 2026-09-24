@@ -99,10 +99,12 @@ fn set_output_for_run(
     output_dir: &str,
     keep_input_name: bool,
 ) -> Result<(), String> {
-    task.lock()
-        .map_err(|e| e.to_string())?
-        .set_output_dir(output_dir, keep_input_name)
-        .map_err(|e| e.to_string())
+    let mut t = task.lock().map_err(|e| e.to_string())?;
+    t.set_output_dir(output_dir, keep_input_name)
+        .map_err(|e| e.to_string())?;
+    t.output_size = None;
+    t.output_bytes = None;
+    Ok(())
 }
 
 pub async fn run_all(
@@ -491,14 +493,32 @@ mod tests {
     }
 
     #[test]
-    fn rerun_uses_current_output_settings() {
+    fn rerun_uses_current_output_settings_and_clears_old_output() {
         let task = std::sync::Arc::new(std::sync::Mutex::new(crate::transcoder::Transcoder::new(
             crate::media::MediaFile::new(std::path::Path::new("input/clip.mp4")),
         )));
         set_output_for_run(&task, "old", false).unwrap();
-        let first = task.lock().unwrap().get_output().cloned().unwrap();
+        let first = match task.lock() {
+            Ok(t) => t.get_output().cloned().unwrap(),
+            Err(e) => panic!("task lock poisoned: {e}"),
+        };
+        match task.lock() {
+            Ok(mut t) => {
+                t.status = crate::transcoder::Status::Done;
+                t.output_size = Some(123);
+                t.output_bytes = Some(vec![1, 2, 3]);
+            }
+            Err(e) => panic!("task lock poisoned: {e}"),
+        }
         set_output_for_run(&task, "new", true).unwrap();
-        let second = task.lock().unwrap().get_output().cloned().unwrap();
+        let (second, size, bytes) = match task.lock() {
+            Ok(t) => (
+                t.get_output().cloned().unwrap(),
+                t.output_size,
+                t.output_bytes.is_some(),
+            ),
+            Err(e) => panic!("task lock poisoned: {e}"),
+        };
         assert_ne!(first, second);
         assert!(second.starts_with("new"));
         assert!(
@@ -508,6 +528,8 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("clip-")
         );
+        assert_eq!(size, None);
+        assert!(!bytes);
     }
 
     #[test]
