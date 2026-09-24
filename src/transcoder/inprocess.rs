@@ -161,6 +161,7 @@ impl Transcoder {
         let mut iframe = VideoFrame::empty();
         let mut oframe = VideoFrame::empty();
         let mut last_pts: Option<i64> = None;
+        let mut decoded_frames = 0u64;
         let mut enc: Option<ffmpeg::codec::encoder::video::Encoder> = None;
 
         // 收编码器包并写盘（enc 已 open）
@@ -257,6 +258,7 @@ impl Transcoder {
             loop {
                 match decoder.receive_frame(&mut iframe) {
                     Ok(()) => {
+                        decoded_frames += 1;
                         push_frame(&mut graph, &iframe)
                             .map_err(|e| TranscodeError::Filter(e.to_string()))?;
                         drain_filter!();
@@ -275,6 +277,7 @@ impl Transcoder {
         loop {
             match decoder.receive_frame(&mut iframe) {
                 Ok(()) => {
+                    decoded_frames += 1;
                     push_frame(&mut graph, &iframe)
                         .map_err(|e| TranscodeError::Filter(e.to_string()))?;
                     drain_filter!();
@@ -286,8 +289,14 @@ impl Transcoder {
                 Err(e) => return Err(TranscodeError::Decoder(e.to_string())),
             }
         }
+        if decoded_frames == 0 {
+            return Err(TranscodeError::Decoder("no frame decoded".into()));
+        }
         push_flush(&mut graph).map_err(|e| TranscodeError::Filter(e.to_string()))?;
         drain_filter!();
+        if enc.is_none() {
+            return Err(TranscodeError::Decoder("no filtered frame".into()));
+        }
         if let Some(encoder) = enc.as_mut() {
             encoder
                 .send_eof()
@@ -611,6 +620,34 @@ mod tests {
         t.run_inprocess(|_| {}).unwrap();
         t.check_size().unwrap();
         assert!(t.size_factor.is_none());
+    }
+
+    #[test]
+    fn zero_frame_video_is_rejected() {
+        let input = std::env::temp_dir().join(format!("stp_empty_{}.mp4", std::process::id()));
+        let output =
+            std::env::temp_dir().join(format!("stp_empty_out_{}.webm", std::process::id()));
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&output);
+        // Y4M keeps width/height/pixel format in its header, so the MP4-named
+        // fixture still has a valid video stream while exposing zero packets.
+        std::fs::write(&input, b"YUV4MPEG2 W16 H16 F25:1 Ip A1:1 C420\n").unwrap();
+
+        let mut t = Transcoder::new(crate::media::MediaFile::new(&input));
+        t.media_file.set_duration(1.0);
+        assert!(t.probe().is_ok());
+        t.set_output(&output);
+        let err = t.run_inprocess(|_| {}).unwrap_err();
+        assert!(
+            matches!(&err, TranscodeError::Decoder(message) if message == "no frame decoded"),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            std::fs::metadata(&output)
+                .map(|meta| meta.len() == 0)
+                .unwrap_or(true)
+        );
+        let _ = (std::fs::remove_file(input), std::fs::remove_file(output));
     }
 
     /// Force FPS 双引擎帧数对齐：sidecar `-r` 与 inprocess `fps` 滤镜应产出
