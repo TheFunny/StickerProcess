@@ -83,31 +83,24 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
-      # dx 可执行文件与 target 专属（bin 只在本 workflow 用）
-      - name: Cache dx + build output
+      # 只缓存构建输出；dx 每次按钉住的 tag + SHA-256 安装，不能被 restore key 复用。
+      - name: Cache build output
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
-          path: |
-            ~/.cargo/bin
-            target
+          path: target
           key: web-${{ runner.os }}-dx0.7.10-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             web-${{ runner.os }}-dx0.7.10-
-            web-${{ runner.os }}-
 
-      # dx CLI：GitHub Release 资产可变（可删除重传），不校验就等于把
-      # dioxuslabs 发布账号的 compromise 直接送进持 pages:write 的 runner。
-      # 与 scripts/fetch-*.sh 同一模式：钉 tag + 钉 sha256。换版本时更新两处
-      # （deploy-web 的 tgz 与 release-desktop 的 zip 是不同资产、不同哈希）。
+      # dx CLI：GitHub Release 资产可变，固定 tag 仍不足以保证内容；每次下载
+      # 都校验 SHA-256，并断言实际版本，避免缓存或错误资产静默进入构建。
       - name: Install dx CLI
         run: |
-          if [ ! -x ~/.cargo/bin/dx ]; then
-            curl -sSL -o dx.tgz \
-              https://github.com/dioxuslabs/dioxus/releases/download/v0.7.10/dx-x86_64-unknown-linux-gnu.tar.gz
-            echo "4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7  dx.tgz" | sha256sum -c -
-            tar xzf dx.tgz -C ~/.cargo/bin
-          fi
-          dx --version
+          curl -sSL -o dx.tgz \
+            https://github.com/dioxuslabs/dioxus/releases/download/v0.7.10/dx-x86_64-unknown-linux-gnu.tar.gz
+          echo "4363e4ed2a3f1eb7f4d38d2d59aed59ce43271c44c16b425e92c89a64761fbe7  dx.tgz" | sha256sum -c -
+          tar xzf dx.tgz -C ~/.cargo/bin
+          dx --version | grep -Fx "dioxus 0.7.10 (57d6794)"
 
       # core 不入库（.gitignore）；从 TheFunny/ffmpeg-core-st 的 Release 取回，
       # 版本与 sha256 钉在 scripts/fetch-ffmpeg-core.sh（唯一出处）。
