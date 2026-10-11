@@ -53,34 +53,57 @@ mod drop_bridge {
 }
 
 /// FileReader 异步读取文件字节（绕开 dioxus FileData，直接走 web-sys）。
+/// 回调闭包由 `keep` 持有到 Promise 结算，结算后摘掉 reader 回调并 drop 闭包：
+/// 原先 `forget()` 让每个拖入文件的 ArrayBuffer（≤64MB）常驻到刷新页面；
+/// 且只挂 onload，读取失败时 Promise 永不结算、任务永久挂起。
 #[cfg(target_arch = "wasm32")]
 async fn js_read_file_bytes(file: web_sys::File) -> Result<Vec<u8>, String> {
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
     use wasm_bindgen::closure::Closure;
-    let mut init = |resolve: js_sys::Function, reject: js_sys::Function| {
-        let reader = web_sys::FileReader::new().expect("FileReader");
-        let onload = Closure::<dyn FnMut()>::new({
-            let reader = reader.clone();
-            let resolve = resolve.clone();
-            let reject = reject.clone();
-            move || match reader.result() {
-                Ok(result) => {
-                    resolve.call1(&wasm_bindgen::JsValue::NULL, &result).ok();
+    type Callbacks = (Closure<dyn FnMut()>, Closure<dyn FnMut()>);
+    let reader = web_sys::FileReader::new().map_err(|e| format!("{e:?}"))?;
+    let keep: std::rc::Rc<std::cell::RefCell<Option<Callbacks>>> = Default::default();
+    let mut init = {
+        let reader = reader.clone();
+        let keep = keep.clone();
+        move |resolve: js_sys::Function, reject: js_sys::Function| {
+            let onload = Closure::once({
+                let reader = reader.clone();
+                let resolve = resolve.clone();
+                let reject = reject.clone();
+                move || match reader.result() {
+                    Ok(result) => {
+                        resolve.call1(&JsValue::NULL, &result).ok();
+                    }
+                    Err(e) => {
+                        reject.call1(&JsValue::NULL, &e).ok();
+                    }
                 }
-                Err(e) => {
-                    reject.call1(&wasm_bindgen::JsValue::NULL, &e).ok();
+            });
+            let onerror = Closure::once({
+                let reject = reject.clone();
+                move || {
+                    reject
+                        .call1(&JsValue::NULL, &JsValue::from_str("file read failed"))
+                        .ok();
                 }
+            });
+            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+            reader.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+            *keep.borrow_mut() = Some((onload, onerror));
+            if let Err(e) = reader.read_as_array_buffer(&file) {
+                reject.call1(&JsValue::NULL, &e).ok();
             }
-        });
-        reader.set_onload(Some(onload.as_ref().unchecked_ref()));
-        // 闭包随 reader 存活；reader 由 JS 持有——forget 保守正确
-        onload.forget();
-        reader.read_as_array_buffer(&file).expect("read failed");
+        }
     };
     let promise = js_sys::Promise::new(&mut init);
-    let result = wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let settled = wasm_bindgen_futures::JsFuture::from(promise).await;
+    // 结算即释放：JS 不会再回调，摘掉 reader 引用并 drop 闭包
+    reader.set_onload(None);
+    reader.set_onerror(None);
+    keep.borrow_mut().take();
+    let result = settled.map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     Ok(js_sys::Uint8Array::new(&result).to_vec())
 }
 
