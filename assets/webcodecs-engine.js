@@ -169,6 +169,8 @@
     v.src = url;
     v.muted = true;
     v.playsInline = true;
+    // 外层 finally 兜底：异常/取消路径也要 close encoder（否则反复取消会累积编码器）
+    let encoder = null;
     try {
       await withTimeout(
         new Promise((res, rej) => {
@@ -187,7 +189,7 @@
         firstTimestampBehavior: "offset",
       });
       let encodeError = null;
-      const encoder = new VideoEncoder({
+      encoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
         error: (e) => { encodeError = e; },
       });
@@ -253,6 +255,7 @@
       onProgress(1);
       return new Uint8Array(muxer.target.buffer);
     } finally {
+      if (encoder && encoder.state !== "closed") encoder.close();
       URL.revokeObjectURL(url);
       v.removeAttribute("src");
       v.load();
