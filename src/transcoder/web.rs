@@ -385,6 +385,10 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
         .document()
         .ok_or_else(|| TranscodeError::Engine("no document on wasm".into()))?;
     for src in srcs {
+        // 已在 DOM（并发调用或前一次仍在加载）则不重复追加：重复执行会重绑全局
+        if document.query_selector(&script_selector(src)).ok().flatten().is_some() {
+            continue;
+        }
         let script = document
             .create_element("script")
             .map_err(|_| TranscodeError::Engine("create script element failed".into()))?;
@@ -407,7 +411,17 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
         }
         crate::timers::sleep(std::time::Duration::from_millis(200)).await;
     }
+    // 超时：摘掉本次追加的节点，下次调用才会重新注入（否则永远卡在坏节点上）
+    for src in srcs {
+        if let Ok(Some(el)) = document.query_selector(&script_selector(src)) {
+            el.remove();
+        }
+    }
     Err(TranscodeError::Engine(format!(
         "{srcs:?} failed to load within 10s"
     )))
+}
+
+fn script_selector(src: &str) -> String {
+    format!("script[src=\"{src}\"]")
 }
