@@ -39,10 +39,24 @@ pub fn PreviewModal() -> Element {
     let output_cache = use_hook(|| Rc::new(RefCell::new(None::<((String, u64), String)>)));
     #[cfg(target_arch = "wasm32")]
     let input_cache = use_hook(|| Rc::new(RefCell::new(None::<((String, u64), String)>)));
+    // 卸载时释放缓存的 Blob URL（关闭弹窗走下方 early return 分支同样释放）
+    #[cfg(target_arch = "wasm32")]
+    {
+        let (oc, ic) = (output_cache.clone(), input_cache.clone());
+        use_drop(move || {
+            release_cache(&oc);
+            release_cache(&ic);
+        });
+    }
 
     // ---- 渲染 ----
     let index = ctx.show_preview.cloned();
     let Some(index) = index else {
+        #[cfg(target_arch = "wasm32")]
+        {
+            release_cache(&output_cache);
+            release_cache(&input_cache);
+        }
         return rsx! {};
     };
     let Some(entry) = ctx.tasks.read().get(index).cloned() else {
@@ -287,6 +301,14 @@ fn object_url_for(mime: &str, bytes: &[u8]) -> String {
         return String::new();
     };
     web_sys::Url::create_object_url_with_blob(&blob).unwrap_or_default()
+}
+
+/// 释放缓存的 Blob URL（关闭弹窗 / 卸载）。
+#[cfg(target_arch = "wasm32")]
+fn release_cache(cache: &RefCell<Option<((String, u64), String)>>) {
+    if let Some((_, url)) = cache.borrow_mut().take() {
+        web_sys::Url::revoke_object_url(&url).ok();
+    }
 }
 
 /// 对比行文案：未转码 / 达标 / 超限。
