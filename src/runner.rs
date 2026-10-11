@@ -124,6 +124,8 @@ pub async fn run_all(
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
 ) {
     let mut index = 0usize;
+    // 输出目录失败每轮只弹一次 toast；其余行靠各自的 Alert + 错误详情呈现
+    let mut output_toasted = false;
     // WebCodecs VP9 caps：每次 Run 探一次（glue 已由探测阶段加载，毫秒级）；
     // 桌面恒 true（wasm 分发不执行，值无消费方）
     #[cfg(target_arch = "wasm32")]
@@ -169,10 +171,18 @@ pub async fn run_all(
             &settings.output_dir,
             settings.keep_input_name,
         ) {
+            // 输出目录对整队列一致：本任务置 Alert 后继续，剩余任务各自失败并留下行内
+            // 错误，不再 break 把它们静默停在 Pending。
             ctx.touch_entry(index, |e| e.error = Some(msg.clone()));
             ctx.with_task(index, |t| t.status = Status::Alert);
-            ctx.push_toast(ToastKind::Error, msg);
-            break;
+            if !output_toasted {
+                output_toasted = true;
+                ctx.push_toast(ToastKind::Error, msg);
+            }
+            let total = ctx.tasks.peek().len().max(1);
+            ctx.overall_progress.set((index + 1) as f32 / total as f32);
+            index += 1;
+            continue;
         }
 
         match run_single_task(&mut ctx, &entry, index, progress_tx.clone(), webcodecs_ok).await {
