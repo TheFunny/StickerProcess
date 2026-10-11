@@ -20,16 +20,20 @@
   // ffmpeg 只在 load 成功后赋值——load 失败不毒化单例，下次调用可重试。
   let ffmpeg = null;
   let loading = null;
+  // 核心下载的中止控制器：取消与总超时都 abort 它，挂起的 fetch 随之 reject。
+  let loadAbort = null;
+  // ponytail: 整段下载 300s 总时长上限，不做停滞检测；慢网误杀时再加大或改 reader 停滞计时。
+  const CORE_TIMEOUT_MS = 300000;
 
-  async function toBlobURL(url, mime) {
-    const b = await (await fetch(url)).blob();
+  async function toBlobURL(url, mime, signal) {
+    const b = await (await fetch(url, { signal })).blob();
     return URL.createObjectURL(new Blob([b], { type: mime }));
   }
 
   // 流式下载并回报 0..1 进度：32MB core 首载要几秒，进度条不该死在 0。
   // 无 Content-Length/无 ReadableStream 时退化为整块 blob + 一次 100%。
-  async function fetchBlobProgress(url, onProgress) {
-    const res = await fetch(url);
+  async function fetchBlobProgress(url, onProgress, signal) {
+    const res = await fetch(url, { signal });
     const total = Number(res.headers.get("Content-Length")) || 0;
     if (!res.body || !total) {
       const b = await res.blob();
@@ -52,14 +56,18 @@
   function loadCore(onCoreProgress) {
     if (ffmpeg) return Promise.resolve(ffmpeg);
     if (!loading) {
+      const ctl = new AbortController();
+      loadAbort = ctl;
+      const timer = setTimeout(() => ctl.abort(new Error("core download timed out")), CORE_TIMEOUT_MS);
       loading = (async () => {
         const base = location.href.replace(/\/[^/]*$/, "");
         const noop = () => {};
         const progress = onCoreProgress || noop;
         const urls = [];
+        const { signal } = ctl;
         try {
-          urls.push(await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript"));
-          urls.push(await fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress)
+          urls.push(await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript", signal));
+          urls.push(await fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress, signal)
             .then((b) => URL.createObjectURL(b)));
           const ff = new FFmpeg();
           // ST core (no pthreads): no COOP/COEP required.
@@ -72,6 +80,8 @@
         } catch (error) {
           urls.forEach((url) => URL.revokeObjectURL(url));
           throw error;
+        } finally {
+          clearTimeout(timer);
         }
       })();
       loading.catch(() => { loading = null; });
@@ -124,6 +134,7 @@
   };
 
   window.stickerFfmpegCancel = () => {
+    if (loadAbort) loadAbort.abort(new Error("cancelled"));
     if (ffmpeg) ffmpeg.terminate();
     ffmpeg = null;
     loading = null;
