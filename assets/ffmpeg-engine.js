@@ -59,7 +59,7 @@
       const ctl = new AbortController();
       loadAbort = ctl;
       const timer = setTimeout(() => ctl.abort(new Error("core download timed out")), CORE_TIMEOUT_MS);
-      loading = (async () => {
+      const p = (async () => {
         const base = location.href.replace(/\/[^/]*$/, "");
         const noop = () => {};
         const progress = onCoreProgress || noop;
@@ -84,7 +84,9 @@
           clearTimeout(timer);
         }
       })();
-      loading.catch(() => { loading = null; });
+      loading = p;
+      // 只清自己：cancel 后若已开始新一轮加载，旧 promise 的 catch 不能抹掉它
+      p.catch(() => { if (loading === p) loading = null; });
     }
     return loading;
   }
