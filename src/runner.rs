@@ -107,6 +107,18 @@ fn set_output_for_run(
     Ok(())
 }
 
+/// 探测等待上限：超过即判挂起，置 Alert 跳过。固定 60s 是 ponytail 上限，
+/// 长动图的包求和探测远低于此；需要时再按文件类型区分。
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const PROBE_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn is_probing(ctx: &UiState, index: usize) -> bool {
+    ctx.tasks
+        .peek()
+        .get(index)
+        .is_some_and(|e| e.mirror.status == Status::Probing)
+}
+
 pub async fn run_all(
     mut ctx: UiState,
     progress_tx: tokio::sync::mpsc::UnboundedSender<ProgressUpdate>,
@@ -125,9 +137,21 @@ pub async fn run_all(
         }
         // 运行中拖入的新文件可能仍在探测：等镜像出结果再起——否则
         // write_back_probe 在主线程撞 worker 锁（UI 冻结）、wasm 端
-        // prepare_web_job 读到空时长误 Alert。
+        // prepare_web_job 读到空时长误 Alert。探测超时（挂起的 IO）则置 Alert 跳过：
+        // 否则 run_all 与 start_run 的 Probing 守卫让队列与 Run 永久不可用。
         if matches!(entry.mirror.status, Status::Probing) {
-            crate::timers::sleep(std::time::Duration::from_millis(50)).await;
+            let mut waited = std::time::Duration::ZERO;
+            while is_probing(&ctx, index) && !*ctx.cancel.peek() && waited < PROBE_TIMEOUT {
+                crate::timers::sleep(PROBE_POLL).await;
+                waited += PROBE_POLL;
+            }
+            if is_probing(&ctx, index) && !*ctx.cancel.peek() {
+                let msg = format!("probe timed out after {}s", PROBE_TIMEOUT.as_secs());
+                ctx.touch_entry(index, |e| e.error = Some(msg.clone()));
+                ctx.with_task(index, |t| t.status = Status::Alert);
+                ctx.push_toast(ToastKind::Error, msg);
+                index += 1;
+            }
             continue;
         }
         // Done 不重跑（用户要重转走行内 Re-run）；整体进度按位次照常推进。

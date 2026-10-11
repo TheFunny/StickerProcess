@@ -393,9 +393,16 @@ impl UiState {
         spawn(async move {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let awaited = crate::runner::run_blocking(move || {
-                    let mut t = task_arc.lock().map_err(|e| e.to_string())?;
-                    t.probe()
+                // 探测在克隆上做、不持 transcoder 锁：挂起的 IO 不会把锁永久占住，
+                // 超时后的 Alert 回写与 Re-run/删除仍可安全在主线程 lock。
+                let file = task_arc
+                    .lock()
+                    .map(|t| t.media_file.clone())
+                    .map_err(|e| e.to_string());
+                let awaited = crate::runner::run_blocking(move || -> Result<crate::media::MediaFile, String> {
+                    let mut file = file?;
+                    file.probe()?;
+                    Ok(file)
                 })
                 .await;
                 // 扁平化 JoinError 包装（与 runner 同一模式）
@@ -403,7 +410,7 @@ impl UiState {
                     Ok(inner) => inner,
                     Err(e) => Err(format!("join error: {e}")),
                 };
-                Self::write_back_probe(&mut ctx, &entry, result);
+                Self::write_back_probe(&mut ctx, &entry, result.map(Some));
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -439,7 +446,7 @@ impl UiState {
                     }
                     t.probe()
                 })();
-                Self::write_back_probe(&mut ctx, &entry, result);
+                Self::write_back_probe(&mut ctx, &entry, result.map(|()| None));
             }
         });
     }
@@ -451,7 +458,11 @@ impl UiState {
             .position(|e| Arc::ptr_eq(&e.transcoder, &entry.transcoder))
     }
     /// 探测结果回写（状态翻转 + 错误镜像），含 Arc::ptr_eq 任务校验。
-    fn write_back_probe(ctx: &mut UiState, entry: &TaskEntry, result: Result<(), String>) {
+    fn write_back_probe(
+        ctx: &mut UiState,
+        entry: &TaskEntry,
+        probed: Result<Option<crate::media::MediaFile>, String>,
+    ) {
         // 数字下标只代表启动探测时的快照。空闲期删除、插入或 Undo 会移动
         // 队列；按共享 Transcoder 重新定位，找不到才把这次回写视为无效。
         let tasks = ctx.tasks.read();
@@ -467,13 +478,21 @@ impl UiState {
         ) {
             return;
         }
-        let status = match &result {
-            Ok(()) => Status::Pending,
-            Err(_) => Status::Alert,
+        let error = probed.as_ref().err().cloned();
+        let status = if error.is_some() {
+            Status::Alert
+        } else {
+            Status::Pending
         };
-        ctx.with_task(index, |t| t.status = status);
-        if let Err(err) = &result {
-            ctx.touch_entry(index, |e| e.error = Some(err.clone()));
+        ctx.with_task(index, move |t| {
+            // 桌面：探测在克隆上完成，结果整体换回（wasm 原地写过，为 None）
+            if let Ok(Some(file)) = probed {
+                t.media_file = file;
+            }
+            t.status = status;
+        });
+        if let Some(err) = error {
+            ctx.touch_entry(index, |e| e.error = Some(err));
         }
     }
 
