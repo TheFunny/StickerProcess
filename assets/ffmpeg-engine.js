@@ -53,6 +53,10 @@
     return new Blob(chunks, { type: "application/wasm" });
   }
 
+  // 核心 blob URL 跨取消保留：cancel 只杀 worker，重建时不再重下 29.5MB。
+  // ponytail: 代价是 core Blob 常驻内存到页面关闭；内存吃紧时改回 load 后 revoke。
+  let coreUrls = null;
+
   function loadCore(onCoreProgress) {
     if (ffmpeg) return Promise.resolve(ffmpeg);
     if (!loading) {
@@ -63,22 +67,24 @@
         const base = location.href.replace(/\/[^/]*$/, "");
         const noop = () => {};
         const progress = onCoreProgress || noop;
-        const urls = [];
         const { signal } = ctl;
+        const fresh = [];
         try {
-          urls.push(await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript", signal));
-          urls.push(await fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress, signal)
-            .then((b) => URL.createObjectURL(b)));
+          if (!coreUrls) {
+            fresh.push(await toBlobURL(`${base}/ffmpeg-core-st.js`, "text/javascript", signal));
+            fresh.push(await fetchBlobProgress(`${base}/ffmpeg-core-st.wasm`, progress, signal)
+              .then((b) => URL.createObjectURL(b)));
+            coreUrls = fresh;
+          }
           const ff = new FFmpeg();
           // ST core (no pthreads): no COOP/COEP required.
-          await ff.load({ coreURL: urls[0], wasmURL: urls[1] });
-          // load resolve 后 worker 已取得 core；撤销 URL 立即释放下载 Blob。
-          // 失败路径同样撤销，且 loading.catch 允许下次重试。
-          urls.forEach((url) => URL.revokeObjectURL(url));
+          await ff.load({ coreURL: coreUrls[0], wasmURL: coreUrls[1] });
           ffmpeg = ff;
           return ff;
         } catch (error) {
-          urls.forEach((url) => URL.revokeObjectURL(url));
+          // 加载失败视为核心可能损坏：撤销全部 URL 并丢弃缓存，下次从头下
+          for (const url of [...fresh, ...(coreUrls ?? [])]) URL.revokeObjectURL(url);
+          coreUrls = null;
           throw error;
         } finally {
           clearTimeout(timer);
