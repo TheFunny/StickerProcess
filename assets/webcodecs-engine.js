@@ -8,6 +8,8 @@
 // 码率/factor 全由 Rust 侧算好传入（与桌面 command.rs 一致，JS 不重复实现）。
 (() => {
   let cancelRequested = false;
+  // 当前视频播放的失败函数：cancel 直接以 cancelled 结算，不等 watchdog（最长 ~几分钟）
+  let abortPlayback = null;
 
   const MIME_BY_EXT = {
     jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
@@ -213,6 +215,7 @@
         new Promise((res, rej) => {
         let settled = false;
         const fail = (e) => { if (!settled) { settled = true; rej(e); } };
+        abortPlayback = fail;
         const grab = async (_now, meta) => {
           if (settled) return;
           try {
@@ -256,6 +259,7 @@
       return new Uint8Array(muxer.target.buffer);
     } finally {
       if (encoder && encoder.state !== "closed") encoder.close();
+      abortPlayback = null;
       URL.revokeObjectURL(url);
       v.removeAttribute("src");
       v.load();
@@ -271,7 +275,10 @@
     return transcodeVideo(buf, name, bitrate, fps, onProgress);
   };
 
-  window.stickerWebcodecsCancel = () => { cancelRequested = true; };
+  window.stickerWebcodecsCancel = () => {
+    cancelRequested = true;
+    if (abortPlayback) abortPlayback(new Error("cancelled"));
+  };
 
   // 通用下载（task_list 输出大小点击）。放本文件而非 ffmpeg-engine.js：
   // 每个任务探测必经本 glue（native_probe 注入），ffmpeg glue 只有 GIF/APNG
