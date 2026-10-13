@@ -257,7 +257,8 @@ impl UiState {
         }
     }
 
-    /// 推送一条通知：停留 3.6 秒 → 0.4 秒渐出 → 移除。返回通知 id。
+    /// 推送一条通知。普通通知停留 3.6 秒后渐出移除；错误通知不自动消失，等用户点 ✕
+    /// ——失败是这工具的常态，3.6 秒根本看不完原因。返回通知 id。
     pub fn push_toast(&mut self, kind: ToastKind, text: impl Into<String>) -> u64 {
         self.push_toast_inner(kind, text, false)
     }
@@ -278,13 +279,30 @@ impl UiState {
             self.toasts
                 .with_mut(|list| list.iter_mut().for_each(|t| t.undo = t.id == id));
         }
+        let hold = match (undo, kind) {
+            (true, _) => Some(6000),
+            (false, ToastKind::Error) => None,
+            (false, _) => Some(3600),
+        };
+        if let Some(hold) = hold {
+            self.fade_out_toast(id, hold);
+        }
+        id
+    }
+
+    /// 用户点 ✕：立即渐出并移除。
+    pub fn dismiss_toast(&self, id: u64) {
+        self.fade_out_toast(id, 0);
+    }
+
+    /// 等 `hold_ms` 后渐出，再等淡出时长移除（自动到期与手动关闭共用）。
+    fn fade_out_toast(&self, id: u64, hold_ms: u64) {
         let mut toasts = self.toasts;
-        let hold = if undo { 6000 } else { 3600 };
         // spawn_forever 而非 spawn：后者绑定"当前 scope"（= 点 ✕ 的 TaskRow），
         // 行随删除卸载会连带取消计时任务 → toast 永不移除（实测 toast 3 armed 后
         // 102s 无 leaving）。计时器是全局一次性工作，挂 ROOT 存活到应用退出。
         spawn_forever(async move {
-            crate::timers::sleep(std::time::Duration::from_millis(hold)).await;
+            crate::timers::sleep(std::time::Duration::from_millis(hold_ms)).await;
             toasts.with_mut(|list| {
                 if let Some(t) = list.iter_mut().find(|t| t.id == id) {
                     t.leaving = true;
@@ -293,7 +311,6 @@ impl UiState {
             crate::timers::sleep(std::time::Duration::from_millis(TOAST_FADE_MS)).await;
             toasts.with_mut(|list| list.retain(|t| t.id != id));
         });
-        id
     }
 
     /// 添加文件，仅保留受支持的扩展名。每个新任务在后台线程探测时长/编码。

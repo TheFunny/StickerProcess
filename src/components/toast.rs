@@ -67,6 +67,12 @@ pub fn ToastContainer() -> Element {
                             "Undo"
                         }
                     }
+                    button {
+                        class: "btn btn-mini btn-icon toast-close",
+                        "aria-label": "Dismiss notification",
+                        onclick: move |_| ctx.dismiss_toast(toast.id),
+                        crate::components::icon::IconClose {}
+                    }
                 }
             }
         }

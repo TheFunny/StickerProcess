@@ -35,12 +35,21 @@ pub fn Toolbar() -> Element {
     let mut menu_open = use_signal(|| false);
     let theme = ctx.settings.read().theme.clone();
     // 不 clone 任务列表：只读一遍算两个标志（工具栏会随 tasks 信号重渲染）
-    let (has_done, runnable) = {
+    let (has_done, runnable, empty) = {
         let list = ctx.tasks.read();
         (
             list.iter().any(|e| e.mirror.status == Status::Done),
             list.iter().any(|e| e.mirror.status != Status::Done),
+            list.is_empty(),
         )
+    };
+    // Run 不可用时说明原因（disabled 按钮的 title 只有在去掉 pointer-events 后才显示）
+    let run_title = if empty {
+        "Add files first"
+    } else if !runnable {
+        "Every task is done — use a row's Re-run to transcode it again"
+    } else {
+        "Transcode every task that is not done yet (Ctrl+Enter)"
     };
 
     // web：产物驻内存，一键顺序下载全部 Done（400ms 间隔防浏览器多文件拦截）
@@ -146,51 +155,55 @@ pub fn Toolbar() -> Element {
 
     rsx! {
         div { class: "row",
+            // label 包住 input：点击由浏览器在同一次用户手势内原生转给 input。
+            // 不经 document::eval——IPC 异步回到 webview 时可能已超出用户激活窗口，
+            // 文件框会静默不弹。input 只是视觉隐藏（非 display:none），Tab 可达、
+            // Enter/Space 原生打开选择框。运行中也允许追加，与拖拽一致。
             label {
-                class: if running { "btn disabled" } else { "btn" },
+                class: "btn file-pick",
                 title: "Add files (Ctrl+O)",
                 "Add File"
-                input {
-                    id: "add-file-input",
-                    style: "display: none",
-                    r#type: "file",
-                    multiple: true,
-                    accept: "{file_accept()}",
-                    onchange: move |evt: Event<FormData>| {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            let files: Vec<PathBuf> =
-                                evt.data.files().iter().map(|f| f.path()).collect();
-                            if !files.is_empty() {
-                                ctx.add_files(files);
-                            }
+            input {
+                id: "add-file-input",
+                class: "file-input",
+                r#type: "file",
+                multiple: true,
+                accept: "{file_accept()}",
+                onchange: move |evt: Event<FormData>| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let files: Vec<PathBuf> =
+                            evt.data.files().iter().map(|f| f.path()).collect();
+                        if !files.is_empty() {
+                            ctx.add_files(files);
                         }
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            for f in evt.data.files() {
-                                let name = f.name();
-                                if f.size() > crate::media::MAX_WEB_INPUT_BYTES as u64 {
-                                    ctx.push_toast(
-                                        crate::components::toast::ToastKind::Warn,
-                                        format!("{name} exceeds the 64 MiB browser input limit"),
-                                    );
-                                    continue;
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        for f in evt.data.files() {
+                            let name = f.name();
+                            if f.size() > crate::media::MAX_WEB_INPUT_BYTES as u64 {
+                                ctx.push_toast(
+                                    crate::components::toast::ToastKind::Warn,
+                                    format!("{name} exceeds the 64 MiB browser input limit"),
+                                );
+                                continue;
+                            }
+                            spawn(async move {
+                                if let Ok(bytes) = f.read_bytes().await {
+                                    ctx.add_file_bytes(name, bytes.to_vec());
                                 }
-                                spawn(async move {
-                                    if let Ok(bytes) = f.read_bytes().await {
-                                        ctx.add_file_bytes(name, bytes.to_vec());
-                                    }
-                                });
-                            }
+                            });
                         }
-                        // 必须清空 value：input 保留上次选择，浏览器只在选中的
-                        // 列表与 value 不同时才再触发 change —— 删掉任务后重选
-                        // 同一文件会静默失败
-                        let _ = document::eval(
-                            "document.getElementById('add-file-input').value = ''",
-                        );
-                    },
-                }
+                    }
+                    // 必须清空 value：input 保留上次选择，浏览器只在选中的
+                    // 列表与 value 不同时才再触发 change —— 删掉任务后重选
+                    // 同一文件会静默失败
+                    let _ = document::eval(
+                        "document.getElementById('add-file-input').value = ''",
+                    );
+                },
+            }
             }
             div { class: "spacer" }
             button {
@@ -212,7 +225,7 @@ pub fn Toolbar() -> Element {
             } else {
                 button {
                     class: "btn btn-primary run-slot",
-                    title: "Transcode every task that is not done yet (Ctrl+Enter)",
+                    title: "{run_title}",
                     disabled: !runnable,
                     onclick: move |_| ctx.start_run(),
                     "Run"
@@ -220,6 +233,7 @@ pub fn Toolbar() -> Element {
             }
             div { class: "menu-wrap",
                 button {
+                    id: "more-btn",
                     class: "btn icon",
                     title: "More actions",
                     "aria-label": "More actions",
@@ -230,7 +244,21 @@ pub fn Toolbar() -> Element {
                 if menu_open() {
                     // 点击外部关闭（透明满屏捕获层）
                     div { class: "menu-catch", onclick: move |_| menu_open.set(false) }
-                    div { class: "menu",
+                    div {
+                        class: "menu",
+                        tabindex: -1,
+                        // 打开即把焦点移入菜单；Esc 关闭并把焦点还给 ⋯ 按钮（与其它弹窗一致）
+                        onmounted: move |evt: Event<MountedData>| {
+                            spawn(async move {
+                                let _ = evt.data.set_focus(true).await;
+                            });
+                        },
+                        onkeydown: move |evt: Event<KeyboardData>| {
+                            if evt.data.key() == dioxus::html::Key::Escape {
+                                menu_open.set(false);
+                                let _ = document::eval("document.getElementById('more-btn')?.focus()");
+                            }
+                        },
                         button {
                             class: "menu-item",
                             disabled: running || !has_done,

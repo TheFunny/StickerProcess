@@ -123,7 +123,6 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
             title: "{tooltip}",
             role: "listitem",
             tabindex: 0,
-            "aria-label": "{entry.mirror.status.label()}: {entry.mirror.input_path} — open preview",
             onmousedown: move |evt: Event<MouseData>| {
                 let p = evt.data.client_coordinates();
                 mouse_down_at.set(Some((p.x, p.y)));
@@ -215,6 +214,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
                         title: "Size factor (higher = bigger file)",
                         onclick: move |evt: Event<MouseData>| evt.stop_propagation(),
                         onkeydown: move |evt: Event<KeyboardData>| evt.stop_propagation(),
+                        span { class: "factor-label", "×" }
                         NumberInput<f64> {
                             value: factor,
                             min: 0.1,
