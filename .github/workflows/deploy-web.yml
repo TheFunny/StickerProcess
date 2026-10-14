@@ -114,13 +114,6 @@ jobs:
         run: cargo fetch --locked
 
       - name: Build web bundle (release)
-        env:
-          # rustc ≥1.99 (LLVM 23)：wasm-ld 的 --strip-all（[profile.release]
-          # strip="symbols" 传下去的）连自定义段一起剥，包括 wasm-bindgen 要读的
-          # __wasm_bindgen_unstable——dx 在 bindgen 前就剥，于是报 "doesn't have an
-          # adapter listed"（dioxus#5766）。web 构建只做 debuginfo 剥离；桌面 release
-          # 仍守 strip="symbols"（此处仅覆盖本步）。
-          CARGO_PROFILE_RELEASE_STRIP: debuginfo
         run: dx build --platform web --release --base-path /StickerProcess/
 
       # dx 不拷项目 assets/ 到产物目录（见 README/AGENTS.md）——手动补齐。
