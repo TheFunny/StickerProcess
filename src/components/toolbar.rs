@@ -57,6 +57,7 @@ pub fn Toolbar() -> Element {
     let extra_btn = rsx! {
         button {
             class: "menu-item",
+            role: "menuitem",
             disabled: running || !has_done,
             onclick: move |_| {
                 menu_open.set(false);
@@ -238,6 +239,7 @@ pub fn Toolbar() -> Element {
                     title: "More actions",
                     "aria-label": "More actions",
                     "aria-expanded": if menu_open() { "true" } else { "false" },
+                    "aria-haspopup": "menu",
                     onclick: move |_| menu_open.set(!menu_open()),
                     crate::components::icon::IconMore {}
                 }
@@ -246,6 +248,8 @@ pub fn Toolbar() -> Element {
                     div { class: "menu-catch", onclick: move |_| menu_open.set(false) }
                     div {
                         class: "menu",
+                        role: "menu",
+                        "aria-label": "More actions",
                         tabindex: -1,
                         // 打开即把焦点移入菜单；Esc 关闭并把焦点还给 ⋯ 按钮（与其它弹窗一致）
                         onmounted: move |evt: Event<MountedData>| {
@@ -254,13 +258,22 @@ pub fn Toolbar() -> Element {
                             });
                         },
                         onkeydown: move |evt: Event<KeyboardData>| {
-                            if evt.data.key() == dioxus::html::Key::Escape {
+                            let key = evt.data.key();
+                            if key == dioxus::html::Key::Escape {
                                 menu_open.set(false);
                                 let _ = document::eval("document.getElementById('more-btn')?.focus()");
+                            } else if key == dioxus::html::Key::ArrowDown || key == dioxus::html::Key::ArrowUp {
+                                evt.prevent_default();
+                                let dir: i32 = if key == dioxus::html::Key::ArrowDown { 1 } else { -1 };
+                                // 只在可用项间循环；焦点不在菜单内时从首/末项进入
+                                let _ = document::eval(&format!(
+                                    "(() => {{ const items = [...document.querySelectorAll('.menu [role^=menuitem]:not(:disabled)')]; const n = items.length; if (!n) return; const i = items.indexOf(document.activeElement); items[i < 0 ? (({dir} > 0) ? 0 : n - 1) : (i + {dir} + n) % n].focus(); }})()"
+                                ));
                             }
                         },
                         button {
                             class: "menu-item",
+                            role: "menuitem",
                             disabled: running || !has_done,
                             onclick: move |_| {
                                 menu_open.set(false);
@@ -271,17 +284,20 @@ pub fn Toolbar() -> Element {
                         {extra_btn}
                         button {
                             class: "menu-item",
+                            role: "menuitem",
                             onclick: move |_| {
                                 menu_open.set(false);
                                 ctx.show_compat.set(true);
                             },
                             "Compatibility Report"
                         }
-                        div { class: "menu-sep" }
+                        div { class: "menu-sep", role: "separator" }
                         // 主题：三选一（原先是一个看不出档位的循环按钮）
                         for (value, label) in THEMES {
                             button {
                                 class: "menu-item",
+                                role: "menuitemradio",
+                                "aria-checked": if theme == value { "true" } else { "false" },
                                 onclick: move |_| {
                                     menu_open.set(false);
                                     ctx.update_settings(move |s| s.theme = value.to_string());
