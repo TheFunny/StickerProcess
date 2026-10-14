@@ -279,7 +279,10 @@ body {
 
 .empty-hint {
   margin: auto;
-  padding: 0 24px;
+  padding: 20px 28px;
+  /* 虚线框 = 拖放落点：DropZone 整窗接收拖入，框让用户在空队列时看见"这里能放" */
+  border: 1px dashed var(--border);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
