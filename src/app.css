@@ -356,7 +356,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 定宽徽标列：spinner + 最长标签（[Transcoding]）也不许把 path 列推走 */
+/* 定宽徽标列：spinner + 最长标签（Transcoding）也不许把 path 列推走 */
 .badge {
   flex: none;
   width: 108px;
@@ -403,6 +403,36 @@ body {
 
 .badge.size-excess {
   color: var(--warning);
+}
+
+/* 状态形状：颜色之外再给一个形状线索（色盲用户只看颜色分不清 Done / Failed / Over limit）。
+ * 转码中仍用上面的 spinner，故形状规则排除 .processing。 */
+.badge:not(.processing)::before {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.badge.done::before {
+  background: currentColor;
+}
+
+.badge.alert::before {
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+.badge.size-excess::before {
+  border: 0;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
 .size-ok {
@@ -1023,7 +1053,7 @@ body {
 
 /* 减少动态效果（系统级无障碍开关）：入场动画与进度条过渡全部关掉，进度条宽度
  * 直接跳变。必须放在文件末尾——同特异性下靠位置压过上面的 animation/transition。
- * 转码中的旋转指示器也停：徽标文字 [Transcoding] 仍在，信息不丢。 */
+ * 转码中的旋转指示器也停：徽标文字 Transcoding 仍在，信息不丢。 */
 @media (prefers-reduced-motion: reduce) {
   .toast,
   .modal {

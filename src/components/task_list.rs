@@ -138,7 +138,7 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
                 ctx.show_preview.set(Some(index));
             },
             div { class: "row-main",
-                span { class: "{status_class}", "[{entry.mirror.status.label()}]" }
+                span { class: "{status_class}", "{entry.mirror.status.label()}" }
                 button {
                     class: "path row-open",
                     onkeydown: move |evt: Event<KeyboardData>| {
