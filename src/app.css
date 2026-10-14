@@ -313,6 +313,19 @@ body {
   white-space: nowrap;
 }
 
+/* 路径做成按钮（Enter/Space 打开预览）：去掉按钮默认外观，保留文本截断 */
+.task-row .row-open {
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  min-width: 0;
+  cursor: pointer;
+}
+
 .pct {
   color: var(--accent);
   font-weight: 600;
@@ -836,8 +849,8 @@ body {
   cursor: pointer;
 }
 
-/* 键盘焦点环（任务行可 Tab 到，Enter/Space 打开预览） */
-.task-row:focus-visible {
+/* 键盘焦点环落在路径按钮上（任务行本身不可聚焦） */
+.task-row .row-open:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

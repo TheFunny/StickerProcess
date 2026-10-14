@@ -122,7 +122,6 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
             class: "task-row",
             title: "{tooltip}",
             role: "listitem",
-            tabindex: 0,
             onmousedown: move |evt: Event<MouseData>| {
                 let p = evt.data.client_coordinates();
                 mouse_down_at.set(Some((p.x, p.y)));
@@ -138,24 +137,18 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
                 }
                 ctx.show_preview.set(Some(index));
             },
-            // 键盘等价物：行可 Tab 到，Enter/Space 打开预览、Delete 移除（子控件自行吞掉按键）
-            onkeydown: move |evt: Event<KeyboardData>| {
-                let key = evt.data.key();
-                if key == dioxus::html::Key::Delete && !running {
-                    evt.prevent_default();
-                    ctx.remove_task(index);
-                    return;
-                }
-                if key == dioxus::html::Key::Enter
-                    || matches!(&key, dioxus::html::Key::Character(s) if s.as_str() == " ")
-                {
-                    evt.prevent_default();
-                    ctx.show_preview.set(Some(index));
-                }
-            },
             div { class: "row-main",
                 span { class: "{status_class}", "[{entry.mirror.status.label()}]" }
-                span { class: "path", "{entry.mirror.input_path}" }
+                button {
+                    class: "path row-open",
+                    onkeydown: move |evt: Event<KeyboardData>| {
+                        if evt.data.key() == dioxus::html::Key::Delete && !running {
+                            evt.prevent_default();
+                            ctx.remove_task(index);
+                        }
+                    },
+                    "{entry.mirror.input_path}"
+                }
                 if let Some(pct) = pct {
                     span { class: "pct", "{(pct * 100.0).round()}%" }
                 } else if let Some((name, size)) = output {
