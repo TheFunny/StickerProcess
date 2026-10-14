@@ -82,8 +82,10 @@
           ffmpeg = ff;
           return ff;
         } catch (error) {
-          // 加载失败视为核心可能损坏：撤销全部 URL 并丢弃缓存，下次从头下
-          for (const url of [...fresh, ...(coreUrls ?? [])]) URL.revokeObjectURL(url);
+          // 加载失败视为核心可能损坏：撤销全部 URL 并丢弃缓存，下次从头下。
+          // coreUrls 一旦赋值即包含 fresh，去重后每个 URL 只撤销一次
+          //（wasm 下载中途挂掉时 coreUrls 还是 null，此时才靠 fresh 兜底）。
+          for (const url of coreUrls ?? fresh) URL.revokeObjectURL(url);
           coreUrls = null;
           throw error;
         } finally {
