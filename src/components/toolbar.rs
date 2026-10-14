@@ -211,7 +211,6 @@ pub fn Toolbar() -> Element {
                 class: "btn icon",
                 title: "Settings",
                 "aria-label": "Settings",
-                disabled: running,
                 onclick: move |_| ctx.show_settings.set(true),
                 crate::components::icon::IconSettings {}
             }

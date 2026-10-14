@@ -24,6 +24,8 @@ pub fn SettingsPanel() -> Element {
         return rsx! {};
     }
     let factors = ctx.settings.read().duration_factors;
+    // 转码期间面板只读：与工具栏输出目录控件的运行中禁用保持一致，参数只在空闲时可改
+    let locked = ctx.running.cloned();
 
     // sidecar 可用性：启动探测缓存；不可用时下拉项置灰并显示后缀。
     // 可用但缺 libvpx-vp9 编码器（极简 ffmpeg 构建）同样视为不可用于转码。
@@ -50,6 +52,7 @@ pub fn SettingsPanel() -> Element {
             span { class: "label", "Engine" }
             select {
                 class: "input",
+                disabled: locked,
                 value: "{ctx.settings.read().engine.as_str()}",
                 onchange: move |evt: Event<FormData>| {
                     let engine = evt.data.value();
@@ -91,6 +94,7 @@ pub fn SettingsPanel() -> Element {
                         "input grow"
                     },
                     r#type: "text",
+                    disabled: locked,
                     "aria-label": "Output folder",
                     value: "{ctx.settings.read().output_dir}",
                     oninput: move |evt: Event<FormData>| {
@@ -100,6 +104,7 @@ pub fn SettingsPanel() -> Element {
                 }
                 button {
                     class: "btn icon dir-pick",
+                    disabled: locked,
                     title: "Choose output folder",
                     "aria-label": "Choose output folder",
                     onclick: move |_| ctx.pick_output_dir(),
@@ -143,6 +148,9 @@ pub fn SettingsPanel() -> Element {
                     }
                 }
                 div { class: "modal-body",
+                    if locked {
+                        span { class: "hint", "Read-only while transcoding" }
+                    }
                     div { class: "settings-section", "Output" }
                     {output_dir_row}
 
@@ -151,7 +159,7 @@ pub fn SettingsPanel() -> Element {
                     input {
                         class: "input check",
                         r#type: "checkbox",
-                        disabled: false,
+                        disabled: locked,
                         checked: ctx.settings.read().keep_input_name,
                         onchange: move |evt: Event<FormData>| {
                             let on = evt.data.checked();
@@ -169,7 +177,7 @@ pub fn SettingsPanel() -> Element {
                         value: ctx.settings.read().video_max_size_kb,
                         min: 16u32,
                         max: 102400u32,
-                        disabled: false,
+                        disabled: locked,
                         on_change: move |v| ctx.update_settings(move |s| s.video_max_size_kb = v),
                     }
                     span { class: "hint", "Telegram's own limit is 256 KB" }
@@ -181,7 +189,7 @@ pub fn SettingsPanel() -> Element {
                         value: ctx.settings.read().image_max_size_kb,
                         min: 16u32,
                         max: 102400u32,
-                        disabled: false,
+                        disabled: locked,
                         on_change: move |v| ctx.update_settings(move |s| s.image_max_size_kb = v),
                     }
                     span { class: "hint", "Telegram's own limit is 512 KB" }
@@ -193,7 +201,7 @@ pub fn SettingsPanel() -> Element {
                         value: ctx.settings.read().max_retry,
                         min: 0u8,
                         max: 10u8,
-                        disabled: false,
+                        disabled: locked,
                         on_change: move |v| ctx.update_settings(move |s| s.max_retry = v),
                     }
                     span { class: "hint", "Extra attempts while the result is still over the limit" }
@@ -205,7 +213,7 @@ pub fn SettingsPanel() -> Element {
                         value: ctx.settings.read().retry_shrink_factor,
                         min: 0.05,
                         max: 1.0,
-                        disabled: false,
+                        disabled: locked,
                         on_change: move |v| ctx.update_settings(move |s| s.retry_shrink_factor = v),
                     }
                     span { class: "hint", "factor ÷ excess × this, applied per retry" }
@@ -222,7 +230,7 @@ pub fn SettingsPanel() -> Element {
                                     value: factors[index],
                                     min: 0.05,
                                     max: 10.0,
-                                    disabled: false,
+                                    disabled: locked,
                                     on_change: move |v| {
                                         ctx.update_settings(move |s| s.duration_factors[index] = v);
                                     },
@@ -238,7 +246,7 @@ pub fn SettingsPanel() -> Element {
                     input {
                         class: "input check",
                         r#type: "checkbox",
-                        disabled: false,
+                        disabled: locked,
                         checked: ctx.settings.read().webm_duration_patch,
                         onchange: move |evt: Event<FormData>| {
                             let on = evt.data.checked();
@@ -254,7 +262,7 @@ pub fn SettingsPanel() -> Element {
                         value: ctx.settings.read().target_fps,
                         min: 0.0,
                         max: 240.0,
-                        disabled: false,
+                        disabled: locked,
                         on_change: move |v| ctx.update_settings(move |s| s.target_fps = v),
                     }
                     span { class: "hint", "0 keeps the source frame rate" }
@@ -265,6 +273,7 @@ pub fn SettingsPanel() -> Element {
                 div { class: "row modal-actions",
                     button {
                         class: if reset_armed() { "btn btn-danger" } else { "btn" },
+                        disabled: locked,
                         // 一键清空全部调参且立即落盘、无撤销——要求二次确认
                         onclick: move |_| {
                             if !reset_armed() {
