@@ -516,7 +516,15 @@ body {
   overflow-y: auto;
 }
 
-/* 当前任务进度条（页面底部，排在总进度条之上）：放在行内会让行高随转码出现/消失而变 */
+/* 当前任务进度条 + 总进度条：包一层容器，间距小于 .app 的 10px gap，读作一组；
+ * 任务条常驻（无进行中任务时填充 0），否则它消失时总条会上下跳。
+ * 放在行内会让行高随转码出现/消失而变，故放页面底部 */
+.progress-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .task-progress {
   height: 4px;
   overflow: hidden;
