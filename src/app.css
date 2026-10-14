@@ -516,15 +516,15 @@ body {
   overflow-y: auto;
 }
 
-/* 任务行内进度条 */
-.row-progress {
+/* 当前任务进度条（页面底部，排在总进度条之上）：放在行内会让行高随转码出现/消失而变 */
+.task-progress {
   height: 4px;
   overflow: hidden;
   border-radius: 2px;
   background: var(--border-soft);
 }
 
-.row-progress-fill {
+.task-progress-fill {
   height: 100%;
   border-radius: 2px;
   background: var(--accent);
@@ -1061,7 +1061,7 @@ body {
   }
 
   .toast,
-  .row-progress-fill,
+  .task-progress-fill,
   .progress-fill {
     transition: none;
   }
