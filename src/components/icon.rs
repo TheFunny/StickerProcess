@@ -71,3 +71,25 @@ pub fn IconOpenExternal() -> Element {
         }
     }
 }
+
+/// 溢出菜单（"⋯"）：三个实心圆点。
+#[component]
+pub fn IconMore() -> Element {
+    rsx! {
+        svg { class: "ico", view_box: "0 0 16 16",
+            circle { cx: "3.5", cy: "8", r: "1.4" }
+            circle { cx: "8", cy: "8", r: "1.4" }
+            circle { cx: "12.5", cy: "8", r: "1.4" }
+        }
+    }
+}
+
+/// 当前选中项的标记（对勾）。
+#[component]
+pub fn IconCheck() -> Element {
+    rsx! {
+        svg { class: "ico ico-stroke", view_box: "0 0 16 16",
+            path { d: "M3 8.5 6.5 12 13 4.5" }
+        }
+    }
+}

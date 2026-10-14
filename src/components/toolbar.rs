@@ -239,7 +239,7 @@ pub fn Toolbar() -> Element {
                     "aria-label": "More actions",
                     "aria-expanded": if menu_open() { "true" } else { "false" },
                     onclick: move |_| menu_open.set(!menu_open()),
-                    "⋯"
+                    crate::components::icon::IconMore {}
                 }
                 if menu_open() {
                     // 点击外部关闭（透明满屏捕获层）
@@ -288,7 +288,7 @@ pub fn Toolbar() -> Element {
                                 },
                                 span { "{label}" }
                                 if theme == value {
-                                    span { class: "menu-check", "✓" }
+                                    span { class: "menu-check", crate::components::icon::IconCheck {} }
                                 }
                             }
                         }
