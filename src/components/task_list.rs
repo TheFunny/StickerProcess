@@ -142,9 +142,16 @@ fn TaskRowView(entry: TaskEntry, index: usize, running: bool, pct: Option<f32>) 
                 button {
                     class: "path row-open",
                     onkeydown: move |evt: Event<KeyboardData>| {
-                        if evt.data.key() == dioxus::html::Key::Delete && !running {
+                        let key = evt.data.key();
+                        if key == dioxus::html::Key::Delete && !running {
                             evt.prevent_default();
                             ctx.remove_task(index);
+                        } else if key == dioxus::html::Key::Enter
+                            || matches!(&key, dioxus::html::Key::Character(s) if s.as_str() == " ")
+                        {
+                            // 直接开预览，不依赖随后的 click：click 会被 mouse_down_at 的拖选判定误挡
+                            evt.prevent_default();
+                            ctx.show_preview.set(Some(index));
                         }
                     },
                     "{entry.mirror.input_path}"
