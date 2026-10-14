@@ -886,13 +886,6 @@ body {
   min-width: 84px;
 }
 
-/* 按钮上的快捷键提示：用 opacity 而不是固定灰色，在强调色按钮上仍与文字同色系 */
-.btn .kbd {
-  margin-left: 8px;
-  font-size: 11px;
-  opacity: 0.7;
-}
-
 /* 内联 SVG：尺寸与颜色由 CSS 决定（stroke 型图标用 .ico-stroke） */
 .ico {
   display: block;
