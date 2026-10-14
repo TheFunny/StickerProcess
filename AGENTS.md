@@ -62,7 +62,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `.github/workflows/ci.yml` | CI 门禁：push master / PR 跑 clippy 两个 target（`--tests -D warnings`）+ `cargo test --locked`（windows，此前单测只在打 tag 时跑）+ wasm 测试编译检查（`--no-run`，cfg(wasm32) 测试防烂）。web job 只需 wasm32 target（`build.rs` 在非 desktop 特性下直接返回，不碰 ffmpeg）；desktop/test job 用 release-desktop.yml 那份预构建静态库（同一 `scripts/fetch-ffmpeg-static.sh`，缓存 `ffmpeg-dist`，key 跟着脚本哈希走）——clippy 也要过 `build.rs`。registry 缓存键跨 workflow 共享（`cargo-{os}-`），target 各 job 专属。刻意独立于 deploy-web.yml：一处 lint 不该挡住线上部署 |
 | `docs/WEB_DEMO_FINDINGS.md` | Route A spike record: ffmpeg.wasm assembly gotchas (UMD/classic-worker pairing, MP4 OOB in prebuilt cores) |
 | `src/sidecar_probe.rs` | Startup probe for sidecar ffmpeg: path resolution (app dir → PATH), libvpx-vp9 encoder check, process-wide cache |
-| `Cargo.toml` | Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`) |
+|`Cargo.toml`|Dependencies + release profile (size-optimized, `lto = "fat"`, `panic = "abort"`, `strip = "symbols"`)；另加 `[profile.wasm-release]`（`inherits = "release"`，`strip = "debuginfo"`）——dx 的 web release profile 名，见 Gotchas（**别删**）|
 | `docs/notes.md` | Developer notes, gitignored (see Gotchas) |
 | `docs/` | Project documentation: migration/refactor plans, E6 research, dev notes |
 | `archive/` | Legacy implementations (gitignored) |
@@ -458,6 +458,18 @@ offline from the registry cache while `Cargo.lock` stays untouched.
   `ffmpeg.js`、`loadCore` 的 `location.href` 拼接、`document::Link href`）——
   根域与 Pages 子路径（`/StickerProcess/`）都能解析；SPA fallback 会让缺失路径
   返回 HTML 伪装 200，警惕。
+- **web 构建的 strip 由 dx 读 Cargo.toml 决定（与 cargo 的 profile 无关）**：dx 在跑
+  wasm-bindgen 前会用 `rustc-objcopy` 再剥一次 wasm（`post_process_executable`），剥的强度取自
+  **它自己的 profile 名**（web release = `wasm-release`，见 `BundleFormat::profile_name`）：
+  Cargo.toml 里没有这个名字的 profile 时落回 `[profile.release]` 的 `strip = "symbols"`
+  （→ `--strip-all`）。rustc ≥1.99（LLVM 23）起 `--strip-all` 会把自定义段一起剥掉，包括
+  wasm-bindgen 要读的 `__wasm_bindgen_unstable`，于是 bindgen 报
+  `import of __wbg_* doesn't have an adapter listed`（dioxus#5766 / wasm-bindgen#5268 结论）。
+  故 `Cargo.toml` 里有 `[profile.wasm-release] inherits = "release"` + `strip = "debuginfo"`
+  （→ `--strip-debug`，只剥 DWARF）：**别删**，也别把 release 的 `strip = "symbols"` 抄过去。
+  dx 传给 cargo 的 `--config profile.<p>.strip=false` 只管 cargo 那一步，管不住它自己这一步；
+  `CARGO_PROFILE_RELEASE_STRIP` 之类的环境变量同理无效（profile 名不是 `release`）。桌面
+  release 不受影响，仍是 `strip = "symbols"`。
 - **GitHub Pages 部署**：Pages 源 = GitHub Actions（workflow），三件套
   `configure-pages`→`upload-pages-artifact`→`deploy-pages`；push master 即发布，
   无手动发布路径（旧 gh-pages 分支 + build-ghpages.sh 已删）。首次从分支源迁到
