@@ -164,6 +164,9 @@ pub fn Toolbar() -> Element {
                 class: "btn file-pick",
                 title: "Add files (Ctrl+O)",
                 "Add File"
+                if !cfg!(target_arch = "wasm32") {
+                    span { class: "kbd", "Ctrl+O" }
+                }
             input {
                 id: "add-file-input",
                 class: "file-input",
@@ -230,6 +233,7 @@ pub fn Toolbar() -> Element {
                     disabled: !runnable,
                     onclick: move |_| ctx.start_run(),
                     "Run"
+                    span { class: "kbd", "Ctrl+Enter" }
                 }
             }
             div { class: "menu-wrap",
