@@ -32,6 +32,18 @@
       new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms)),
     ]);
 
+  // 逐帧解码累加时长（μs→s）；image.duration 缺失按 100ms（GIF/APNG 同款）。
+  const sumFrameDurations = async (d) => {
+    const n = d.tracks.selectedTrack.frameCount;
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const { image } = await d.decode({ frameIndex: i });
+      total += (image.duration ?? 100000) / 1e6;
+      image.close();
+    }
+    return total;
+  };
+
   // ---- 统一原生探测（GIF/APNG/MP4/图片）：不加载任何引擎、不依赖 VideoEncoder ----
   // 返回 { duration: 秒, apng: bool }。0/false 表示未知/否。
   // GIF 用 ImageDecoder 累加帧时长；PNG 靠 frameCount>1 判 APNG；MP4/WebM 走 <video> 元数据。
@@ -41,20 +53,14 @@
       if (ext === "gif") {
         const d = new ImageDecoder({ data, type: "image/gif" });
         await d.tracks.ready;
-        const t = d.tracks.selectedTrack;
-        let total = 0;
-        for (let i = 0; i < t.frameCount; i++) {
-          const { image } = await d.decode({ frameIndex: i });
-          total += (image.duration ?? 100000) / 1e6;
-          image.close();
-        }
-        return { duration: total, apng: false };
+        return { duration: await sumFrameDurations(d), apng: false };
       }
-      if (ext === "png") {
+      if (ext === "png" || ext === "apng") {
         const d = new ImageDecoder({ data, type: "image/png" });
         await d.tracks.ready;
-        const n = d.tracks.selectedTrack.frameCount;
-        return { duration: 0, apng: n > 1 };
+        // 静态 png 无时长；APNG（frameCount>1）逐帧累加 fcTL 延迟
+        if (d.tracks.selectedTrack.frameCount <= 1) return { duration: 0, apng: false };
+        return { duration: await sumFrameDurations(d), apng: true };
       }
       if (ext === "mp4" || ext === "webm") {
         const url = URL.createObjectURL(new Blob([data], { type: ext === "webm" ? "video/webm" : "video/mp4" }));

@@ -249,9 +249,11 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     and be reported `Done`; `Alert` tasks get their half-written output deleted,
     like the cancel path.
 - **Duration inference**: `ffmpeg-the-third` opens the input to read codec id
-  and duration; APNG is assigned a fixed duration of 1 s (no probe); animated
-  webp (codec id `WEBP_ANIM`, container duration N/A) sums packet
-  pts+duration in `probe_desktop`. Output filenames are timestamps
+  and duration; APNG and animated webp (container duration N/A) sum packet
+  pts+duration in `probe_desktop` (APNG packet duration = fcTL delay). Web APNG
+  sums per-frame `image.duration` in `stickerNativeProbe`. Animated webp
+  (codec id `WEBP_ANIM`) container duration N/A, packets summed as above.
+  Output filenames are timestamps
   `%Y-%m-%d-%H%M%S%.3f` with extension `webm` / `png`.
 - **Webm duration patch** (`transcoder::steps`): after encoding, the Duration
   element (EBML ID `0x4489` + 1-byte size vint `0x88`, i.e. marker bytes

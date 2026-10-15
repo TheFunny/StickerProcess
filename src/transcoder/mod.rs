@@ -344,11 +344,11 @@ impl Transcoder {
         let mut command = self.gen_command()?;
         let mut process = command.spawn().map_err(|_| TranscodeError::Spawn)?;
         match media_type {
-            MediaType::Video(v_type) => {
+            MediaType::Video(_) => {
                 // 图片路径用 stdout 传 PNG，视频走 stderr 解析的进度事件。
-                // 分母与码率同一时长源（APNG=1.0）；pct 钳到 [0,1] 与
+                // 分母与码率同一时长源（探测时长）；pct 钳到 [0,1] 与
                 // inprocess 一致——0.001s 地板会把进度条冲出千位
-                let duration = self.effective_duration(&v_type)?;
+                let duration = self.effective_duration()?;
                 self.pump_events(&mut process, duration, &mut on_progress)?;
                 // stderr EOF ≠ 成功：中途死掉的 ffmpeg 头部已含 Duration，
                 // 不查退出码会把无 trailer 坏文件判成 Done。

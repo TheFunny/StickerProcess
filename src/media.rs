@@ -202,7 +202,11 @@ impl MediaFile {
             .video()?;
 
         let id = decoder.id();
-        let anim_webp = id == ffmpeg::codec::id::Id::WEBP_ANIM;
+        // 动画 webp / apng 容器无 duration（ffprobe N/A），需累加 packet 时长。
+        let sum_packets = matches!(
+            id,
+            ffmpeg::codec::id::Id::WEBP_ANIM | ffmpeg::codec::id::Id::APNG
+        );
 
         match id {
             ffmpeg::codec::id::Id::PNG
@@ -244,9 +248,9 @@ impl MediaFile {
         };
         if duration > 0f64 {
             self.duration = Some(duration);
-        } else if anim_webp {
-            // webp_anim 容器无 duration（ffprobe N/A）；累加 packet pts+duration
-            // （stream tb 实测 1/1000），取末包上界即总时长。
+        } else if sum_packets {
+            // 容器无 duration：累加 packet pts+duration，取末包上界即总时长。
+            // webp stream tb 1/1000；apng packet duration 即 fcTL 延迟（tb 1/100000，实测）。
             let mut end = 0f64;
             for (s, p) in ictx.packets().flatten() {
                 let tb = f64::from(s.time_base());

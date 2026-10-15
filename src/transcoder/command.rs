@@ -65,12 +65,8 @@ pub fn parse_progress_time(time: &str) -> f64 {
     seconds
 }
 impl Transcoder {
-    /// 实际参与码率计算的时长（秒）：APNG 固定 1.0（无可靠探测值），
-    /// 其余视频用探测时长；<=0 视为无效。
-    pub(super) fn effective_duration(&self, v_type: &VideoType) -> Result<f64, TranscodeError> {
-        if *v_type == VideoType::Apng {
-            return Ok(1.0);
-        }
+    /// 实际参与码率计算的时长（秒）：探测时长；<=0 视为无效。
+    pub(super) fn effective_duration(&self) -> Result<f64, TranscodeError> {
         let duration = self
             .media_file
             .duration()
@@ -104,7 +100,7 @@ impl Transcoder {
         &mut self,
         v_type: &VideoType,
     ) -> Result<(f64, u32), TranscodeError> {
-        let duration = self.effective_duration(v_type)?;
+        let duration = self.effective_duration()?;
         let factor = self.resolve_factor(duration, v_type);
         Ok((
             duration,

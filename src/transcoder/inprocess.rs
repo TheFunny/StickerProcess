@@ -238,6 +238,9 @@ impl Transcoder {
                             let pts = next_pts(last_pts, oframe.pts(), in_tb, OUT_TB);
                             last_pts = Some(pts);
                             oframe.set_pts(Some(pts));
+                            // 解码器（apng/png）把每帧标成 I 帧，libvpx 见 I 即强制关键帧，
+                            // 整段全 K 帧 → 体积膨胀约 18×。CLI 在编码前同样清为 NONE。
+                            oframe.set_kind(ffmpeg::util::picture::Type::None);
                             if duration > 0.0 {
                                 let seconds = pts as f64 * OUT_TB.numerator() as f64
                                     / OUT_TB.denominator() as f64;
