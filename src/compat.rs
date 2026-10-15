@@ -462,10 +462,11 @@ mod web {
 
     /// 路由矩阵：直接问 `Engine::for_web`（唯一出处），报告只负责展示。
     fn routing_rows(webcodecs_ok: bool) -> Vec<CompatRow> {
-        let cases: [(&str, MediaType); 4] = [
+        let cases: [(&str, MediaType); 5] = [
             ("mp4", MediaType::Video(VideoType::Mp4)),
             ("gif", MediaType::Video(VideoType::Gif)),
             ("apng", MediaType::Video(VideoType::Apng)),
+            ("webm", MediaType::Video(VideoType::Webm)),
             ("images (jpg/png/webp)", MediaType::Image(ImageType::Jpg)),
         ];
         cases

@@ -34,7 +34,7 @@
 
   // ---- 统一原生探测（GIF/APNG/MP4/图片）：不加载任何引擎、不依赖 VideoEncoder ----
   // 返回 { duration: 秒, apng: bool }。0/false 表示未知/否。
-  // GIF 用 ImageDecoder 累加帧时长；PNG 靠 frameCount>1 判 APNG；MP4 走 <video> 元数据。
+  // GIF 用 ImageDecoder 累加帧时长；PNG 靠 frameCount>1 判 APNG；MP4/WebM 走 <video> 元数据。
   window.stickerNativeProbe = async (name, data) => {
     try {
       const ext = extOf(name);
@@ -56,8 +56,8 @@
         const n = d.tracks.selectedTrack.frameCount;
         return { duration: 0, apng: n > 1 };
       }
-      if (ext === "mp4") {
-        const url = URL.createObjectURL(new Blob([data], { type: "video/mp4" }));
+      if (ext === "mp4" || ext === "webm") {
+        const url = URL.createObjectURL(new Blob([data], { type: ext === "webm" ? "video/webm" : "video/mp4" }));
         try {
           const v = document.createElement("video");
           v.preload = "metadata";

@@ -91,13 +91,27 @@ impl Transcoder {
             let src_fps = istream.avg_frame_rate();
             (src_fps.numerator() > 0 && src_fps.denominator() > 0).then_some(src_fps)
         };
+        // 显式解码器：webm VP9 的 alpha 只有 libvpx-vp9 能解出（见 MediaFile::webm_decoder）。
+        // 指定了却不存在 → 报错而非静默回落（回落会丢 alpha 且无提示）。
+        let explicit = match self.media_file.webm_decoder() {
+            Some(name) => {
+                Some(ffmpeg::codec::decoder::find_by_name(name).ok_or_else(|| {
+                    TranscodeError::Decoder(format!("decoder {name} not built in"))
+                })?)
+            }
+            None => None,
+        };
         let mut dec_ctx = ffmpeg::codec::Context::from_parameters(istream.parameters())?;
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get());
         dec_ctx.set_threading(threading::Config {
             kind: threading::Type::Frame,
             count: threads,
         });
-        let mut decoder = dec_ctx.decoder().video()?;
+        // `Decoder::video()` 会按 codec id 重新查找（即原生 vp9），必须用 open_as 指定。
+        let mut decoder = match explicit {
+            Some(codec) => dec_ctx.decoder().open_as(codec)?.video()?,
+            None => dec_ctx.decoder().video()?,
+        };
 
         // time_base：未 open 的 decoder 常为 0/1（无效），回退容器流 tb；
         // packet 统一重缩放到该基，解码输出帧 pts 即在此基下。

@@ -1,5 +1,7 @@
 #[cfg(feature = "desktop")]
 use ffmpeg_the_third as ffmpeg;
+use std::borrow::Cow;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// 网页端浏览器必须整份驻留输入并创建多份转码副本；64 MiB 单文件、128 MiB
@@ -70,6 +72,24 @@ impl MediaFile {
             Source::Path(p) => Some(p.as_path()),
             Source::Bytes { .. } => None,
         }
+    }
+
+    /// webm 视频的显式解码器名（其它类型与无法读取的头部均为 None，走默认解码）。
+    pub fn webm_decoder(&self) -> Option<&'static str> {
+        if !matches!(self.r#type, Some(MediaType::Video(VideoType::Webm))) {
+            return None;
+        }
+        let head: Cow<[u8]> = match &self.source {
+            Source::Bytes { data, .. } => Cow::Borrowed(&data[..data.len().min(WEBM_HEAD_BYTES)]),
+            Source::Path(p) => {
+                let mut buf = Vec::new();
+                std::fs::File::open(p)
+                    .and_then(|f| f.take(WEBM_HEAD_BYTES as u64).read_to_end(&mut buf))
+                    .ok()?;
+                Cow::Owned(buf)
+            }
+        };
+        WebmCodec::sniff(&head).decoder()
     }
 
     /// 展示名：Path 用完整路径，Bytes 用原始文件名。
@@ -252,6 +272,8 @@ pub enum VideoType {
     Mp4,
     Gif,
     Apng,
+    /// webm 输入（VP9 + alpha）：与 gif/apng 同走透明通道，网页恒走 ffmpeg-wasm。
+    Webm,
     /// 动画 webp（仅桌面：probe 把扩展名阶段的 Image(Webp) 纠正至此；
     /// 网页端无 probe 纠正路径，恒 Image(Webp) 输出首帧 PNG）。
     /// wasm 侧只有 `for_web` 的兜底 match 臂引用它。
@@ -266,7 +288,51 @@ impl VideoType {
     pub fn pix_fmt(&self) -> &'static str {
         match self {
             VideoType::Mp4 => "yuv420p10",
-            VideoType::Gif | VideoType::Apng | VideoType::AnimatedWebP => "yuva420p",
+            VideoType::Gif | VideoType::Apng | VideoType::Webm | VideoType::AnimatedWebP => {
+                "yuva420p"
+            }
+        }
+    }
+}
+
+/// webm 视频的编解码器：决定显式解码器。原生 vp9 解码器不输出 WebM alpha
+/// （BlockAdditions），libvpx-vp9 能输出；VP8 用 libvpx；其余（AV1 等）走默认。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebmCodec {
+    Vp8,
+    Vp9,
+    Other,
+}
+
+/// 只看头部：Tracks 必在首个 Cluster 之前（与 duration 补丁同一边界），
+/// 元数据远小于 64 KiB。
+const WEBM_HEAD_BYTES: usize = 64 * 1024;
+const CLUSTER_ID: &[u8] = &[0x1F, 0x43, 0xB6, 0x75];
+
+impl WebmCodec {
+    /// 从 webm 头部字节扫描 Tracks 的 CodecID（`V_VP9` / `V_VP8`）。
+    pub fn sniff(head: &[u8]) -> Self {
+        let end = head
+            .windows(CLUSTER_ID.len())
+            .position(|w| w == CLUSTER_ID)
+            .unwrap_or(head.len());
+        let head = &head[..end];
+        let has = |tag: &[u8]| head.windows(tag.len()).any(|w| w == tag);
+        if has(b"V_VP9") {
+            WebmCodec::Vp9
+        } else if has(b"V_VP8") {
+            WebmCodec::Vp8
+        } else {
+            WebmCodec::Other
+        }
+    }
+
+    /// 显式解码器名（sidecar `-c:v` / inprocess `find_by_name` / web glue 共用）；None = 默认。
+    pub fn decoder(self) -> Option<&'static str> {
+        match self {
+            WebmCodec::Vp9 => Some("libvpx-vp9"),
+            WebmCodec::Vp8 => Some("libvpx"),
+            WebmCodec::Other => None,
         }
     }
 }
@@ -297,10 +363,11 @@ pub fn mime_for_ext(ext: &str) -> Option<&'static str> {
 /// 扩展名 → 媒体类型的唯一事实源：入队过滤（app）、类型探测（MediaFile）、
 /// 文件对话框 accept（toolbar / rfd）、空态文案（task_list）全部从这一张表
 /// 派生——原先 app.rs 字符串表与 from_source match 两份靠测试互查。
-pub const SUPPORTED: [(&str, MediaType); 7] = [
+pub const SUPPORTED: [(&str, MediaType); 8] = [
     ("mp4", MediaType::Video(VideoType::Mp4)),
     ("gif", MediaType::Video(VideoType::Gif)),
     ("apng", MediaType::Video(VideoType::Apng)),
+    ("webm", MediaType::Video(VideoType::Webm)),
     ("jpg", MediaType::Image(ImageType::Jpg)),
     ("jpeg", MediaType::Image(ImageType::Jpg)),
     ("png", MediaType::Image(ImageType::Png)),
@@ -384,7 +451,7 @@ mod tests {
             );
         }
         // 反向：不在 SUPPORTED 里的已知扩展必须被拒绝
-        for ext in ["webm", "bmp", "txt"] {
+        for ext in ["bmp", "txt"] {
             let file = MediaFile::new(Path::new(&format!("file.{ext}")));
             assert!(file.r#type.is_none(), "'{ext}' should be rejected");
         }
@@ -394,12 +461,49 @@ mod tests {
     fn from_bytes_type_detection() {
         let mp4 = MediaFile::from_bytes(vec![], "clip.mp4".into());
         assert_eq!(mp4.r#type, Some(MediaType::Video(VideoType::Mp4)));
+        let webm = MediaFile::from_bytes(vec![], "clip.webm".into());
+        assert_eq!(webm.r#type, Some(MediaType::Video(VideoType::Webm)));
         let gif = MediaFile::from_bytes(vec![], "anim.gif".into());
         assert_eq!(gif.r#type, Some(MediaType::Video(VideoType::Gif)));
         let png = MediaFile::from_bytes(vec![], "pic.png".into());
         assert_eq!(png.r#type, Some(MediaType::Image(ImageType::Png)));
         let unknown = MediaFile::from_bytes(vec![], "file.xyz".into());
         assert_eq!(unknown.r#type, None);
+    }
+
+    /// webm 解码器探测只看 Tracks：Cluster 之后的同名串（载荷）不算；VP9/VP8 各得显式解码器。
+    #[test]
+    fn webm_codec_sniff_stops_at_first_cluster() {
+        let tracks = |codec: &[u8]| {
+            let mut v = vec![0x16, 0x54, 0xAE, 0x6B, 0x86, 0x85];
+            v.extend_from_slice(codec);
+            v
+        };
+        assert_eq!(WebmCodec::sniff(&tracks(b"V_VP9")), WebmCodec::Vp9);
+        assert_eq!(WebmCodec::sniff(&tracks(b"V_VP8")), WebmCodec::Vp8);
+        assert_eq!(WebmCodec::sniff(&tracks(b"V_AV1")), WebmCodec::Other);
+        let mut late = vec![0x1F, 0x43, 0xB6, 0x75];
+        late.extend_from_slice(b"V_VP9");
+        assert_eq!(WebmCodec::sniff(&late), WebmCodec::Other);
+        assert_eq!(WebmCodec::Vp9.decoder(), Some("libvpx-vp9"));
+        assert_eq!(WebmCodec::Vp8.decoder(), Some("libvpx"));
+        assert_eq!(WebmCodec::Other.decoder(), None);
+    }
+
+    /// `webm_decoder` 只对 webm 视频给显式解码器；其它容器保持默认（None）。
+    #[test]
+    fn webm_decoder_routes_only_webm() {
+        let vp9 = MediaFile::from_bytes(
+            [0x16, 0x54, 0xAE, 0x6B, 0x86, 0x85]
+                .iter()
+                .copied()
+                .chain(*b"V_VP9")
+                .collect(),
+            "a.webm".into(),
+        );
+        assert_eq!(vp9.webm_decoder(), Some("libvpx-vp9"));
+        let gif = MediaFile::from_bytes(b"V_VP9".to_vec(), "a.gif".into());
+        assert_eq!(gif.webm_decoder(), None);
     }
 
     /// Bytes 契约：probe 直接 Ok（时长/类型由前端传入），path() 为 None。

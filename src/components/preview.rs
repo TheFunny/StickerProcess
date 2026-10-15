@@ -28,7 +28,7 @@ fn input_is_video(path: &str) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase())
         .as_deref()
-        == Some("mp4")
+        .is_some_and(|e| matches!(e, "mp4" | "webm"))
 }
 
 #[component]

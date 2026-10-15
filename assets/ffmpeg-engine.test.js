@@ -74,6 +74,7 @@ test("cancel drops the poisoned instance but keeps the downloaded core", async (
     1000,
     0,
     "yuva420p",
+    "",
     () => {},
   );
 

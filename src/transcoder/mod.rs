@@ -104,7 +104,7 @@ impl Engine {
     }
 
     /// 网页端引擎矩阵（矩阵即策略，设置值不参与）：
-    /// Gif/Apng → ffmpeg-wasm（alpha 双轨）；Mp4 → WebCodecs，其 VP9 caps
+    /// Gif/Apng/Webm → ffmpeg-wasm（alpha 双轨）；Mp4 → WebCodecs，其 VP9 caps
     /// 不可用时兜底 ffmpeg-wasm（W4 自建 core，10-bit 已验证）；图片 → webcodecs。
     /// 返回 (engine, glue kind, ffmpeg-wasm 分支的 pix_fmt)。
     /// `Video(AnimatedWebP)` 仅桌面存在（probe 纠正产物）；web 端动画 webp
@@ -116,7 +116,9 @@ impl Engine {
     ) -> (Engine, &'static str, &'static str) {
         use crate::media::{MediaType::*, VideoType::*};
         match media_type {
-            Video(v) if matches!(v, Gif | Apng) => (Engine::FfmpegWasm, "video", v.pix_fmt()),
+            Video(v) if matches!(v, Gif | Apng | Webm) => {
+                (Engine::FfmpegWasm, "video", v.pix_fmt())
+            }
             Video(v) if webcodecs_ok && matches!(v, Mp4) => {
                 (Engine::Webcodecs, "video", v.pix_fmt())
             }
@@ -493,6 +495,14 @@ mod tests {
         );
         assert_eq!(
             Engine::for_web(&MediaType::Video(VideoType::Apng), false),
+            (Engine::FfmpegWasm, "video", "yuva420p")
+        );
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Webm), true),
+            (Engine::FfmpegWasm, "video", "yuva420p")
+        );
+        assert_eq!(
+            Engine::for_web(&MediaType::Video(VideoType::Webm), false),
             (Engine::FfmpegWasm, "video", "yuva420p")
         );
         // MP4：WebCodecs caps 可用走 webcodecs，否则兜底 ffmpeg-wasm（10-bit）

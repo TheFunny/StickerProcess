@@ -101,7 +101,7 @@
 
   window.stickerFfmpegReady = async (onCoreProgress) => { await loadCore(onCoreProgress); return true; };
 
-  window.stickerFfmpegTranscode = async (data, name, bitrate, fps, pixFmt, onProgress) => {
+  window.stickerFfmpegTranscode = async (data, name, bitrate, fps, pixFmt, decoder, onProgress) => {
     const ff = await loadCore();
     // wasm 传入的 data 背靠 wasm 内存，不可 detach——ffmpeg.wasm writeFile 要
     // transfer 所有权，必须先拷到独立 ArrayBuffer
@@ -114,7 +114,9 @@
     // 由 Rust 传入）；两处 web 专属偏离：ST core 无 pthreads 省 -row-mt；
     // deadline/cpu-used 提速——wasm 单线程 VP9 默认 good 档太慢（GIF exec ~10s），
     // realtime+4 约 3×，b:v 约束下画质损失有限（超 256KB 有 runner 收缩重试兜底）。
+    // 输入侧解码器（webm VP9 alpha 需 libvpx-vp9）须在 -i 之前；"" = 默认解码。
     const args = [
+      ...(decoder ? ["-c:v", decoder] : []),
       "-i", name,
       "-vf", "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
     ];

@@ -120,6 +120,10 @@ impl Transcoder {
             Some(probe) => FfmpegCommand::new_with_path(&probe.exe),
             None => FfmpegCommand::new(),
         };
+        // 输入侧解码器必须在 `-i` 之前（input option）；仅 webm 有值（见 MediaFile::webm_decoder）
+        if let Some(decoder) = self.media_file.webm_decoder() {
+            command.args(["-c:v", decoder]);
+        }
         command
             .input(
                 self.media_file

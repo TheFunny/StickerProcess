@@ -28,6 +28,7 @@ extern "C" {
         bitrate: u32,
         fps: f64,
         pix_fmt: &str,
+        decoder: &str,
         on_progress: &Closure<dyn FnMut(f32)>,
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerWebcodecsProbeSupport)]
@@ -78,6 +79,8 @@ pub struct WebJob {
     /// glue 侧契约值（"video" / "image"），与 pix_fmt 同类：JS 按字符串取值。
     pub kind: &'static str,
     pub pix_fmt: &'static str,
+    /// webm 显式解码器名（"" = 默认）；glue 据此在 `-i` 前插入 `-c:v`。
+    pub decoder: &'static str,
 }
 
 impl Transcoder {
@@ -101,6 +104,8 @@ impl Transcoder {
             None => return Err(TranscodeError::InvalidMediaType),
         };
         let name = self.media_file.display_name();
+        // webm 显式解码器（"" = 默认）：VP9 alpha 依赖它，见 MediaFile::webm_decoder
+        let decoder = self.media_file.webm_decoder().unwrap_or("");
         Ok(WebJob {
             data,
             name,
@@ -109,6 +114,7 @@ impl Transcoder {
             engine,
             kind,
             pix_fmt,
+            decoder,
         })
     }
 
@@ -170,7 +176,8 @@ pub(crate) async fn exec_ffmpeg_wasm(
     let bitrate = job.bitrate;
     let fps = job.fps;
     let pix_fmt = job.pix_fmt;
-    let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, &closure)
+    let decoder = job.decoder;
+    let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, decoder, &closure)
         .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
     // glue 的 finally 已 ff.off("progress")——promise settle 后 JS 不再引用

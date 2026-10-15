@@ -8,7 +8,7 @@ Guidance for AI agents working in this repository.
 videos into **Telegram-style stickers**, implemented in **Rust** with the
 **Dioxus 0.7** GUI (wry/WebView2 desktop, wasm/web feature in-browser):
 
-- Video (mp4 / gif / apng / animated webp) → animated sticker in **webm**
+- Video (mp4 / gif / apng / webm / animated webp) → animated sticker in **webm**
   (libvpx-vp9), target ≤ **256 KB**
 - Image (jpg / jpeg / png / webp) → static sticker in **png**, target ≤ **512 KB**
 - All media is scaled to fit **512×512** with aspect ratio preserved
@@ -200,6 +200,16 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
   - Image → png: sidecar pipes PNG over stdout; inprocess png-encodes the
     filtered frame in memory; both then run the shared oxipng helper
     (`write_optimized_png`: preset 4, safe strip, alpha optimize).
+  - **webm input decoder** (alpha-preserving): the native VP9 decoder drops the
+    WebM BlockAdditions alpha plane, so webm inputs get an explicit decoder.
+    `WebmCodec::sniff` reads `V_VP9`/`V_VP8` from the Tracks header (bytes before
+    the first Cluster, ≤64 KiB); `WebmCodec::decoder` maps VP9→`libvpx-vp9`,
+    VP8→`libvpx`, other→default. `MediaFile::webm_decoder` is the single entry:
+    sidecar CLI emits `-c:v <d>` before `-i`, inprocess uses `decoder::find_by_name`
+    + `decoder().open_as()` (NOT `.video()` alone — it re-finds the native codec
+    by id), web glue inserts `-c:v` before `-i` (`""` = default). Missing named
+    decoder → error, never silent fallback. Verified: VP9 alpha 129→129 in-process,
+    sidecar CLI, and headless-Chrome glue; native decode gives 255.
 - **Transcoding engines** (E6 phase 1, dual-track; selected by
   `Settings.engine`, dispatched in `mod.rs::run_with_progress`):
   - *sidecar* (default): `gen_command()` builds the ffmpeg CLI invocation,
