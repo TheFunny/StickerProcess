@@ -393,7 +393,12 @@ async fn inject_scripts(srcs: &[&str], marker: &str) -> Result<(), TranscodeErro
         .ok_or_else(|| TranscodeError::Engine("no document on wasm".into()))?;
     for src in srcs {
         // 已在 DOM（并发调用或前一次仍在加载）则不重复追加：重复执行会重绑全局
-        if document.query_selector(&script_selector(src)).ok().flatten().is_some() {
+        if document
+            .query_selector(&script_selector(src))
+            .ok()
+            .flatten()
+            .is_some()
+        {
             continue;
         }
         let script = document

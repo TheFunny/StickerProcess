@@ -416,11 +416,13 @@ impl UiState {
                     .lock()
                     .map(|t| t.media_file.clone())
                     .map_err(|e| e.to_string());
-                let awaited = crate::runner::run_blocking(move || -> Result<crate::media::MediaFile, String> {
-                    let mut file = file?;
-                    file.probe()?;
-                    Ok(file)
-                })
+                let awaited = crate::runner::run_blocking(
+                    move || -> Result<crate::media::MediaFile, String> {
+                        let mut file = file?;
+                        file.probe()?;
+                        Ok(file)
+                    },
+                )
                 .await;
                 // 扁平化 JoinError 包装（与 runner 同一模式）
                 let result = match awaited {

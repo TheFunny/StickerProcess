@@ -131,15 +131,9 @@ mod desktop {
 
     /// 设置值 vs 实际解析结果：保存了 sidecar 但机器上没有 ffmpeg 时，
     /// 这里能立刻说清"为什么实际跑的是 inprocess"。
-    fn platform_rows(
-        settings: &Settings,
-        resolved: crate::transcoder::Engine,
-    ) -> Vec<CompatRow> {
+    fn platform_rows(settings: &Settings, resolved: crate::transcoder::Engine) -> Vec<CompatRow> {
         let (state, detail) = if resolved == settings.engine {
-            (
-                CompatState::Info,
-                format!("'{}'", settings.engine.as_str()),
-            )
+            (CompatState::Info, format!("'{}'", settings.engine.as_str()))
         } else {
             (
                 CompatState::Warn,
@@ -279,7 +273,10 @@ mod desktop {
     /// `ffmpeg -version` 首行；失败/空输出 → None（报告降级为 Warn，不报错中断）。
     /// 阻塞子进程——只在 `collect_blocking` 里调用，已经在 `spawn_blocking` 上。
     fn ffmpeg_version(exe: &Path) -> Option<String> {
-        let out = std::process::Command::new(exe).arg("-version").output().ok()?;
+        let out = std::process::Command::new(exe)
+            .arg("-version")
+            .output()
+            .ok()?;
         let stdout = String::from_utf8_lossy(&out.stdout);
         let first = stdout.lines().next()?.trim();
         (!first.is_empty()).then(|| first.to_string())
@@ -309,9 +306,7 @@ mod web {
 
     fn platform_rows(settings: &Settings) -> Vec<CompatRow> {
         let window = web_sys::window();
-        let secure = window
-            .as_ref()
-            .is_some_and(|w| w.is_secure_context());
+        let secure = window.as_ref().is_some_and(|w| w.is_secure_context());
         let user_agent = window
             .as_ref()
             .and_then(|w| w.navigator().user_agent().ok())
@@ -436,10 +431,7 @@ mod web {
                 "WebCodecs assets (webm-muxer.js, webcodecs-engine.js)",
                 &webcodecs_missing,
             ),
-            missing_row(
-                "ffmpeg.wasm assets (glue + 29.5 MB core)",
-                &ffmpeg_missing,
-            ),
+            missing_row("ffmpeg.wasm assets (glue + 29.5 MB core)", &ffmpeg_missing),
         ]
     }
 
@@ -475,7 +467,10 @@ mod web {
                 let (engine, _kind, pix_fmt) = Engine::for_web(&media_type, webcodecs_ok);
                 let detail = match media_type {
                     MediaType::Image(_) => {
-                        format!("{} · 512px PNG (animated webp: first frame only)", engine.as_str())
+                        format!(
+                            "{} · 512px PNG (animated webp: first frame only)",
+                            engine.as_str()
+                        )
                     }
                     MediaType::Video(_) => format!("{} · {pix_fmt}", engine.as_str()),
                 };
@@ -485,7 +480,11 @@ mod web {
     }
 
     fn flag(ok: bool) -> CompatState {
-        if ok { CompatState::Ok } else { CompatState::Fail }
+        if ok {
+            CompatState::Ok
+        } else {
+            CompatState::Fail
+        }
     }
 
     /// 长度截断（按字符，不切坏 UTF-8）。
@@ -504,7 +503,10 @@ mod tests {
 
     #[test]
     fn version_string_unpacks_avutil_bits() {
-        assert_eq!(desktop::version_string((59 << 16) | (8 << 8) | 100), "59.8.100");
+        assert_eq!(
+            desktop::version_string((59 << 16) | (8 << 8) | 100),
+            "59.8.100"
+        );
         assert_eq!(desktop::version_string(0), "0.0.0");
     }
 
@@ -524,7 +526,12 @@ mod tests {
             .find(|r| r.label == "ffmpeg.exe (sidecar)")
             .expect("sidecar row present");
         let expected_fail = crate::sidecar_probe::SidecarProbe::probe().is_none();
-        assert_eq!(row.state == CompatState::Fail, expected_fail, "{}", row.detail);
+        assert_eq!(
+            row.state == CompatState::Fail,
+            expected_fail,
+            "{}",
+            row.detail
+        );
         assert!(!row.detail.is_empty());
         for section in &report.sections {
             assert!(!section.rows.is_empty(), "empty section {}", section.title);
