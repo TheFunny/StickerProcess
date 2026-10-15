@@ -43,7 +43,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `build/nsis-hooks.nsh` | NSIS 安装前钩子（`[bundle.windows.nsis] installer_hooks`）：`.onInit` 里结束正在运行的实例 + 拒绝静默降级覆盖。**不 fork dx 的 NSIS 模板**；文件不经 handlebars 渲染（读安装器自身 VERSIONINFO 取新版本号）。见 `docs/RELEASE.md` §升级防护 |
-| `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME via `media::mime_for_ext`, HTTP Range/206（单次响应封顶 8 MiB 窗口，防 GB 级 `bytes=0-` 一次分配）, percent encode/decode（`percent-encoding` crate，桌面 target 专属依赖）; unit tests |
+| `src/preview.rs` | `preview://` custom protocol for the preview modal: URL builders, MIME via `media::mime_for_ext`, HTTP Range/206（Range 单次窗口封顶 8 MiB，防 GB 级 `bytes=0-` 一次分配；无 Range 的图片整文件返回，超过 64 MiB 才 413——原先与 8 MiB 共用，致大 APNG 输入预览破图）, percent encode/decode（`percent-encoding` crate，桌面 target 专属依赖）; unit tests |
 | `src/timers.rs` | `sleep()` 双实现：桌面 = tokio；wasm32 = `setTimeout` Promise（`std::time`/`tokio::time` 在 wasm panic）|
 |`scripts/fetch-ffmpeg-core.sh`|从 `TheFunny/ffmpeg-core-st` 的 Release 取回自建 ffmpeg.wasm core（`assets/ffmpeg-core-st.{js,wasm}`）：core 版本与 sha256 的唯一出处，CI 与本地开发共用 |
 |`scripts/fetch-ffmpeg-static.sh`|从 `TheFunny/ffmpeg-static-win` 的 Release 取回静态 ffmpeg（解包到 `ffmpeg-dist/` 当 `FFMPEG_DIR`）：tag 与 sha256 的唯一出处，`release-desktop.yml` / `ci.yml` 与本地开发共用 |

@@ -65,9 +65,9 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
         };
     }
 
-    // wry 的自定义协议响应体必须完整交给 responder；无 Range 时也只接受
-    // 一个有界窗口，避免伪装扩展名的大文件在打开预览时按全长分配。
-    if total > MAX_WINDOW {
+    // wry 的自定义协议响应体必须整体交给 responder；图片无 Range，按整文件
+    // 返回，超过 MAX_FULL 才 413（防伪装扩展名的超大文件整读进内存）。
+    if total > MAX_FULL {
         return payload_too_large();
     }
     match std::fs::read(&path) {
@@ -78,10 +78,12 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
 
 type Body = Vec<u8>;
 
-/// 单次响应窗口上限：无 Range 响应也受限，Range 命中则只返回该窗口。
-/// Chromium/WebView2 对 `<video>` 常发 `bytes=0-`；图片没有 Range 保证，
-/// 因此同样不能走无界全量分配。
+/// Range 响应的单次窗口上限：Chromium/WebView2 对 `<video>` 常发 `bytes=0-`，
+/// 只返回这一段，避免 GB 级文件一次分配。
 const MAX_WINDOW: u64 = 8 * 1024 * 1024;
+/// 无 Range 的整文件响应上限。图片 `<img>` 不发 Range，必须整文件交给 wry；
+/// 原先与 MAX_WINDOW 共用 8 MiB，导致 >8 MiB 的动画 APNG 输入 413 成破图。
+const MAX_FULL: u64 = 64 * 1024 * 1024;
 
 fn full(mime: &'static str, data: Body) -> HttpResponse<Cow<'static, [u8]>> {
     HttpResponse::builder()
@@ -263,7 +265,7 @@ mod tests {
 
         std::fs::File::create(&path)
             .unwrap()
-            .set_len(MAX_WINDOW + 1)
+            .set_len(MAX_FULL + 1)
             .unwrap();
         assert_eq!(
             handle(request(&path, None)).status(),
@@ -294,6 +296,20 @@ mod tests {
         // 回归：apng 曾只在 wasm 表里，桌面协议侧漏了 → 输入预览 404
         assert_eq!(mime_for(Path::new("a.apng")), Some("image/png"));
         assert_eq!(mime_for(Path::new("c.txt")), None);
+    }
+
+    #[test]
+    fn full_response_serves_image_over_window() {
+        // 回归：>8 MiB 的 apng 无 Range 时 413，WebView 输入预览显示破图
+        let dir = std::env::temp_dir().join(format!("stp_preview_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.apng");
+        std::fs::write(&path, vec![0u8; (MAX_WINDOW + 1) as usize]).unwrap();
+        let req = HttpRequest::builder().uri(media_url(&path)).body(Vec::new()).unwrap();
+        let resp = handle(req);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.body().len(), (MAX_WINDOW + 1) as usize);
     }
 
     #[test]
