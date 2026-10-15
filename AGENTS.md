@@ -202,8 +202,9 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     (`write_optimized_png`: preset 4, safe strip, alpha optimize).
   - **webm input decoder** (alpha-preserving): the native VP9 decoder drops the
     WebM BlockAdditions alpha plane, so webm inputs get an explicit decoder.
-    `WebmCodec::sniff` reads `V_VP9`/`V_VP8` from the Tracks header (bytes before
-    the first Cluster, ≤64 KiB); `WebmCodec::decoder` maps VP9→`libvpx-vp9`,
+    `WebmCodec::sniff` 按 CodecID 元素匹配（`86 85` + `V_VP9`/`V_VP8`，全头 ≤64 KiB 扫描），
+    不再按首个 Cluster ID 截断：SeekHead 的 SeekID 也含 `1F 43 B6 75`，旧截断会在 Tracks 前停下、
+    把 VP9 误判为 Other 退回原生解码丢 alpha。`WebmCodec::decoder` maps VP9→`libvpx-vp9`,
     VP8→`libvpx`, other→default. `MediaFile::webm_decoder` is the single entry:
     sidecar CLI emits `-c:v <d>` before `-i`, inprocess uses `decoder::find_by_name`
     + `decoder().open_as()` (NOT `.video()` alone — it re-finds the native codec

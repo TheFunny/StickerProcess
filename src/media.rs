@@ -311,17 +311,16 @@ pub enum WebmCodec {
 /// 只看头部：Tracks 必在首个 Cluster 之前（与 duration 补丁同一边界），
 /// 元数据远小于 64 KiB。
 const WEBM_HEAD_BYTES: usize = 64 * 1024;
-const CLUSTER_ID: &[u8] = &[0x1F, 0x43, 0xB6, 0x75];
-
 impl WebmCodec {
-    /// 从 webm 头部字节扫描 Tracks 的 CodecID（`V_VP9` / `V_VP8`）。
+    /// 扫描 Tracks 里的 CodecID 元素（ID 0x86 + 长度 vint 0x85 + 串 `V_VP9`/`V_VP8`）。
+    /// 不能按 Cluster ID 截断：SeekHead 的 SeekID 也含 `1F 43 B6 75`（AKAUDON 样本
+    /// 偏移 87，Tracks 在 231），截断后 VP9 被判为 Other → 退回原生解码 → alpha 丢失。
     pub fn sniff(head: &[u8]) -> Self {
-        let end = head
-            .windows(CLUSTER_ID.len())
-            .position(|w| w == CLUSTER_ID)
-            .unwrap_or(head.len());
-        let head = &head[..end];
-        let has = |tag: &[u8]| head.windows(tag.len()).any(|w| w == tag);
+        let has = |codec: &[u8]| {
+            let mut pat = vec![0x86, 0x85];
+            pat.extend_from_slice(codec);
+            head.windows(pat.len()).any(|w| w == pat.as_slice())
+        };
         if has(b"V_VP9") {
             WebmCodec::Vp9
         } else if has(b"V_VP8") {
@@ -475,9 +474,9 @@ mod tests {
         assert_eq!(unknown.r#type, None);
     }
 
-    /// webm 解码器探测只看 Tracks：Cluster 之后的同名串（载荷）不算；VP9/VP8 各得显式解码器。
+    /// CodecID 元素才算：裸串（无 `86 85` 前缀）不算；SeekHead 里的 Cluster ID 不截断扫描。
     #[test]
-    fn webm_codec_sniff_stops_at_first_cluster() {
+    fn webm_codec_sniff_matches_codec_id_element() {
         let tracks = |codec: &[u8]| {
             let mut v = vec![0x16, 0x54, 0xAE, 0x6B, 0x86, 0x85];
             v.extend_from_slice(codec);
@@ -486,9 +485,12 @@ mod tests {
         assert_eq!(WebmCodec::sniff(&tracks(b"V_VP9")), WebmCodec::Vp9);
         assert_eq!(WebmCodec::sniff(&tracks(b"V_VP8")), WebmCodec::Vp8);
         assert_eq!(WebmCodec::sniff(&tracks(b"V_AV1")), WebmCodec::Other);
-        let mut late = vec![0x1F, 0x43, 0xB6, 0x75];
-        late.extend_from_slice(b"V_VP9");
-        assert_eq!(WebmCodec::sniff(&late), WebmCodec::Other);
+        // SeekHead 的 SeekID 含 Cluster ID，后面的 Tracks 仍须被识别
+        let mut seek_then_tracks = vec![0x53, 0xAB, 0x84, 0x1F, 0x43, 0xB6, 0x75];
+        seek_then_tracks.extend(tracks(b"V_VP9"));
+        assert_eq!(WebmCodec::sniff(&seek_then_tracks), WebmCodec::Vp9);
+        let bare = b"xx V_VP9 xx".to_vec();
+        assert_eq!(WebmCodec::sniff(&bare), WebmCodec::Other);
         assert_eq!(WebmCodec::Vp9.decoder(), Some("libvpx-vp9"));
         assert_eq!(WebmCodec::Vp8.decoder(), Some("libvpx"));
         assert_eq!(WebmCodec::Other.decoder(), None);
