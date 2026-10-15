@@ -51,7 +51,10 @@ fn handle(request: HttpRequest<Vec<u8>>) -> HttpResponse<Cow<'static, [u8]>> {
     };
     let total = meta.len();
 
-    if let Some(value) = request.headers().get("range") {
+    // 图片（<img>）一律整文件：即便携带 Range 也不截段，否则 8 MiB 窗口会切出
+    // 残缺 PNG/APNG（破图）。视频（<video>）才用 Range 分段，窗口上限照旧。
+    let range = request.headers().get("range").filter(|_| !mime.starts_with("image/"));
+    if let Some(value) = range {
         let range = value
             .to_str()
             .ok()
@@ -245,7 +248,8 @@ mod tests {
 
     #[test]
     fn handle_bounds_full_and_range_responses() {
-        let path = std::env::temp_dir().join(format!("sp_preview_{}.png", std::process::id()));
+        // Range 分段只对视频生效（图片整文件，见 image_ignores_range_and_serves_full_file）
+        let path = std::env::temp_dir().join(format!("sp_preview_{}.webm", std::process::id()));
         std::fs::write(&path, b"0123456789").unwrap();
 
         let full = handle(request(&path, None));
@@ -306,6 +310,24 @@ mod tests {
         let path = dir.join("big.apng");
         std::fs::write(&path, vec![0u8; (MAX_WINDOW + 1) as usize]).unwrap();
         let req = HttpRequest::builder().uri(media_url(&path)).body(Vec::new()).unwrap();
+        let resp = handle(req);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.body().len(), (MAX_WINDOW + 1) as usize);
+    }
+
+    #[test]
+    fn image_ignores_range_and_serves_full_file() {
+        // 回归：<img> 若带 bytes=0- 会被截到 8 MiB 窗口 → 残缺图片
+        let dir = std::env::temp_dir().join(format!("stp_img_range_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.png");
+        std::fs::write(&path, vec![7u8; (MAX_WINDOW + 1) as usize]).unwrap();
+        let req = HttpRequest::builder()
+            .uri(media_url(&path))
+            .header("range", "bytes=0-")
+            .body(Vec::new())
+            .unwrap();
         let resp = handle(req);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(resp.status(), StatusCode::OK);
