@@ -33,6 +33,18 @@ pub struct Settings {
     pub video_max_size_kb: u32,
     /// 图片贴纸大小上限（KB）。
     pub image_max_size_kb: u32,
+    /// 视频目标分辨率宽（px）；0 表示不限宽（与高同为 0 时保持原分辨率）。
+    #[serde(default = "default_resolution")]
+    pub video_width: u32,
+    /// 视频目标分辨率高（px）；0 表示不限高（与宽同为 0 时保持原分辨率）。
+    #[serde(default = "default_resolution")]
+    pub video_height: u32,
+    /// 图像目标分辨率宽（px）；0 表示不限宽（与高同为 0 时保持原分辨率）。
+    #[serde(default = "default_resolution")]
+    pub image_width: u32,
+    /// 图像目标分辨率高（px）；0 表示不限高（与宽同为 0 时保持原分辨率）。
+    #[serde(default = "default_resolution")]
+    pub image_height: u32,
     /// 超限重试时的系数缩放：factor = factor / excess * retry_shrink_factor。
     #[serde(default = "default_retry_shrink_factor")]
     pub retry_shrink_factor: f64,
@@ -58,6 +70,34 @@ pub struct Settings {
     pub webm_duration_patch: bool,
 }
 
+/// 分辨率非零下限（px）：防止 1px 等极端值触发编码器或 4:2:0 子采样异常。
+pub const MIN_RESOLUTION: u32 = 16;
+/// 分辨率上限（px）：覆盖 4K 并防止误填极大值导致 OOM。
+pub const MAX_RESOLUTION: u32 = 4096;
+
+/// 分辨率单边钳制：0 表示不限/原尺寸，非零钳制到 `MIN_RESOLUTION..=MAX_RESOLUTION`。
+pub fn clamp_resolution(v: u32) -> u32 {
+    if v == 0 {
+        0
+    } else {
+        v.clamp(MIN_RESOLUTION, MAX_RESOLUTION)
+    }
+}
+
+/// 分辨率展示串（空状态提示共用）："512×512" / "512×auto" / "auto×512" / "original"。
+pub fn format_resolution(width: u32, height: u32) -> String {
+    match (width, height) {
+        (0, 0) => "original".into(),
+        (w, 0) => format!("{w}\u{00d7}auto"),
+        (0, h) => format!("auto\u{00d7}{h}"),
+        (w, h) => format!("{w}\u{00d7}{h}"),
+    }
+}
+
+fn default_resolution() -> u32 {
+    crate::transcoder::DEFAULT_RESOLUTION
+}
+
 fn default_true() -> bool {
     true
 }
@@ -78,6 +118,10 @@ impl Default for Settings {
             max_retry: 3,
             video_max_size_kb: 256,
             image_max_size_kb: 512,
+            video_width: default_resolution(),
+            video_height: default_resolution(),
+            image_width: default_resolution(),
+            image_height: default_resolution(),
             retry_shrink_factor: default_retry_shrink_factor(),
             engine: crate::transcoder::Engine::default(),
             duration_factors: default_duration_factors(),
@@ -218,6 +262,17 @@ fn sanitize(settings: &mut Settings) {
         log::warn!("image_max_size_kb out of range, clamped to {max_kb}");
         settings.image_max_size_kb = max_kb;
     }
+    fn clamp_dim(v: &mut u32, name: &str) {
+        let c = clamp_resolution(*v);
+        if *v != c {
+            log::warn!("{name} out of range ({v}), clamped to {c}");
+            *v = c;
+        }
+    }
+    clamp_dim(&mut settings.video_width, "video_width");
+    clamp_dim(&mut settings.video_height, "video_height");
+    clamp_dim(&mut settings.image_width, "image_width");
+    clamp_dim(&mut settings.image_height, "image_height");
     fn clamp_f64(v: &mut f64, min: f64, max: f64, name: &str) {
         let c = if v.is_finite() {
             v.clamp(min, max)
@@ -298,6 +353,10 @@ mod tests {
             max_retry: 7,
             video_max_size_kb: 128,
             image_max_size_kb: 1024,
+            video_width: 1280,
+            video_height: 720,
+            image_width: 0,
+            image_height: 512,
             retry_shrink_factor: 0.9,
             duration_factors: [1.0; 6],
             target_fps: 30.0,
@@ -321,6 +380,11 @@ mod tests {
         assert_eq!(parsed.retry_shrink_factor, default_retry_shrink_factor());
         // 旧文件缺键时必须仍是"打补丁"（serde bool 默认 false 会静默改行为）
         assert!(parsed.webm_duration_patch);
+        // 旧文件缺分辨率键时必须回退默认 512×512（u32 默认 0 会静默变成不缩放）
+        assert_eq!(parsed.video_width, 512);
+        assert_eq!(parsed.video_height, 512);
+        assert_eq!(parsed.image_width, 512);
+        assert_eq!(parsed.image_height, 512);
     }
 
     #[test]
@@ -348,6 +412,10 @@ mod tests {
             retry_shrink_factor: f64::NAN, // toml 序列化失败源
             duration_factors: [99.0, 0.0, 1.0, 1.0, 1.0, 1.0],
             target_fps: 1e9,
+            video_width: 0,      // 0 合法（保持原尺寸/不限）
+            video_height: 5,     // 非零低于 16 → 16
+            image_width: 99_999, // 高于 4096 → 4096
+            image_height: 100,   // 合法值不变
             ..Settings::default()
         };
         sanitize(&mut s);
@@ -356,6 +424,10 @@ mod tests {
         assert_eq!(s.duration_factors[0], 10.0);
         assert_eq!(s.duration_factors[1], 0.05);
         assert_eq!(s.target_fps, 240.0);
+        assert_eq!(s.video_width, 0);
+        assert_eq!(s.video_height, MIN_RESOLUTION);
+        assert_eq!(s.image_width, MAX_RESOLUTION);
+        assert_eq!(s.image_height, 100);
         // 序列化必须恢复可用（toml 桌面专属；wasm 用 serde_json 走 localStorage）
         #[cfg(not(target_arch = "wasm32"))]
         assert!(toml::to_string_pretty(&s).is_ok());
@@ -425,5 +497,13 @@ mod tests {
         assert!(s.output_dir.is_empty());
         s.output_dir = default_output_dir();
         assert!(s.output_dir.ends_with("output"));
+    }
+
+    #[test]
+    fn format_resolution_covers_all_modes() {
+        assert_eq!(format_resolution(512, 512), "512\u{00d7}512");
+        assert_eq!(format_resolution(1280, 0), "1280\u{00d7}auto");
+        assert_eq!(format_resolution(0, 720), "auto\u{00d7}720");
+        assert_eq!(format_resolution(0, 0), "original");
     }
 }

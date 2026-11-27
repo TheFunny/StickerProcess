@@ -256,11 +256,20 @@ async fn run_single_task(
         let target_fps = settings.target_fps;
         let retry_shrink = settings.retry_shrink_factor;
         let duration_patch = settings.webm_duration_patch;
+        let (video_w, video_h) = (settings.video_width, settings.video_height);
+        let (image_w, image_h) = (settings.image_width, settings.image_height);
 
         ctx.with_task(index, |t| {
             t.duration_factors = duration_factors;
             t.target_fps = target_fps;
             t.duration_patch = duration_patch;
+            let (w, h) = if matches!(t.media_file.r#type(), Some(MediaType::Video(_))) {
+                (video_w, video_h)
+            } else {
+                (image_w, image_h)
+            };
+            t.target_width = w;
+            t.target_height = h;
             t.status = Status::Processing;
         });
         ctx.progress.set(None);

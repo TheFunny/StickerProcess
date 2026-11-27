@@ -468,7 +468,7 @@ mod web {
                 let detail = match media_type {
                     MediaType::Image(_) => {
                         format!(
-                            "{} · 512px PNG (animated webp: first frame only)",
+                            "{} · PNG (animated webp: first frame only)",
                             engine.as_str()
                         )
                     }

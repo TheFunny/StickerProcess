@@ -9,7 +9,7 @@ use crate::app::UiState;
 use crate::components::number_field::NumberInput;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::config::OutputDirState;
-use crate::config::Settings;
+use crate::config::{MAX_RESOLUTION, Settings, clamp_resolution};
 use dioxus::prelude::*;
 
 /// 时长→系数表的固定区间标签，与 `Settings::duration_factors` 下标对应。
@@ -167,6 +167,64 @@ pub fn SettingsPanel() -> Element {
                         },
                     }
                     span { class: "hint", "Output: input-name-timestamp.webm (off = timestamp only)" }
+                }
+
+                div { class: "settings-section", "Resolution" }
+
+                div { class: "settings-row",
+                    span { class: "label", "Video resolution (px)" }
+                    div { class: "dim-pair",
+                        NumberInput<u32> {
+                            value: ctx.settings.read().video_width,
+                            min: 0u32,
+                            max: MAX_RESOLUTION,
+                            disabled: locked,
+                            aria_label: Some("Video width"),
+                            on_change: move |v| {
+                                ctx.update_settings(move |s| s.video_width = clamp_resolution(v));
+                            },
+                        }
+                        span { class: "dim-sep", "\u{00d7}" }
+                        NumberInput<u32> {
+                            value: ctx.settings.read().video_height,
+                            min: 0u32,
+                            max: MAX_RESOLUTION,
+                            disabled: locked,
+                            aria_label: Some("Video height"),
+                            on_change: move |v| {
+                                ctx.update_settings(move |s| s.video_height = clamp_resolution(v));
+                            },
+                        }
+                    }
+                    span { class: "hint", "0 = auto / original (Telegram: 512\u{00d7}512)" }
+                }
+
+                div { class: "settings-row",
+                    span { class: "label", "Image resolution (px)" }
+                    div { class: "dim-pair",
+                        NumberInput<u32> {
+                            value: ctx.settings.read().image_width,
+                            min: 0u32,
+                            max: MAX_RESOLUTION,
+                            disabled: locked,
+                            aria_label: Some("Image width"),
+                            on_change: move |v| {
+                                ctx.update_settings(move |s| s.image_width = clamp_resolution(v));
+                            },
+                        }
+                        span { class: "dim-sep", "\u{00d7}" }
+                        NumberInput<u32> {
+                            value: ctx.settings.read().image_height,
+                            min: 0u32,
+                            max: MAX_RESOLUTION,
+                            disabled: locked,
+                            aria_label: Some("Image height"),
+                            on_change: move |v| {
+                                ctx.update_settings(move |s| s.image_height = clamp_resolution(v));
+                            },
+                        }
+                    }
+                    span { class: "hint", "0 = auto / original (Telegram: 512\u{00d7}512)" }
                 }
 
                 div { class: "settings-section", "Size limits & retries" }

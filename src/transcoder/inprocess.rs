@@ -10,7 +10,7 @@
 //! 时间基决策：整条管道统一 1/1000（毫秒）。解码后帧 pts 一次性重缩放到
 //! 1/1000，编码器/输出流/滤镜 buffer 参数均以此为基准，mux 前无需再缩放。
 
-use super::command::{BUFSIZE_RATIO, SCALE_FILTER, VP9_CRF};
+use super::command::{BUFSIZE_RATIO, VP9_CRF, scale_filter};
 use super::{TranscodeError, Transcoder};
 use crate::media::{MediaType, VideoType};
 use ffmpeg_the_third as ffmpeg;
@@ -131,12 +131,9 @@ impl Transcoder {
 
         // 强制 fps 与 sidecar `-r` 语义对齐：fps 滤镜复制/丢帧到目标 CFR
         // （置于 scale 之后，保留 alpha 通道）；未强制时沿用源流帧率仅作元数据。
-        let spec = if self.target_fps > 0.0 {
-            format!("{SCALE_FILTER},fps={}", self.target_fps)
-        } else {
-            SCALE_FILTER.to_string()
-        };
-        let mut graph = build_graph(in_w, in_h, in_pix, in_tb, sar, out_pix, &spec)?;
+        let scale = scale_filter(self.target_width, self.target_height);
+        let spec = video_filter_spec(scale.as_deref(), self.target_fps);
+        let mut graph = build_graph(in_w, in_h, in_pix, in_tb, sar, out_pix, spec.as_deref())?;
 
         // 编码器（open 推迟到首帧：宽高以滤镜输出为准；setter 都在 Video 包装上）
         let codec = ffmpeg::codec::encoder::find_by_name("libvpx-vp9")
@@ -355,6 +352,7 @@ impl Transcoder {
         if sar.numerator() == 0 {
             sar = Rational(1, 1);
         }
+        let scale = scale_filter(self.target_width, self.target_height);
         let mut graph = build_graph(
             in_w,
             in_h,
@@ -362,7 +360,7 @@ impl Transcoder {
             in_tb,
             sar,
             Pixel::RGBA,
-            "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos",
+            scale.as_deref(),
         )?;
 
         let mut iframe = VideoFrame::empty();
@@ -466,7 +464,17 @@ fn pixel_of(pix_fmt: &str) -> Pixel {
     }
 }
 
-/// 组装 scale 滤镜图：buffer → <spec> → format=<out_pix> → buffersink。
+/// 拼接视频滤镜链（scale + 可选 fps）；两者均无时返回 None（仅做像素格式转换）。
+fn video_filter_spec(scale: Option<&str>, target_fps: f64) -> Option<String> {
+    match (scale, target_fps > 0.0) {
+        (Some(s), true) => Some(format!("{s},fps={target_fps}")),
+        (Some(s), false) => Some(s.to_string()),
+        (None, true) => Some(format!("fps={target_fps}")),
+        (None, false) => None,
+    }
+}
+
+/// 组装滤镜图：buffer → [spec →] format=<out_pix> → buffersink。
 /// 中间滤镜经 Parser 挂接手工 add 的 buffer/buffersink（the-third 惯用法）。
 fn build_graph(
     in_w: u32,
@@ -475,7 +483,7 @@ fn build_graph(
     in_tb: Rational,
     in_sar: Rational,
     out_pix: Pixel,
-    spec: &str,
+    spec: Option<&str>,
 ) -> Result<ffmpeg::filter::Graph, TranscodeError> {
     let mut graph = ffmpeg::filter::Graph::new();
     let buffer = ffmpeg::filter::find("buffer")
@@ -502,12 +510,16 @@ fn build_graph(
         .map_err(|e| TranscodeError::Filter(e.to_string()))?;
     // buffersink 的 pix_fmts 选项限定输出像素格式
     graph.get("out").unwrap().set_pixel_format(out_pix);
-    // spec 挂到 "in" 的输出 pad 与 "out" 的输入 pad 之间
+    // spec 挂到 "in" 的输出 pad 与 "out" 的输入 pad 之间；无 spec 时只做格式转换
     let out_pix_name = out_pix.descriptor().map_or("none", |d| d.name());
+    let filter_desc = match spec {
+        Some(s) => format!("{s},format={out_pix_name}"),
+        None => format!("format={out_pix_name}"),
+    };
     graph
         .output("in", 0)
         .and_then(|p| p.input("out", 0))
-        .and_then(|p| p.parse(&format!("{spec},format={out_pix_name}")))
+        .and_then(|p| p.parse(&filter_desc))
         .map_err(|e| TranscodeError::Filter(e.to_string()))?;
     graph
         .validate()
@@ -569,6 +581,20 @@ mod tests {
     fn fps_rational_millisecond_precision() {
         assert_eq!(fps_rational(25.0), Rational(25_000, 1000));
         assert_eq!(fps_rational(29.97), Rational(29_970, 1000));
+    }
+
+    #[test]
+    fn video_filter_spec_combines_scale_and_fps() {
+        assert_eq!(
+            video_filter_spec(Some("scale=100:100"), 30.0).as_deref(),
+            Some("scale=100:100,fps=30")
+        );
+        assert_eq!(
+            video_filter_spec(Some("scale=100:100"), 0.0).as_deref(),
+            Some("scale=100:100")
+        );
+        assert_eq!(video_filter_spec(None, 30.0).as_deref(), Some("fps=30"));
+        assert_eq!(video_filter_spec(None, 0.0), None);
     }
     #[test]
     fn next_pts_monotonic_and_rescale() {

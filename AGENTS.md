@@ -11,8 +11,10 @@ videos into **Telegram-style stickers**, implemented in **Rust** with the
 - Video (mp4 / gif / apng / webm / animated webp) → animated sticker in **webm**
   (libvpx-vp9), target ≤ **256 KB**
 - Image (jpg / jpeg / png / webp) → static sticker in **png**, target ≤ **512 KB**
-- All media is scaled to fit **512×512** with aspect ratio preserved
-  (`scale=512:512:force_original_aspect_ratio=decrease`, lanczos)
+- All media is scaled to fit the configured resolution (default **512×512**,
+  independently configurable for video and image via `video_width/height` and
+  `image_width/height`; `0` = auto / keep original) with aspect ratio preserved
+  (`scale=W:H:force_original_aspect_ratio=decrease`, lanczos)
 - Web build is live at <https://thefunny.github.io/StickerProcess/> (W series,
   see `docs/WEB_PLAN.md`; dual engine = ffmpeg.wasm + WebCodecs, matrix = policy).
   Animated webp is desktop-only (web outputs first-frame png until dual-stream
@@ -39,7 +41,7 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
 | `src/components/` | UI widgets: `toolbar`, `task_list`, `number_field`, `drop_zone`, `progress_bar`, `toast`, `settings_panel`, `preview` |
 | `src/app.css` | Stylesheet embedded via `include_str!`; theme variables (`[data-theme="dark"]`), row/modal/toast polish |
 | `src/media.rs` | `MediaFile` model: type detection by the single `SUPPORTED` `(ext, MediaType)` table (drives入队过滤/`type_of_ext`/`dotted_exts`/空态文案) + `mime_for_ext`（预览三处共用）, `probe()` (ffmpeg codec/duration check incl. animated-webp → `Video(AnimatedWebP)` correction + packet-summed duration), duration, output path; enums; unit tests |
-| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch + sidecar stderr event pump), `command.rs` (ffmpeg command gen + `SCALE_FILTER` / `DEFAULT_DURATION_FACTORS` + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
+| `src/transcoder/` | Framework-agnostic core split into `mod.rs` (types + orchestration + engine dispatch + sidecar stderr event pump), `command.rs` (ffmpeg command gen + `scale_filter` / `DEFAULT_RESOLUTION` / `DEFAULT_DURATION_FACTORS` + bitrate pure fns + shared `video_bitrate`/`effective_duration`/`resolve_factor`), `inprocess.rs` (libav pipe: decode→filter→encode→mux), `steps.rs` (webm duration patch — desktop `patch_webm_file`、web `patch_webm_bytes`，共享 `find_duration_payload`；sidecar image stdout reader), `web.rs` (wasm32-only: dual-engine bridge — ffmpeg.wasm + WebCodecs, two-phase `prepare_web_job`/`finish_web_job`, `native_probe`, script injection), `error.rs` (`TranscodeError`) |
 | `build.rs` | Static-ffmpeg link glue: when `FFMPEG_DIR` points at a static install (vcpkg x64-windows-static), emits extra link libs (vpx, DirectShow/MediaFoundation system libs) and generates `avicap32.lib` from `build/avicap32.def` into `OUT_DIR` |
 | `build/avicap32.def` | 2-symbol module definition used by `build.rs` to synthesize the `avicap32` import lib the Windows SDK doesn't ship |
 | `build/nsis-hooks.nsh` | NSIS 安装前钩子（`[bundle.windows.nsis] installer_hooks`）：`.onInit` 里结束正在运行的实例 + 拒绝静默降级覆盖。**不 fork dx 的 NSIS 模板**；文件不经 handlebars 渲染（读安装器自身 VERSIONINFO 取新版本号）。见 `docs/RELEASE.md` §升级防护 |
@@ -234,8 +236,8 @@ supported — see `docs/E6_INPROCESS_RESEARCH.md` §7.
     `quantized_bitrate`), returning `(duration, b:v)`; sidecar `gen_command`,
     inprocess and web all call it, so the three engines stay bitrate-identical
     — edit the chain here, never inline a copy in an engine.
-    Same rule for `command::SCALE_FILTER` (the `scale=512:512:…:flags=lanczos`
-    spec) and `media::VideoType::pix_fmt()` — both were hand-copied three times
+    Same rule for `command::scale_filter(w, h)` (the `scale=…:flags=lanczos`
+    spec shared by sidecar, inprocess, and ffmpeg.wasm) and `media::VideoType::pix_fmt()` — both were hand-copied three times
     before.
     All engines run the webm duration patch after muxing unless the
     `webm_duration_patch` setting is off (`Transcoder::duration_patch`, synced

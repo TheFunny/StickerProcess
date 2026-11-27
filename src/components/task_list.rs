@@ -15,11 +15,24 @@ pub fn TaskList() -> Element {
     let ctx = use_context::<UiState>();
     let count = ctx.tasks.read().len();
     // 空状态是唯一一次"告诉用户这工具能吃什么、目标多大"的机会
-    let (limits, formats) = {
+    let (limits, formats, resolution_line) = {
         let s = ctx.settings.read();
+        let res_line = if (s.video_width, s.video_height) == (s.image_width, s.image_height) {
+            if s.video_width == 0 && s.video_height == 0 {
+                "Video → webm · image → png, original resolution".to_string()
+            } else {
+                let res = crate::config::format_resolution(s.video_width, s.video_height);
+                format!("Video → webm · image → png, scaled to fit {res}")
+            }
+        } else {
+            let vres = crate::config::format_resolution(s.video_width, s.video_height);
+            let ires = crate::config::format_resolution(s.image_width, s.image_height);
+            format!("Video → webm ({vres}) · image → png ({ires})")
+        };
         (
             (s.video_max_size_kb, s.image_max_size_kb),
             crate::media::exts().collect::<Vec<_>>().join(" · "),
+            res_line,
         )
     };
 
@@ -28,7 +41,7 @@ pub fn TaskList() -> Element {
             if count == 0 {
                 div { class: "empty-hint",
                     p { class: "empty-lead", "Drop files here, or click \"Add File\"" }
-                    p { class: "empty-sub", "Video → webm · image → png, scaled to fit 512×512" }
+                    p { class: "empty-sub", "{resolution_line}" }
                     p { class: "empty-sub", "{formats}" }
                     p { class: "empty-sub",
                         "Target size: video ≤ {limits.0} KB · image ≤ {limits.1} KB"

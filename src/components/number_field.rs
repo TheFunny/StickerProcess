@@ -65,6 +65,7 @@ pub fn NumberInput<T: NumEdit + 'static>(
     max: T,
     disabled: bool,
     on_change: EventHandler<T>,
+    #[props(default)] aria_label: Option<&'static str>,
 ) -> Element {
     let mut draft = use_signal(String::new);
     let mut editing = use_signal(|| false);
@@ -74,6 +75,7 @@ pub fn NumberInput<T: NumEdit + 'static>(
             class: "input num",
             r#type: "text",
             disabled,
+            "aria-label": aria_label,
             value: if editing() { draft.cloned() } else { value.pretty() },
             onfocus: move |_| {
                 editing.set(true);

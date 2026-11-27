@@ -29,6 +29,7 @@ extern "C" {
         fps: f64,
         pix_fmt: &str,
         decoder: &str,
+        vf: &str,
         on_progress: &Closure<dyn FnMut(f32)>,
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerWebcodecsProbeSupport)]
@@ -43,6 +44,8 @@ extern "C" {
         bitrate: u32,
         fps: f64,
         kind: &str,
+        width: u32,
+        height: u32,
         on_progress: &Closure<dyn FnMut(f32)>,
     ) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = stickerNativeProbe)]
@@ -74,6 +77,8 @@ pub struct WebJob {
     pub name: String,
     pub bitrate: u32,
     pub fps: f64,
+    pub width: u32,
+    pub height: u32,
     /// 类型化引擎（矩阵来自 `Engine::for_web`）；分发表靠它穷尽匹配。
     pub engine: super::Engine,
     /// glue 侧契约值（"video" / "image"），与 pix_fmt 同类：JS 按字符串取值。
@@ -111,6 +116,8 @@ impl Transcoder {
             name,
             bitrate,
             fps: self.target_fps,
+            width: self.target_width,
+            height: self.target_height,
             engine,
             kind,
             pix_fmt,
@@ -177,8 +184,10 @@ pub(crate) async fn exec_ffmpeg_wasm(
     let fps = job.fps;
     let pix_fmt = job.pix_fmt;
     let decoder = job.decoder;
-    let promise = sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, decoder, &closure)
-        .map_err(|e| js_error(e, &cancel_flag))?;
+    let vf = super::command::scale_filter(job.width, job.height).unwrap_or_default();
+    let promise =
+        sticker_ffmpeg_transcode(data, name, bitrate, fps, pix_fmt, decoder, &vf, &closure)
+            .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
     // glue 的 finally 已 ff.off("progress")——promise settle 后 JS 不再引用
     // 本闭包，随作用域 drop（此前 forget() 使监听器链随任务数无界增长）。
@@ -224,8 +233,11 @@ pub(crate) async fn exec_webcodecs(
     let bitrate = job.bitrate;
     let fps = job.fps;
     let kind = job.kind;
-    let promise = sticker_webcodecs_transcode(data, name, bitrate, fps, kind, &closure)
-        .map_err(|e| js_error(e, &cancel_flag))?;
+    let width = job.width;
+    let height = job.height;
+    let promise =
+        sticker_webcodecs_transcode(data, name, bitrate, fps, kind, width, height, &closure)
+            .map_err(|e| js_error(e, &cancel_flag))?;
     let out = promise.await.map_err(|e| js_error(e, &cancel_flag))?;
 
     js_value_to_bytes(out)

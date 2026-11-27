@@ -20,11 +20,25 @@ pub(super) const VP9_CRF: u32 = 26;
 #[cfg(feature = "desktop")]
 pub(super) const BUFSIZE_RATIO: f64 = 1.5;
 
-/// 缩放滤镜规格：桌面两引擎（sidecar CLI / inprocess 滤镜图）唯一出处。
-/// web 端的 scale 规格在 JS 胶水里（浏览器侧没有 ffmpeg 滤镜串）。
-#[cfg(feature = "desktop")]
-pub(super) const SCALE_FILTER: &str =
-    "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos";
+/// 默认目标分辨率（px），也是 Telegram 贴纸标准单边尺寸。
+pub const DEFAULT_RESOLUTION: u32 = 512;
+
+/// 缩放滤镜规格：桌面双引擎（sidecar CLI / inprocess 滤镜图）与 web ffmpeg.wasm 唯一出处。
+///
+/// - `(w, h)` 均 > 0：等比适配 `w×h` 框（`force_original_aspect_ratio=decrease`）
+/// - 仅宽 > 0：定宽、高按比例自动（`scale=w:-1`）
+/// - 仅高 > 0：定高、宽按比例自动（`scale=-1:h`）
+/// - 均为 0：保持原分辨率（`None`，不加缩放滤镜）
+pub(super) fn scale_filter(width: u32, height: u32) -> Option<String> {
+    match (width, height) {
+        (0, 0) => None,
+        (w, 0) => Some(format!("scale={w}:-1:flags=lanczos")),
+        (0, h) => Some(format!("scale=-1:{h}:flags=lanczos")),
+        (w, h) => Some(format!(
+            "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
+        )),
+    }
+}
 
 /// 时长→默认系数表（设置面板的出厂值，也是 `Transcoder::new` 的初值）。
 pub const DEFAULT_DURATION_FACTORS: [f64; 6] = [1.2, 1.1, 1.0, 0.9, 0.8, 0.7];
@@ -120,15 +134,16 @@ impl Transcoder {
         if let Some(decoder) = self.media_file.webm_decoder() {
             command.args(["-c:v", decoder]);
         }
-        command
-            .input(
-                self.media_file
-                    .path()
-                    .ok_or(TranscodeError::InvalidOutputPath)?
-                    .to_string_lossy(),
-            )
-            .filter(SCALE_FILTER)
-            .overwrite();
+        command.input(
+            self.media_file
+                .path()
+                .ok_or(TranscodeError::InvalidOutputPath)?
+                .to_string_lossy(),
+        );
+        if let Some(vf) = scale_filter(self.target_width, self.target_height) {
+            command.filter(vf.as_str());
+        }
+        command.overwrite();
         if let MediaType::Video(v_type) = self
             .media_file
             .r#type()
@@ -269,5 +284,69 @@ mod tests {
             Some(probe) => assert_eq!(program, probe.exe.as_os_str()),
             None => assert_eq!(program, std::ffi::OsStr::new("ffmpeg")),
         }
+    }
+
+    #[test]
+    fn scale_filter_covers_all_modes() {
+        assert_eq!(
+            scale_filter(512, 512).as_deref(),
+            Some("scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos")
+        );
+        assert_eq!(
+            scale_filter(1280, 720).as_deref(),
+            Some("scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos")
+        );
+        assert_eq!(
+            scale_filter(512, 0).as_deref(),
+            Some("scale=512:-1:flags=lanczos")
+        );
+        assert_eq!(
+            scale_filter(0, 512).as_deref(),
+            Some("scale=-1:512:flags=lanczos")
+        );
+        assert_eq!(scale_filter(0, 0), None);
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn gen_command_respects_resolution_and_skips_when_zero() {
+        use crate::media::MediaFile;
+        use std::path::Path;
+
+        let args_of = |w: u32, h: u32, input: &str, out: &str| -> Vec<String> {
+            let mut t = Transcoder::new(MediaFile::new(Path::new(input)));
+            t.media_file.set_duration(1.0);
+            t.target_width = w;
+            t.target_height = h;
+            t.set_output(out);
+            let cmd = t.gen_command().unwrap();
+            cmd.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let is_vf_flag = |a: &String| a == "-filter" || a == "-filter:v" || a == "-vf";
+
+        let custom = args_of(100, 100, "a.mp4", "out/a.webm");
+        let pos = custom
+            .iter()
+            .position(is_vf_flag)
+            .expect("scale filter flag present");
+        assert_eq!(
+            custom[pos + 1],
+            "scale=100:100:force_original_aspect_ratio=decrease:flags=lanczos"
+        );
+
+        let keep_video = args_of(0, 0, "a.mp4", "out/a.webm");
+        assert!(
+            !keep_video.iter().any(is_vf_flag),
+            "0x0 video must omit scale filter: {keep_video:?}"
+        );
+
+        let keep_image = args_of(0, 0, "a.png", "out/a.png");
+        assert!(
+            !keep_image.iter().any(is_vf_flag),
+            "0x0 image must omit scale filter: {keep_image:?}"
+        );
     }
 }

@@ -806,6 +806,18 @@ body {
   min-width: 0;
 }
 
+.dim-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dim-sep {
+  color: var(--fg-muted);
+  user-select: none;
+}
+
 .modal-actions {
   margin-top: 6px;
 }

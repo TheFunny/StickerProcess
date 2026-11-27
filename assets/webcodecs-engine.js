@@ -19,11 +19,14 @@
     const m = /\.([a-z0-9]+)$/i.exec(name);
     return m ? m[1].toLowerCase() : "";
   };
-  function fitDims(w, h) {
-    const s = Math.min(512 / w, 512 / h, 1);
+  function fitDims(w, h, maxW, maxH) {
+    let s = 1;
+    if (maxW > 0 && maxH > 0) s = Math.min(maxW / w, maxH / h, 1);
+    else if (maxW > 0) s = Math.min(maxW / w, 1);
+    else if (maxH > 0) s = Math.min(maxH / h, 1);
     const even = (n) => Math.max(2, Math.floor((n * s) / 2) * 2);
     return { width: even(w), height: even(h) };
-  };
+  }
   // 超时兜底：无 H.264 解码器的浏览器里 <video> 不报错而是永久挂起
   // （networkState=2 无事件）；缺它任务会永远卡 Probing。
   const withTimeout = (promise, ms, msg) =>
@@ -148,13 +151,13 @@
     };
   };
 
-  // ---- 图片 → PNG：解码首帧 → canvas 512 fit → PNG 字节（无损）----
-  async function transcodeImage(data, name, onProgress) {
+  // ---- 图片 → PNG：解码首帧 → canvas 缩放 → PNG 字节（无损）----
+  async function transcodeImage(data, name, maxW, maxH, onProgress) {
     const mime = MIME_BY_EXT[extOf(name)] || "image/png";
     const decoder = new ImageDecoder({ data, type: mime });
     await decoder.tracks.ready;
     const { image } = await decoder.decode({ frameIndex: 0 });
-    const dims = fitDims(image.displayWidth, image.displayHeight);
+    const dims = fitDims(image.displayWidth, image.displayHeight, maxW, maxH);
     const c = new OffscreenCanvas(dims.width, dims.height);
     const ctx = c.getContext("2d");
     ctx.imageSmoothingEnabled = true;
@@ -169,7 +172,7 @@
   }
 
   // ---- 视频（仅 MP4）→ VP9 webm（无 alpha；GIF/APNG 归 A 引擎）----
-  async function transcodeVideo(data, name, bitrate, fps, onProgress) {
+  async function transcodeVideo(data, name, bitrate, fps, maxW, maxH, onProgress) {
     if (typeof WebMMuxer === "undefined") throw new Error("webm-muxer.js not loaded");
     if (cancelRequested) throw new Error("cancelled");
     const url = URL.createObjectURL(new Blob([data], { type: "video/mp4" }));
@@ -188,7 +191,7 @@
         10000,
         "mp4 metadata timeout"
       );
-      const dims = fitDims(v.videoWidth, v.videoHeight);
+      const dims = fitDims(v.videoWidth, v.videoHeight, maxW, maxH);
       const frameRate = fps > 0 ? fps : 30;
 
       const muxer = new WebMMuxer.Muxer({
@@ -273,12 +276,12 @@
   }
 
   // kind: "video" | "image"（Rust 按媒体类型决定；video 仅 MP4）
-  window.stickerWebcodecsTranscode = async (data, name, bitrate, fps, kind, onProgress) => {
+  window.stickerWebcodecsTranscode = async (data, name, bitrate, fps, kind, width, height, onProgress) => {
     cancelRequested = false;
     // wasm 内存 buffer 不可 transfer——ImageDecoder/Blob 会拷贝，仍统一 slice 兜底
     const buf = new Uint8Array(data).slice();
-    if (kind === "image") return transcodeImage(buf, name, onProgress);
-    return transcodeVideo(buf, name, bitrate, fps, onProgress);
+    if (kind === "image") return transcodeImage(buf, name, width, height, onProgress);
+    return transcodeVideo(buf, name, bitrate, fps, width, height, onProgress);
   };
 
   window.stickerWebcodecsCancel = () => {

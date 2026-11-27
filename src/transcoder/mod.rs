@@ -14,8 +14,8 @@ mod steps;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
-/// 时长→系数表的出厂值（config 与 Transcoder 共用一份，避免两处漂移）。
-pub use command::DEFAULT_DURATION_FACTORS;
+/// 时长→系数表与默认分辨率的出厂值（config 与 Transcoder 共用一份，避免两处漂移）。
+pub use command::{DEFAULT_DURATION_FACTORS, DEFAULT_RESOLUTION};
 pub use error::TranscodeError;
 
 /// 产物文件名里输入名主干的最大字符数（Windows 路径长度上限的粗保护）。
@@ -140,6 +140,10 @@ pub struct Transcoder {
     pub duration_factors: [f64; 6],
     /// 强制输出帧率（fps）；<=0 表示不强制。
     pub target_fps: f64,
+    /// 目标分辨率宽（px）；0 表示不限宽（与 `target_height` 同为 0 时保持原分辨率）。
+    pub target_width: u32,
+    /// 目标分辨率高（px）；0 表示不限高（与 `target_width` 同为 0 时保持原分辨率）。
+    pub target_height: u32,
     /// 内存输出（网页端契约）：Bytes 源任务转码产物写这里而非磁盘。
     /// 桌面 Path 源恒为 None（走 output 路径）。
     pub output_bytes: Option<Vec<u8>>,
@@ -158,6 +162,8 @@ impl Transcoder {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             duration_factors: command::DEFAULT_DURATION_FACTORS,
             target_fps: 0.0,
+            target_width: command::DEFAULT_RESOLUTION,
+            target_height: command::DEFAULT_RESOLUTION,
             output_bytes: None,
             duration_patch: true,
         }
