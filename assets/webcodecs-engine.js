@@ -4,7 +4,7 @@
 //           stickerWebcodecsCancel / stickerNativeProbe / stickerDownload /
 //           stickerCompatAssets（兼容性报告用，只发 HEAD）
 // 管线移植自 wasm-demo/webcodecs-demo：解码（<video>+rVFC / ImageDecoder）→
-// OffscreenCanvas 512 fit → VideoEncoder(vp9 8-bit) → webm-muxer。
+// OffscreenCanvas 等比缩放 → VideoEncoder(vp9 8-bit) → webm-muxer。
 // 码率/factor 全由 Rust 侧算好传入（与桌面 command.rs 一致，JS 不重复实现）。
 (() => {
   let cancelRequested = false;
@@ -19,13 +19,32 @@
     const m = /\.([a-z0-9]+)$/i.exec(name);
     return m ? m[1].toLowerCase() : "";
   };
-  function fitDims(w, h, maxW, maxH) {
+  // 与桌面 ffmpeg `scale=W:H:force_original_aspect_ratio=decrease` 对齐：
+  // 允许小图等比放大至贴合目标框，单边 0 按另一边等比，双 0 保持原尺寸。
+  function fitDims(w, h, maxW, maxH, requireEven) {
     let s = 1;
-    if (maxW > 0 && maxH > 0) s = Math.min(maxW / w, maxH / h, 1);
-    else if (maxW > 0) s = Math.min(maxW / w, 1);
-    else if (maxH > 0) s = Math.min(maxH / h, 1);
-    const even = (n) => Math.max(2, Math.floor((n * s) / 2) * 2);
-    return { width: even(w), height: even(h) };
+    if (maxW > 0 && maxH > 0) s = Math.min(maxW / w, maxH / h);
+    else if (maxW > 0) s = maxW / w;
+    else if (maxH > 0) s = maxH / h;
+    let width = Math.max(1, Math.round(w * s));
+    let height = Math.max(1, Math.round(h * s));
+    if (maxW > 0) width = Math.min(width, maxW);
+    if (maxH > 0) height = Math.min(height, maxH);
+    if (requireEven) {
+      // WebCodecs VP9 (YUV420) 要求偶数宽高；先 round 再取偶避免 49*(512/49)=511.9999 → 510
+      width = Math.max(2, Math.floor(width / 2) * 2);
+      height = Math.max(2, Math.floor(height / 2) * 2);
+    }
+    return { width, height };
+  }
+  // 按输出像素数选择 VP9 Level：≤512×512 保持原 vp09.00.10.08，大分辨率升档避免严格编码器拒收
+  function vp9CodecFor(w, h) {
+    const px = w * h;
+    const level =
+      px <= 512 * 512 ? "10" :
+      px <= 2228224 ? "40" :
+      px <= 8912896 ? "50" : "60";
+    return `vp09.00.${level}.08`;
   }
   // 超时兜底：无 H.264 解码器的浏览器里 <video> 不报错而是永久挂起
   // （networkState=2 无事件）；缺它任务会永远卡 Probing。
@@ -157,7 +176,7 @@
     const decoder = new ImageDecoder({ data, type: mime });
     await decoder.tracks.ready;
     const { image } = await decoder.decode({ frameIndex: 0 });
-    const dims = fitDims(image.displayWidth, image.displayHeight, maxW, maxH);
+    const dims = fitDims(image.displayWidth, image.displayHeight, maxW, maxH, false);
     const c = new OffscreenCanvas(dims.width, dims.height);
     const ctx = c.getContext("2d");
     ctx.imageSmoothingEnabled = true;
@@ -191,7 +210,7 @@
         10000,
         "mp4 metadata timeout"
       );
-      const dims = fitDims(v.videoWidth, v.videoHeight, maxW, maxH);
+      const dims = fitDims(v.videoWidth, v.videoHeight, maxW, maxH, true);
       const frameRate = fps > 0 ? fps : 30;
 
       const muxer = new WebMMuxer.Muxer({
@@ -205,7 +224,7 @@
         error: (e) => { encodeError = e; },
       });
       encoder.configure({
-        codec: "vp09.00.10.08",
+        codec: vp9CodecFor(dims.width, dims.height),
         width: dims.width, height: dims.height,
         bitrate, framerate: frameRate,
         latencyMode: "quality",
