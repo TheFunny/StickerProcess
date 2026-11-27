@@ -90,3 +90,36 @@ test("compatibility assets include the ffmpeg glue", async () => {
   assert.deepEqual(result.ffmpegMissing, []);
   assert.ok(requested.some(({ url }) => url.endsWith("/ffmpeg-engine.js")));
 });
+
+test("image transcode upscales small inputs, handles 0, and keeps odd dimensions", async () => {
+  let canvasSize = null;
+  let imgDims = { w: 200, h: 100 };
+  global.window = global;
+  global.ImageDecoder = class {
+    constructor() { this.tracks = { ready: Promise.resolve() }; }
+    async decode() {
+      return { image: { displayWidth: imgDims.w, displayHeight: imgDims.h, close() {} } };
+    }
+  };
+  global.OffscreenCanvas = class {
+    constructor(w, h) { canvasSize = { w, h }; }
+    getContext() { return { drawImage() {} }; }
+    async convertToBlob() { return { async arrayBuffer() { return new Uint8Array([1]).buffer; } }; }
+  };
+
+  (0, eval)(source);
+  const bytes = new Uint8Array([1]);
+
+  await global.stickerWebcodecsTranscode(bytes, "small.png", 0, 0, "image", 512, 512, () => {});
+  assert.deepEqual(canvasSize, { w: 512, h: 256 }, "small image must upscale to fit 512x512");
+
+  await global.stickerWebcodecsTranscode(bytes, "w.png", 0, 0, "image", 512, 0, () => {});
+  assert.deepEqual(canvasSize, { w: 512, h: 256 }, "width-only scaling");
+
+  await global.stickerWebcodecsTranscode(bytes, "h.png", 0, 0, "image", 0, 512, () => {});
+  assert.deepEqual(canvasSize, { w: 1024, h: 512 }, "height-only scaling");
+
+  imgDims = { w: 101, h: 73 };
+  await global.stickerWebcodecsTranscode(bytes, "odd.png", 0, 0, "image", 0, 0, () => {});
+  assert.deepEqual(canvasSize, { w: 101, h: 73 }, "0x0 image keeps exact odd dimensions");
+});

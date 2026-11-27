@@ -27,7 +27,10 @@ function fakeBrowser({ loadFails = 0 } = {}) {
       if (this.terminated) throw new Error("terminated instance reused");
       this.written = name;
     }
-    async exec() { return 0; }
+    async exec(args) {
+      this.lastArgs = args;
+      return 0;
+    }
     async readFile() { return new Uint8Array([1]); }
     on() {}
     off() {}
@@ -68,6 +71,7 @@ test("cancel drops the poisoned instance but keeps the downloaded core", async (
   );
 
   global.stickerFfmpegCancel();
+  const vf = "scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos";
   const out = await global.stickerFfmpegTranscode(
     new Uint8Array([1]).buffer,
     "retry.gif",
@@ -75,6 +79,7 @@ test("cancel drops the poisoned instance but keeps the downloaded core", async (
     0,
     "yuva420p",
     "",
+    vf,
     () => {},
   );
 
@@ -86,6 +91,22 @@ test("cancel drops the poisoned instance but keeps the downloaded core", async (
   assert.equal(s.instances[1].coreURL, s.instances[0].coreURL);
   assert.equal(s.instances[1].wasmURL, s.instances[0].wasmURL);
   assert.equal(s.revoked.length, 0, "core Blob URLs stay alive until a load failure poisons them");
+  const vfIdx = s.instances[1].lastArgs.indexOf("-vf");
+  assert.notEqual(vfIdx, -1, "non-empty vf must pass -vf to ffmpeg");
+  assert.equal(s.instances[1].lastArgs[vfIdx + 1], vf);
+
+  // 空 vf（0×0 原分辨率）必须省略 -vf
+  await global.stickerFfmpegTranscode(
+    new Uint8Array([1]).buffer,
+    "orig.gif",
+    1000,
+    0,
+    "yuva420p",
+    "",
+    "",
+    () => {},
+  );
+  assert.equal(s.instances[1].lastArgs.includes("-vf"), false, "empty vf must omit -vf");
 });
 
 test("a failed core load revokes both Blob URLs and re-downloads next time", async () => {
